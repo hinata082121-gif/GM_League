@@ -172,21 +172,107 @@ spreadsheetId: 1pi8-gYlKfc_fe_F4iY1idp3fD6lJMzMhW2HbLdQ42aM
 
 ---
 
-### Step 5：GAS Web App をデプロイして URL を取得
+### Step 5：GAS にコードをアップロードしてデプロイ
+
+#### 5-1. clasp push でソースを GAS にアップロード
+
+```bash
+cd gas
+clasp push
+```
+
+成功すると以下のように表示される：
+
+```
+└─ Code.gs
+└─ auth.gs
+└─ config.gs
+└─ lib.gs
+└─ setupSheets.gs
+└─ appsscript.json
+Pushed 6 files.
+```
+
+> ⚠️ `appsscript.json の上書きを許可しますか？` と聞かれたら `yes` を入力する。
+
+#### 5-2. Web App として新規デプロイ
+
+**方法A：clasp コマンド（推奨）**
+
+```bash
+clasp deploy --description "GM_League Phase 0"
+```
+
+成功すると以下のように表示される：
+
+```
+Created version 1.
+- AKfycbxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx @1.
+```
+
+Web App URL は `AKfycb...` の部分（デプロイメント ID）を使って構成される：
+
+```
+https://script.google.com/macros/s/<デプロイメントID>/exec
+```
+
+デプロイ一覧を確認するには：
+
+```bash
+clasp deployments
+```
+
+```
+2 Deployments.
+- AKfycbxxx @HEAD     (開発用・毎回変わる)
+- AKfycbyyy @1.       ← こちらが本番 URL
+```
+
+**方法B：GAS エディタ（GUI 操作）**
 
 1. GAS エディタ右上「デプロイ」→「新しいデプロイ」
-2. 種類：**ウェブアプリ**
-3. 設定：
-   - 説明：`GM_League Phase 0`
-   - 次のユーザーとして実行：**自分**
-   - アクセスできるユーザー：**全員**
-4. 「デプロイ」→ 表示された URL をコピー
+2. 種類（歯車アイコン）：**ウェブアプリ**
+3. 設定を入力：
 
-`config.js` の `GAS_URL` にコピーした URL を貼り付ける：
+   | 項目 | 設定値 |
+   |------|--------|
+   | 説明 | `GM_League Phase 0` |
+   | 次のユーザーとして実行 | **自分（自分のアカウント名）** |
+   | アクセスできるユーザー | **全員** |
+
+4. 「デプロイ」→ 発行された URL をコピー
+
+#### 5-3. Web App URL を config.js に貼り付ける
+
+`config.js` の `GAS_URL` を書き換える：
 
 ```js
-GAS_URL: "https://script.google.com/macros/s/AKfycb.../exec",
+// 変更前
+GAS_URL: "https://script.google.com/macros/s/PLACEHOLDER/exec",
+
+// 変更後
+GAS_URL: "https://script.google.com/macros/s/AKfycbyyy.../exec",
 ```
+
+> ⚠️ デプロイのたびに URL が変わる。更新した場合は `config.js` の `GAS_URL` も更新すること。  
+>    コードを変更した後は `clasp push` → 既存デプロイを「新バージョンで更新」する。
+
+---
+
+### Step 5.5：Users シートに初期ユーザーを手動追加
+
+`whoami` は Users シートに登録されている email のみ通過できる。  
+まず **自分（主催者）の email** を手動で追加する。
+
+1. [Google Sheets](https://docs.google.com/spreadsheets/d/1pi8-gYlKfc_fe_F4iY1idp3fD6lJMzMhW2HbLdQ42aM) を開く
+2. **Users** シートをクリック
+3. 2行目に以下を入力する（1行目はヘッダー）：
+
+| user_id | email | display_name | role | team_id |
+|---------|-------|--------------|------|---------|
+| `u_organizer_1` | `あなたのGmailアドレス` | `表示名` | `organizer` | （空欄） |
+
+4. 保存（自動保存）
 
 ---
 
@@ -205,18 +291,46 @@ GitHub リポジトリの Settings → Pages → Source を **`master` ブラン
 
 ### Step 7：動作確認（Phase 0 完了確認）
 
-1. http://localhost:8000 で `index.html` を開く（または GitHub Pages URL）
-2. 「Google でサインイン」をクリックしてログイン
-3. ブラウザのコンソール（F12）に以下が出れば成功：
+#### 7-1. ローカルでサーバーを起動
+
+```bash
+# プロジェクトルートで（cd GM_League）
+npx serve .          # または
+python -m http.server 8000
+```
+
+`http://localhost:8000` をブラウザで開く。
+
+> ⚠️ `file://` で直接開くと Google Sign-In が動かない（OAuth のリダイレクト制限のため）。
+>    必ず `http://localhost:8000` を使う。
+
+#### 7-2. 「Google でサインイン」をクリック
+
+ボタンが表示されない場合は F12 コンソールにエラーがないか確認する。
+
+#### 7-3. 成功の確認ポイント
+
+**画面で確認：**
+- ユーザーバーに `表示名` と `主催者`（赤バッジ）が表示される
+- role が `team` なら `チームオーナー`（青バッジ）が表示される
+
+**コンソールで確認（F12）：**
 
 ```
 [auth] ログイン成功。トークンを取得しました。
-[app] onSignIn — whoami を呼び出します
-[app] whoami 成功: { email: "...", display_name: "...", role: "...", team_id: "..." }
+[app] onSignIn — whoami 呼び出し中...
+[app] whoami 成功: { user_id: "u_organizer_1", email: "...", display_name: "...", role: "organizer", team_id: "" }
 ```
 
-> ⚠️ `whoami` は Users シートに登録済みアカウントのみ成功する。  
->    初回は主催者アカウントを Users シートに手動で追加してから確認する。
+**エラー別の対処：**
+
+| コンソールのエラー | 原因 | 対処 |
+|---|---|---|
+| `GAS URL が設定されていません` | `config.js` の `GAS_URL` がプレースホルダのまま | Step 5-3 を実施 |
+| `whoami 未登録ユーザー` | Users シートに email がない | Step 5.5 を実施 |
+| `invalid_token` | トークン期限切れ | ページをリロードして再ログイン |
+| `http_403` | GAS のアクセス設定が「全員」になっていない | GAS エディタでデプロイ設定を確認 |
+| CORS エラー | GAS_URL が間違っている、または `redirect:follow` の問題 | URL を `clasp deployments` で再確認 |
 
 ---
 

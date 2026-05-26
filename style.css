@@ -114,10 +114,59 @@ body {
   padding: 10px 16px;
   margin-bottom: 20px;
   font-size: 0.9rem;
+  gap: 12px;
 }
 
-.user-info-text {
+.user-bar-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.user-name {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+/* ロールバッジ（organizer / team） */
+.role-badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 99px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.role-organizer {
+  background: #fce8e6;
+  color: #c5221f;
+  border: 1px solid #f28b82;
+}
+
+.role-team {
+  background: #e8f0fe;
+  color: #1a73e8;
+  border: 1px solid #aecbfa;
+}
+
+.user-team {
+  font-size: 0.8rem;
   color: var(--color-text-sub);
+}
+
+/* ---------- ログインエラー ---------- */
+.login-error {
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: #fce8e6;
+  color: var(--color-danger);
+  border: 1px solid #f28b82;
+  border-radius: var(--radius);
+  font-size: 0.85rem;
+  white-space: pre-wrap; /* 改行 \n を反映 */
+  text-align: left;
 }
 
 /* ---------- ボタン ---------- */
@@ -162,6 +211,21 @@ body {
   text-align: center;
   padding: 32px;
   color: var(--color-text-sub);
+}
+
+.loading-spinner {
+  display: inline-block;
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  margin-bottom: 8px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 /* ---------- フッター ---------- */

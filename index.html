@@ -48,19 +48,32 @@
 
       <!-- Google Sign-In ボタン（auth.js の initGoogleAuth でレンダリング） -->
       <div id="g_signin_button"></div>
+
+      <!-- エラーメッセージ（app.js の _showLoginError から書き込む） -->
+      <p id="login-error" class="login-error" style="display:none;"></p>
     </section>
 
     <!-- ===== ローディング表示 ===== -->
     <div id="loading-message" style="display:none;" class="loading">
+      <span class="loading-spinner"></span>
       <p>認証中...</p>
     </div>
 
     <!-- ===== アプリ本体（ログイン後に表示） ===== -->
     <section id="app-section" style="display:none;">
 
-      <!-- ユーザー情報バー -->
+      <!--
+        ユーザーバー
+        #user-name  — 表示名（app.js の renderUserInfo が書き込む）
+        #user-role  — ロールバッジ（organizer / team）
+        #user-team  — チームID（organizer には非表示）
+      -->
       <div class="user-bar">
-        <span id="user-info" class="user-info-text">—</span>
+        <div class="user-bar-info">
+          <span id="user-name" class="user-name">—</span>
+          <span id="user-role" class="role-badge">—</span>
+          <span id="user-team" class="user-team" style="display:none;"></span>
+        </div>
         <button onclick="signOut()" class="btn btn-secondary btn-sm">
           ログアウト
         </button>
@@ -69,8 +82,8 @@
       <!-- メインコンテンツ（Phase 1 以降で各画面を実装） -->
       <div class="card">
         <h2>ダッシュボード</h2>
-        <p>Phase 0 スキャフォールド — ログイン成功を確認しました。</p>
-        <p>
+        <p>ログイン成功 ✅ — whoami の疎通が確認できました。</p>
+        <p style="margin-top:8px; color: var(--color-text-sub); font-size:0.9rem;">
           以降のフェーズでチーム情報・移籍・試合集計などの画面を追加します。
           詳細は <code>SPEC.md §9</code> の画面一覧を参照してください。
         </p>

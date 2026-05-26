@@ -18,19 +18,21 @@
  * @returns {{ ok: boolean, data?: UserInfo, error?: string }}
  *
  * @typedef {{ user_id: string, email: string, display_name: string, role: string, team_id: string }} UserInfo
+ *
+ * エラー種別:
+ *   'invalid_token'  — tokeninfo 検証失敗・期限切れ・aud 不一致
+ *   'unregistered'   — Users シートに email が存在しない
  */
 function whoami(token) {
   var email = _verifyToken(token);
   if (!email) {
-    return { ok: false, error: "トークンが無効です。再ログインしてください。" };
+    return { ok: false, error: 'invalid_token' };
   }
 
   var user = _findUserByEmail(email);
   if (!user) {
-    return {
-      ok: false,
-      error: "このアカウント（" + email + "）は登録されていません。主催者にお問い合わせください。",
-    };
+    // フロントは error === 'unregistered' で「未登録」メッセージを表示する
+    return { ok: false, error: 'unregistered' };
   }
 
   return { ok: true, data: user };
@@ -86,23 +88,31 @@ function _verifyToken(token) {
 
 /**
  * Users シートからメールアドレスでユーザーを検索する。
+ * シートが存在しない・読み取り失敗の場合は null を返す（例外を握り潰す）。
  *
  * @param {string} email
  * @returns {UserInfo|null}
  */
 function _findUserByEmail(email) {
-  var data = getSheetData("Users"); // lib.gs
+  var data;
+  try {
+    data = getSheetData("Users"); // lib.gs
+  } catch (e) {
+    Logger.log("[_findUserByEmail] Users シート読み取りエラー: " + e.message);
+    return null;
+  }
   // data = [{ user_id, email, display_name, role, team_id }, ...]
 
   for (var i = 0; i < data.length; i++) {
     var row = data[i];
-    if (row.email === email) {
+    // email は大文字小文字を無視して照合（Google アカウントは小文字が多いが念のため）
+    if (String(row.email).toLowerCase() === email.toLowerCase()) {
       return {
-        user_id:      row.user_id      || "",
-        email:        row.email        || "",
-        display_name: row.display_name || email,
-        role:         row.role         || "team",
-        team_id:      row.team_id      || "",
+        user_id:      String(row.user_id      || ""),
+        email:        String(row.email        || ""),
+        display_name: String(row.display_name || email),
+        role:         String(row.role         || "team"),
+        team_id:      String(row.team_id      || ""),
       };
     }
   }
