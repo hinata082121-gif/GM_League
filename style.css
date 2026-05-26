@@ -1,0 +1,184 @@
+/* ==========================================================================
+   style.css — GM_League 共通スタイルシート
+   Phase 0: 最小限のレイアウト。Phase 8 で本格的なUI調整を行う。
+   ========================================================================== */
+
+/* ---------- リセット & 基本 ---------- */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --color-primary:   #1a73e8;
+  --color-secondary: #5f6368;
+  --color-bg:        #f8f9fa;
+  --color-surface:   #ffffff;
+  --color-border:    #dadce0;
+  --color-text:      #202124;
+  --color-text-sub:  #5f6368;
+  --color-danger:    #d93025;
+  --color-success:   #188038;
+
+  --radius: 8px;
+  --shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.08);
+}
+
+body {
+  font-family: 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', sans-serif;
+  background: var(--color-bg);
+  color: var(--color-text);
+  line-height: 1.6;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------- ヘッダー ---------- */
+.site-header {
+  background: var(--color-primary);
+  color: #fff;
+  padding: 16px 24px;
+  box-shadow: var(--shadow);
+}
+
+.site-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.site-subtitle {
+  font-size: 0.85rem;
+  opacity: 0.85;
+  margin-top: 2px;
+}
+
+/* ---------- メインコンテンツ ---------- */
+.main-content {
+  flex: 1;
+  max-width: 800px;
+  width: 100%;
+  margin: 32px auto;
+  padding: 0 16px;
+}
+
+/* ---------- カード ---------- */
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 24px;
+  box-shadow: var(--shadow);
+  margin-bottom: 20px;
+}
+
+.card h2 {
+  font-size: 1.2rem;
+  font-weight: 700;
+  margin-bottom: 12px;
+  color: var(--color-primary);
+}
+
+/* ---------- ログインカード ---------- */
+.login-card {
+  text-align: center;
+  max-width: 400px;
+  margin: 0 auto 20px;
+}
+
+.login-card p {
+  color: var(--color-text-sub);
+  margin-bottom: 16px;
+}
+
+.login-card .note {
+  font-size: 0.8rem;
+}
+
+/* Google Sign-In ボタンを中央揃えにする */
+#g_signin_button {
+  display: flex;
+  justify-content: center;
+  margin-top: 8px;
+}
+
+/* ---------- ユーザーバー ---------- */
+.user-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 10px 16px;
+  margin-bottom: 20px;
+  font-size: 0.9rem;
+}
+
+.user-info-text {
+  color: var(--color-text-sub);
+}
+
+/* ---------- ボタン ---------- */
+.btn {
+  display: inline-block;
+  padding: 8px 20px;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.btn:hover {
+  opacity: 0.85;
+}
+
+.btn-primary {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.btn-secondary {
+  background: var(--color-bg);
+  color: var(--color-secondary);
+  border: 1px solid var(--color-border);
+}
+
+.btn-sm {
+  padding: 4px 12px;
+  font-size: 0.8rem;
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ---------- ローディング ---------- */
+.loading {
+  text-align: center;
+  padding: 32px;
+  color: var(--color-text-sub);
+}
+
+/* ---------- フッター ---------- */
+.site-footer {
+  text-align: center;
+  padding: 16px;
+  color: var(--color-text-sub);
+  font-size: 0.8rem;
+  border-top: 1px solid var(--color-border);
+}
+
+/* ---------- ユーティリティ ---------- */
+code {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 0.85em;
+  font-family: 'Courier New', monospace;
+}

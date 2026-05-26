@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GM League — eFootball 大会集計ツール</title>
+
+  <!-- スタイルシート -->
+  <link rel="stylesheet" href="style.css" />
+
+  <!--
+    設定値（OAuth Client ID / GAS URL / Spreadsheet ID）
+    他のスクリプトより先に読み込む
+  -->
+  <script src="config.js"></script>
+
+  <!--
+    Google Identity Services SDK
+    onload で initGoogleAuth() を呼び、サインインボタンを初期化する
+  -->
+  <script
+    src="https://accounts.google.com/gsi/client"
+    async
+    defer
+    onload="initGoogleAuth()"
+  ></script>
+
+  <!-- 認証処理（auth.js） — SDK より後に実行されるが定義だけ先に読む -->
+  <script src="auth.js"></script>
+
+  <!-- GAS API 共通ラッパ・UI ハンドラ（app.js） -->
+  <script src="app.js"></script>
+</head>
+<body>
+
+  <header class="site-header">
+    <h1 class="site-title">⚽ GM League</h1>
+    <p class="site-subtitle">eFootball Jリーグ限定私設大会 — 集計ツール</p>
+  </header>
+
+  <main class="main-content">
+
+    <!-- ===== ログインセクション ===== -->
+    <section id="login-section" class="card login-card">
+      <h2>ログイン</h2>
+      <p>Google アカウントでサインインしてください。</p>
+      <p class="note">※ 主催者から招待を受けたアカウントのみ利用できます。</p>
+
+      <!-- Google Sign-In ボタン（auth.js の initGoogleAuth でレンダリング） -->
+      <div id="g_signin_button"></div>
+    </section>
+
+    <!-- ===== ローディング表示 ===== -->
+    <div id="loading-message" style="display:none;" class="loading">
+      <p>認証中...</p>
+    </div>
+
+    <!-- ===== アプリ本体（ログイン後に表示） ===== -->
+    <section id="app-section" style="display:none;">
+
+      <!-- ユーザー情報バー -->
+      <div class="user-bar">
+        <span id="user-info" class="user-info-text">—</span>
+        <button onclick="signOut()" class="btn btn-secondary btn-sm">
+          ログアウト
+        </button>
+      </div>
+
+      <!-- メインコンテンツ（Phase 1 以降で各画面を実装） -->
+      <div class="card">
+        <h2>ダッシュボード</h2>
+        <p>Phase 0 スキャフォールド — ログイン成功を確認しました。</p>
+        <p>
+          以降のフェーズでチーム情報・移籍・試合集計などの画面を追加します。
+          詳細は <code>SPEC.md §9</code> の画面一覧を参照してください。
+        </p>
+      </div>
+
+    </section>
+
+  </main>
+
+  <footer class="site-footer">
+    <small>GM League v0.1 — Phase 0</small>
+  </footer>
+
+</body>
+</html>

@@ -1,0 +1,13 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# エディタ
+.vscode/
+*.swp
+
+# clasp の認証情報（秘密情報なのでコミットしない）
+.clasprc.json
+
+# node_modules（clasp をローカルインストールする場合）
+node_modules/
