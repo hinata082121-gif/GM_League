@@ -20,7 +20,7 @@ const GM_CONFIG = {
    * clasp deploy 後に発行される URL を貼り付ける。
    * 例: "https://script.google.com/macros/s/AKfycb.../exec"
    */
-  GAS_URL: "https://script.google.com/macros/s/PLACEHOLDER/exec",
+  GAS_URL: "https://script.google.com/macros/s/AKfycbwsJa3Q5JzYJ50t8l1b0xS4cfJ1DmEEZ5U4GA8-hwDTVxNASBiKItfu1Z3ljAgZqWft/exec",
 
   /**
    * Google Sheets の スプレッドシート ID
