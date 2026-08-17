@@ -1,14 +1,28 @@
 # GM_League
 
-J リーグ選手限定の eFootball 私設大会を運営するための集計ツール。  
+J リーグ選手限定の eFootball 私設大会を運営するための集計ツール。
 独自通貨・移籍市場・特別ルール（強奪）・承認制フローを備える。
 
-- **フロント**：GitHub Pages（HTML/CSS/Vanilla JS）
+- **フロント**：GitHub Pages（HTML/CSS/Vanilla JS・ビルド不要）
 - **認証**：Google Identity Services
-- **バックエンド**：Google Apps Script（clasp 管理）
-- **DB**：Google Sheets
+- **バックエンド**：Google Apps Script Web App
+- **DB**：Google Sheets（1シート = 1テーブル・全15シート）
 
 公開 URL：https://hinata082121-gif.github.io/GM_League/
+
+---
+
+## ⚠️ この運用ルールを外さないこと
+
+| ルール | 理由 |
+|---|---|
+| **clasp は使わない。** GAS の編集はスプレッドシートの「拡張機能 → Apps Script」からブラウザで直接行う | 初回セットアップで詰まったため方針転換。`gas/` 配下はミラー（バックアップ兼レビュー用）で、**正は GAS エディタ側** |
+| **再デプロイで「新しいデプロイ」を作らない。** 既存デプロイの編集で新バージョンを出す | 新規デプロイだと URL が変わり `config.js` の更新が毎回必要になる |
+| **GAS に貼るコードは行末コメントを避ける** | 貼り付け時に日本語コメントが途中改行され構文エラーになった実績あり |
+| **書き込みは必ず GAS 経由。** フロントから Sheets 直書きしない | 予算・プロテクト・承認の改ざん防止（SPEC.md §3 原則1） |
+| **金額・率・人数は Config シート参照。** コードに直書きしない | 運用中の調整を想定 |
+
+詳細な設計原則は `SPEC.md §3` / `CLAUDE.md` を参照。
 
 ---
 
@@ -17,330 +31,162 @@ J リーグ選手限定の eFootball 私設大会を運営するための集計�
 ```
 /
 ├─ index.html        # ログイン画面（GitHub Pages root 公開）
-├─ config.js         # 設定値一元管理（OAuthClientID / GAS URL）
+├─ config.js         # 設定値一元管理（OAuthClientID / GAS URL / SpreadsheetID）
 ├─ auth.js           # Google Identity Services ログイン処理
 ├─ app.js            # GAS API 共通 fetch ラッパ（callApi）
 ├─ style.css         # 共通スタイルシート
-├─ gas/              # clasp 管理の GAS ソース
-│   ├─ .clasp.json   # scriptId（デプロイ後に記入）
-│   ├─ appsscript.json
-│   ├─ Code.gs       # doPost エントリポイント・ルーティング
-│   ├─ auth.gs       # トークン検証・whoami
-│   ├─ config.gs     # Config シート読み取りヘルパ
-│   ├─ lib.gs        # Sheets 読み書きヘルパ・LockService ラッパ
-│   └─ setupSheets.gs# 全14シート作成・Config 初期値投入
-├─ SPEC.md           # 確定仕様（データモデル・経済ルール・API 一覧）
+├─ gas/              # GAS ソースのミラー（正は GAS エディタ側）
+│   ├─ Code.gs         # doPost エントリポイント・action ルーティング
+│   ├─ auth.gs         # トークン検証・whoami
+│   ├─ config.gs       # Config シート読み取りヘルパ
+│   ├─ lib.gs          # Sheets 読み書きヘルパ・LockService ラッパ
+│   ├─ setupSheets.gs  # 全15シート作成・Config / Clubs 初期値投入（冪等）
+│   ├─ api_master.gs   # Phase 1: マスタ & 閲覧の action ハンドラ
+│   └─ seed.gs         # テストデータ投入・削除（手動実行）
+├─ SPEC.md           # 確定仕様（データモデル・経済ルール・API 一覧・画面一覧）
 ├─ PROJECT.md        # 方針・進捗管理
 └─ CLAUDE.md         # Claude Code 用ガイドライン
 ```
 
----
-
-## セットアップ手順
-
-### 前提
-
-| ツール | バージョン確認 | インストール先 |
-|--------|--------------|--------------|
-| Node.js | `node -v` | https://nodejs.org/ |
-| clasp  | `clasp -v`  | `npm install -g @google/clasp` |
+> GAS エディタ上のエントリファイル名は `コード.gs`（デフォルト名）。
+> リポジトリ側の `Code.gs` と同じ中身を指す。
 
 ---
 
-### Step 1：clasp ログイン
+## セットアップ手順（初回のみ）
 
-```bash
-clasp login
-```
+### Step 1：GAS プロジェクトを開く
 
-ブラウザが開くので Google アカウントでログインして許可する。
+1. [スプレッドシート「GMリーグ管理」](https://docs.google.com/spreadsheets/d/1pi8-gYlKfc_fe_F4iY1idp3fD6lJMzMhW2HbLdQ42aM) を開く
+2. メニューの **拡張機能 → Apps Script** をクリック
+3. GAS エディタが別タブで開く
 
----
+### Step 2：ソースを貼り付ける
 
-### Step 2：GAS プロジェクトを作成し scriptId を記入
+左の「ファイル」欄で `+` → **スクリプト** を選び、ファイル名を付けて
+`gas/` 配下の各ファイルの中身をそのまま貼り付ける。
 
-1. https://script.google.com にアクセス
-2. 「新しいプロジェクト」→ プロジェクト名を **GM_League** に変更
-3. スクリプト URL から scriptId をコピー  
-   例：`https://script.google.com/home/projects/<ここがscriptId>/edit`
-4. `gas/.clasp.json` の `"PLACEHOLDER_SCRIPT_ID"` を書き換える
+| GAS エディタ上のファイル名 | 貼り付け元 |
+|---|---|
+| `コード.gs`（既存） | `gas/Code.gs` |
+| `auth` | `gas/auth.gs` |
+| `config` | `gas/config.gs` |
+| `lib` | `gas/lib.gs` |
+| `setupSheets` | `gas/setupSheets.gs` |
+| `api_master` | `gas/api_master.gs` |
+| `seed` | `gas/seed.gs` |
 
-```json
-{
-  "scriptId": "あなたのscriptId",
-  "rootDir": "."
-}
-```
+> 貼り付け後、**行数がリポジトリ側と一致しているか必ず確認する。**
+> 末尾が切れていると「Unexpected end of input」で実行できない。
 
----
+### Step 3：シートを一括作成（`setupAll` を実行）
 
-### Step 3：GAS にファイルをアップロード
+1. エディタ上部の関数選択プルダウンで **`setupAll`** を選ぶ
+2. **▶ 実行** をクリック
+3. 初回のみ権限承認 → 「詳細」→「GMリーグ管理（安全ではないページ）に移動」→「許可」
+4. 「実行ログ」で 15 シート作成・Config 25 件・Clubs 60 件の投入を確認
 
-```bash
-cd gas
-clasp push
-```
+> `setupAll` は既存シートを削除しない（冪等）。ヘッダーを変えたい場合は
+> 対象シートを手動削除してから再実行する。
 
-成功すると GAS エディタに `Code.gs`, `auth.gs`, `config.gs`, `lib.gs`, `setupSheets.gs` が反映される。
+### Step 4：Web App としてデプロイ
 
----
+**初回のみ**「新しいデプロイ」を使う。
 
-### Step 4：Google Sheets のシートを一括作成（`setupAll` を実行）
+1. 右上 **デプロイ → 新しいデプロイ**
+2. 種類（歯車）：**ウェブアプリ**
+3. 設定：
 
-> ここが最初の手動実行ステップ。以下を順番に行う。
-
-#### 4-1. GAS エディタを開く
-
-```bash
-clasp open
-```
-
-または https://script.google.com でプロジェクトを開く。
-
-#### 4-2. 実行する関数を選択
-
-エディタ上部のツールバーにある関数選択プルダウン（デフォルトは「関数を選択」）をクリックし、  
-**`setupAll`** を選択する。
-
-```
-[ setupAll ▼ ]  ▶実行  🐛デバッグ
-```
-
-#### 4-3. 「実行」ボタンを押す
-
-▶ ボタンをクリックする。
-
-#### 4-4. 権限承認ダイアログが出たら許可する
-
-初回実行時のみ以下の手順が必要。
-
-1. 「権限を確認」をクリック
-2. Google アカウントを選択
-3. 「このアプリは Google で確認されていません」と出たら  
-   「詳細」→「GM_League（安全ではないページ）に移動」をクリック
-4. 「許可」をクリック
-
-> ⚠️ 「確認されていません」は自分のスクリプトに対してよく出る表示。  
->    自分で作ったプロジェクトなので安全に許可できる。
-
-#### 4-5. 実行ログを確認する
-
-「実行ログ」タブ（または表示メニュー →「ログ」）を開いて確認する。
-
-**正常時のログ例：**
-
-```
-╔══════════════════════════════════════╗
-║  GM_League シートセットアップ開始    ║
-╚══════════════════════════════════════╝
-spreadsheetId: 1pi8-gYlKfc_fe_F4iY1idp3fD6lJMzMhW2HbLdQ42aM
-  [sheet] 作成: Users（5 列）
-  [sheet] 作成: Seasons（7 列）
-  [sheet] 作成: Teams（5 列）
-  [sheet] 作成: Players（5 列）
-  [sheet] 作成: Rosters（9 列）
-  [sheet] 作成: EntryLists（5 列）
-  [sheet] 作成: Transfers（12 列）
-  [sheet] 作成: Protections（8 列）
-  [sheet] 作成: BudgetTx（7 列）
-  [sheet] 作成: Matches（14 列）
-  [sheet] 作成: MatchGoals（4 列）
-  [sheet] 作成: MatchTeamStats（4 列）
-  [sheet] 作成: MatchGKStats（4 列）
-  [sheet] 作成: Config（2 列）
-  [Config] 追加予定: season_prize = 0  // シーズン賞金（未定）
-  ...（26 件）
-  [Config] 26 件をバッチ書き込みしました。
-────────────────────────────────────────
-【作成】 14 シート: Users, Seasons, Teams, ...
-【スキップ】 0 シート: なし
-【Config】 追加 26 件 / スキップ 0 件
-════════════════════════════════════════
-セットアップ完了。ログを確認してエラーがないことを確認してください。
-```
-
-**再実行した場合（冪等）：**
-
-```
-  [sheet] スキップ（既存）: Users
-  [sheet] スキップ（既存）: Seasons
-  ...
-【作成】 0 シート: なし
-【スキップ】 14 シート: Users, Seasons, ...
-【Config】 追加 0 件 / スキップ 26 件
-```
-
----
-
-### Step 5：GAS にコードをアップロードしてデプロイ
-
-#### 5-1. clasp push でソースを GAS にアップロード
-
-```bash
-cd gas
-clasp push
-```
-
-成功すると以下のように表示される：
-
-```
-└─ Code.gs
-└─ auth.gs
-└─ config.gs
-└─ lib.gs
-└─ setupSheets.gs
-└─ appsscript.json
-Pushed 6 files.
-```
-
-> ⚠️ `appsscript.json の上書きを許可しますか？` と聞かれたら `yes` を入力する。
-
-#### 5-2. Web App として新規デプロイ
-
-**方法A：clasp コマンド（推奨）**
-
-```bash
-clasp deploy --description "GM_League Phase 0"
-```
-
-成功すると以下のように表示される：
-
-```
-Created version 1.
-- AKfycbxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx @1.
-```
-
-Web App URL は `AKfycb...` の部分（デプロイメント ID）を使って構成される：
-
-```
-https://script.google.com/macros/s/<デプロイメントID>/exec
-```
-
-デプロイ一覧を確認するには：
-
-```bash
-clasp deployments
-```
-
-```
-2 Deployments.
-- AKfycbxxx @HEAD     (開発用・毎回変わる)
-- AKfycbyyy @1.       ← こちらが本番 URL
-```
-
-**方法B：GAS エディタ（GUI 操作）**
-
-1. GAS エディタ右上「デプロイ」→「新しいデプロイ」
-2. 種類（歯車アイコン）：**ウェブアプリ**
-3. 設定を入力：
-
-   | 項目 | 設定値 |
-   |------|--------|
-   | 説明 | `GM_League Phase 0` |
-   | 次のユーザーとして実行 | **自分（自分のアカウント名）** |
+   | 項目 | 値 |
+   |---|---|
+   | 説明 | `Phase 0` |
+   | 次のユーザーとして実行 | **自分** |
    | アクセスできるユーザー | **全員** |
 
-4. 「デプロイ」→ 発行された URL をコピー
+4. 発行された URL（末尾 `/exec`。`/dev` ではない）をコピー
+5. `config.js` の `GAS_URL` に貼り付けて GitHub に push
 
-#### 5-3. Web App URL を config.js に貼り付ける
+### Step 5：Users シートに主催者を登録
 
-`config.js` の `GAS_URL` を書き換える：
+`whoami` は Users シートに登録済みの email しか通さない。
 
-```js
-// 変更前
-GAS_URL: "https://script.google.com/macros/s/PLACEHOLDER/exec",
-
-// 変更後
-GAS_URL: "https://script.google.com/macros/s/AKfycbyyy.../exec",
-```
-
-> ⚠️ デプロイのたびに URL が変わる。更新した場合は `config.js` の `GAS_URL` も更新すること。  
->    コードを変更した後は `clasp push` → 既存デプロイを「新バージョンで更新」する。
-
----
-
-### Step 5.5：Users シートに初期ユーザーを手動追加
-
-`whoami` は Users シートに登録されている email のみ通過できる。  
-まず **自分（主催者）の email** を手動で追加する。
-
-1. [Google Sheets](https://docs.google.com/spreadsheets/d/1pi8-gYlKfc_fe_F4iY1idp3fD6lJMzMhW2HbLdQ42aM) を開く
-2. **Users** シートをクリック
-3. 2行目に以下を入力する（1行目はヘッダー）：
+Users シートの2行目に以下を入力する。
 
 | user_id | email | display_name | role | team_id |
-|---------|-------|--------------|------|---------|
-| `u_organizer_1` | `あなたのGmailアドレス` | `表示名` | `organizer` | （空欄） |
+|---|---|---|---|---|
+| `u001` | 自分の Gmail | 表示名 | `organizer` | （空欄） |
 
-4. 保存（自動保存）
-
----
-
-### Step 6：GitHub にプッシュして GitHub Pages を有効化
+### Step 6：GitHub Pages を有効化
 
 ```bash
-git remote add origin https://github.com/hinata082121-gif/GM_League.git
-git push -u origin master
+git push origin main
 ```
 
-GitHub リポジトリの Settings → Pages → Source を **`master` ブランチのルート（`/`）** に設定する。
+リポジトリの **Settings → Pages** で Source を `Deploy from a branch`、
+Branch を `main` / `/(root)` に設定して Save。
 
-公開 URL：https://hinata082121-gif.github.io/GM_League/
+> Pages は**中身のあるブランチがないと公開元を選べない**。
+> 先にコンテンツを push してから設定すること。
+> また「ローカルにファイルがある」ことと「GitHub に反映されている」ことは別物なので、
+> `git status` で未 push が無いか都度確認する。
 
----
-
-### Step 7：動作確認（Phase 0 完了確認）
-
-#### 7-1. ローカルでサーバーを起動
+### Step 7：動作確認
 
 ```bash
-# プロジェクトルートで（cd GM_League）
-npx serve .          # または
 python -m http.server 8000
 ```
 
-`http://localhost:8000` をブラウザで開く。
+`http://localhost:8000` を開く（`file://` では Google Sign-In が動かない）。
 
-> ⚠️ `file://` で直接開くと Google Sign-In が動かない（OAuth のリダイレクト制限のため）。
->    必ず `http://localhost:8000` を使う。
-
-#### 7-2. 「Google でサインイン」をクリック
-
-ボタンが表示されない場合は F12 コンソールにエラーがないか確認する。
-
-#### 7-3. 成功の確認ポイント
-
-**画面で確認：**
-- ユーザーバーに `表示名` と `主催者`（赤バッジ）が表示される
-- role が `team` なら `チームオーナー`（青バッジ）が表示される
-
-**コンソールで確認（F12）：**
-
-```
-[auth] ログイン成功。トークンを取得しました。
-[app] onSignIn — whoami 呼び出し中...
-[app] whoami 成功: { user_id: "u_organizer_1", email: "...", display_name: "...", role: "organizer", team_id: "" }
-```
-
-**エラー別の対処：**
-
-| コンソールのエラー | 原因 | 対処 |
-|---|---|---|
-| `GAS URL が設定されていません` | `config.js` の `GAS_URL` がプレースホルダのまま | Step 5-3 を実施 |
-| `whoami 未登録ユーザー` | Users シートに email がない | Step 5.5 を実施 |
-| `invalid_token` | トークン期限切れ | ページをリロードして再ログイン |
-| `http_403` | GAS のアクセス設定が「全員」になっていない | GAS エディタでデプロイ設定を確認 |
-| CORS エラー | GAS_URL が間違っている、または `redirect:follow` の問題 | URL を `clasp deployments` で再確認 |
+サインインして、ユーザーバーに表示名と `主催者` バッジが出れば疎通完了。
 
 ---
 
-## シートが壊れた・ヘッダーを変更したい場合
+## コードを更新するときの手順
 
-`setupAll()` は **既存シートを削除しない**。  
-ヘッダーを変更したい場合は：
+> **ここを間違えると URL が変わって動かなくなる。**
 
-1. Google Sheets でシートタブを右クリック →「削除」
-2. GAS エディタで `setupAll()` を再実行
+1. GAS エディタで該当ファイルを編集（またはリポジトリから貼り直し）
+2. 右上 **デプロイ → デプロイを管理**
+3. アクティブなデプロイの **編集（鉛筆アイコン）** をクリック
+4. バージョンを **「新バージョン」** に変更
+5. **デプロイ** をクリック
+
+これで **URL は変わらず**中身だけ更新される。`config.js` の修正は不要。
+
+リポジトリ側の `gas/` も同じ内容に更新して commit しておくこと。
+
+---
+
+## テストデータの投入・削除
+
+Phase 1 以降の画面確認用に、`seed.gs` で仮データを入れられる。
+
+| 関数 | 内容 |
+|---|---|
+| `seedTestData` | シーズン1件・チーム3件・選手15件・スカッド15件・初期予算3件を投入 |
+| `clearTestData` | 上記で投入した行（ID が `seed_` で始まる行）だけを削除 |
+
+GAS エディタの関数プルダウンから選んで実行する。どちらも冪等。
+
+> 選手名・所属クラブ・チーム名は動作確認用の暫定値。
+> 本番の全選手データは `importPlayersCsv` で CSV 一括投入する。
+> 初期予算額は Config の `seed_initial_budget` で変更できる。
+
+---
+
+## トラブルシューティング
+
+| 症状 | 原因 | 対処 |
+|---|---|---|
+| `GAS URL が設定されていません` | `config.js` の `GAS_URL` がプレースホルダのまま | Step 4-5 を実施 |
+| `unregistered` | Users シートに email が無い | Step 5 を実施。新メンバーは OAuth のテストユーザー追加も必要 |
+| `invalid_token` | トークン期限切れ | リロードして再ログイン |
+| `forbidden_organizer_only` | 主催者専用 action を team ロールで呼んだ | 想定どおりの動作 |
+| `http_403` | GAS のアクセス設定が「全員」でない | デプロイ設定を確認 |
+| CORS エラー | `GAS_URL` が古い／間違い | デプロイを管理で URL を再確認 |
+| `Unexpected end of input` | 貼り付け時に末尾が切れた | 全文コピーし直し、行数を照合 |
+| 「Google で確認されていません」 | 自作スクリプトへの通常警告 | 「詳細」→「移動」→「許可」で進めてよい |
 
 ---
 
@@ -348,8 +194,8 @@ python -m http.server 8000
 
 | Phase | 内容 | 状態 |
 |-------|------|------|
-| 0 | 基盤：Pages + Google ログイン + GAS スケルトン + Sheets セットアップ | 🔄 作業中 |
-| 1 | マスタ & 閲覧 | ⬜ |
+| 0 | 基盤：Pages + Google ログイン + GAS スケルトン + Sheets セットアップ | ✅ 完了 |
+| 1 | マスタ & 閲覧 | 🔄 作業中 |
 | 2 | エントリー | ⬜ |
 | 3 | 移籍 | ⬜ |
 | 4 | プロテクト | ⬜ |
@@ -359,3 +205,41 @@ python -m http.server 8000
 | 8 | 仕上げ | ⬜ |
 
 詳細は `SPEC.md §13` / `PROJECT.md §5` を参照。
+
+---
+
+## API 一覧（実装済み）
+
+すべて `doPost` 経由。`{ action, token, payload }` → `{ ok, data }` / `{ ok:false, error }`。
+
+### 認証
+
+| action | 権限 | 内容 |
+|---|---|---|
+| `whoami` | 全員 | トークンからユーザー情報・ロールを返す |
+
+### Phase 1：読み取り（ログイン済みなら誰でも）
+
+| action | payload | 内容 |
+|---|---|---|
+| `listPlayers` | `eligible_only?`, `position?` | 選手マスタ（ポジション順） |
+| `listTeams` | `active_only?` | チーム一覧 |
+| `listSeasons` | — | シーズン一覧 |
+| `listClubs` | — | 現実のJリーグクラブ一覧（カテゴリー別） |
+| `getTeamSquad` | `team_id`, `season_id?` | スカッド（在籍のみ・ポジション別集計付き） |
+| `getTeamBudget` | `team_id`, `season_id?` | 現保有予算（BudgetTx の SUM・reason 別内訳付き） |
+| `getMyTeam` | `season_id?` | 自チームのチーム情報＋スカッド＋予算 |
+
+### Phase 1：書き込み（主催者専用）
+
+| action | payload | 内容 |
+|---|---|---|
+| `listUsers` | — | ユーザー一覧 |
+| `listConfig` | — | Config 全件 |
+| `upsertPlayer` | `player_id?`, `name`, `position`, `real_club?`, `eligible?` | 選手の追加・更新 |
+| `upsertTeam` | `team_id?`, `name`, `owner_user_id?`, `kind?`, `active?` | チームの追加・更新 |
+| `upsertUser` | `user_id?`, `email`, `display_name?`, `role?`, `team_id?` | ユーザーの追加・更新（email が一意キー） |
+| `importPlayersCsv` | `csv` | CSV 一括登録（ヘッダー `name,position,real_club`） |
+| `setConfig` | `key`, `value` | Config 値の更新・追加 |
+
+未実装の action は `{ ok:false, error:"... は Phase N で実装します。" }` を返す。

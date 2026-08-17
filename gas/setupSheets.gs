@@ -1,11 +1,12 @@
 /**
- * setupSheets.gs — 全シートをヘッダー付きで一括作成・Config 初期値投入
+ * setupSheets.gs — 全シートをヘッダー付きで一括作成・Config / Clubs 初期値投入
  *
- * ▶ 使い方（初期セットアップ時に1回だけ実行）
- *   1. clasp push でこのファイルを GAS プロジェクトにアップロード
- *   2. GAS エディタで関数選択プルダウンから「setupAll」を選んで「実行」
- *   3. 権限承認ダイアログが出たら「許可」→「Googleアカウントを選択」→「許可」
- *   詳細な手順は README.md の「GAS セットアップ手順」を参照。
+ * ▶ 使い方
+ *   1. GAS エディタで関数選択プルダウンから「setupAll」を選んで「実行」
+ *   2. 権限承認ダイアログが出たら「許可」→「Googleアカウントを選択」→「許可」
+ *   詳細な手順は README.md の「セットアップ手順」を参照。
+ *
+ * 冪等なので、シートやクラブを追加したいときは何度実行してもよい。
  *
  * ⚠️ 既存シートは破壊しない。同名シートがある場合はスキップしてログに記録する。
  *    ヘッダーを変更したい場合はシートを手動削除してから再実行すること。
@@ -19,7 +20,7 @@
 // =============================================================================
 
 /**
- * 全14シートを作成し、Config 初期値を投入する。
+ * 全15シートを作成し、Config と Clubs の初期値を投入する。
  * GAS エディタで「setupAll」を選択して実行する。
  */
 function setupAll() {
@@ -49,11 +50,15 @@ function setupAll() {
   // --- Config 初期値投入 ---
   var configResult = _setupConfig();
 
+  // --- Clubs 初期値投入 ---
+  var clubResult = _setupClubs();
+
   // --- サマリー表示 ---
   Logger.log("────────────────────────────────────────");
   Logger.log("【作成】 " + results.created.length + " シート: " + (results.created.join(", ") || "なし"));
   Logger.log("【スキップ】 " + results.skipped.length + " シート: " + (results.skipped.join(", ") || "なし"));
   Logger.log("【Config】 追加 " + configResult.added + " 件 / スキップ " + configResult.skipped + " 件");
+  Logger.log("【Clubs】 追加 " + clubResult.added + " 件 / スキップ " + clubResult.skipped + " 件");
   if (results.errors.length > 0) {
     Logger.log("【エラー】 " + results.errors.join(" / "));
   }
@@ -66,7 +71,7 @@ function setupAll() {
 // =============================================================================
 
 /**
- * 全14シートの名前・ヘッダー配列・SPEC参照を返す。
+ * 全15シートの名前・ヘッダー配列・SPEC参照を返す。
  *
  * カラム名は SPEC.md §4 の表の「カラム」列と完全一致させる。
  * ここを変更した場合は lib.gs の getSheetData / appendRow も影響を受ける。
@@ -270,6 +275,18 @@ function _getSheetDefinitions() {
         "value", // string  設定値（数値も文字列として格納）
       ],
     },
+    {
+      // §4.15 Clubs ─ 現実のJリーグクラブ一覧
+      // 選手登録画面の「カテゴリー→クラブ」2段プルダウンの元データ。
+      // 毎シーズンの昇降格はこのシートを直接編集して反映する。
+      name: "Clubs",
+      spec: "SPEC.md §4.15",
+      headers: [
+        "category",   // enum    J1 / J2 / J3
+        "club_name",  // string  クラブ名（Players.real_club と一致させる）
+        "sort_order", // number  表示順
+      ],
+    },
   ];
 }
 
@@ -410,4 +427,118 @@ function _createSheetIfNotExists(name, headers) {
 
   Logger.log("  [sheet] 作成: " + name + "（" + headers.length + " 列）");
   return true;
+}
+
+// =============================================================================
+// Clubs 初期値（2026/27 シーズンの J1・J2・J3 各20クラブ／計60）
+// =============================================================================
+
+/**
+ * Clubs シートに現実のJリーグ全60クラブを投入する。
+ * 既に同じクラブ名がある場合はスキップ（上書きしない）。
+ *
+ * ⚠️ 昇降格やクラブ名変更があった場合は、このコードを直さず
+ *    スプレッドシートの Clubs シートを直接編集して反映すること。
+ *
+ * @returns {{ added: number, skipped: number }}
+ */
+function _setupClubs() {
+  var sheet = getSheet("Clubs");
+
+  var existing = {};
+  getSheetData("Clubs").forEach(function (row) {
+    if (row.club_name) existing[String(row.club_name)] = true;
+  });
+
+  var defs = _getClubDefinitions();
+  var rows = [];
+  var skipped = 0;
+
+  defs.forEach(function (d, idx) {
+    if (existing[d[1]]) {
+      skipped++;
+      return;
+    }
+    rows.push([d[0], d[1], idx + 1]);
+  });
+
+  if (rows.length > 0) {
+    sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, 3).setValues(rows);
+    Logger.log("  [Clubs] " + rows.length + " 件を書き込みました。");
+  }
+
+  return { added: rows.length, skipped: skipped };
+}
+
+/**
+ * 2026/27 シーズンの全60クラブ定義を返す。
+ * 形式は [category, club_name] の配列。
+ *
+ * @returns {Array<string[]>}
+ */
+function _getClubDefinitions() {
+  return [
+    ["J1", "鹿島アントラーズ"],
+    ["J1", "水戸ホーリーホック"],
+    ["J1", "浦和レッズ"],
+    ["J1", "ジェフユナイテッド千葉"],
+    ["J1", "柏レイソル"],
+    ["J1", "FC東京"],
+    ["J1", "東京ヴェルディ"],
+    ["J1", "FC町田ゼルビア"],
+    ["J1", "川崎フロンターレ"],
+    ["J1", "横浜F・マリノス"],
+    ["J1", "清水エスパルス"],
+    ["J1", "名古屋グランパス"],
+    ["J1", "京都サンガF.C."],
+    ["J1", "ガンバ大阪"],
+    ["J1", "セレッソ大阪"],
+    ["J1", "ヴィッセル神戸"],
+    ["J1", "ファジアーノ岡山"],
+    ["J1", "サンフレッチェ広島"],
+    ["J1", "アビスパ福岡"],
+    ["J1", "V・ファーレン長崎"],
+
+    ["J2", "北海道コンサドーレ札幌"],
+    ["J2", "ヴァンラーレ八戸"],
+    ["J2", "ベガルタ仙台"],
+    ["J2", "ブラウブリッツ秋田"],
+    ["J2", "モンテディオ山形"],
+    ["J2", "いわきFC"],
+    ["J2", "栃木シティ"],
+    ["J2", "RB大宮アルディージャ"],
+    ["J2", "横浜FC"],
+    ["J2", "湘南ベルマーレ"],
+    ["J2", "ヴァンフォーレ甲府"],
+    ["J2", "アルビレックス新潟"],
+    ["J2", "カターレ富山"],
+    ["J2", "ジュビロ磐田"],
+    ["J2", "藤枝MYFC"],
+    ["J2", "徳島ヴォルティス"],
+    ["J2", "FC今治"],
+    ["J2", "サガン鳥栖"],
+    ["J2", "大分トリニータ"],
+    ["J2", "テゲバジャーロ宮崎"],
+
+    ["J3", "福島ユナイテッドFC"],
+    ["J3", "栃木SC"],
+    ["J3", "ザスパ群馬"],
+    ["J3", "SC相模原"],
+    ["J3", "松本山雅FC"],
+    ["J3", "AC長野パルセイロ"],
+    ["J3", "ツエーゲン金沢"],
+    ["J3", "FC岐阜"],
+    ["J3", "レイラック滋賀FC"],
+    ["J3", "FC大阪"],
+    ["J3", "奈良クラブ"],
+    ["J3", "ガイナーレ鳥取"],
+    ["J3", "レノファ山口FC"],
+    ["J3", "カマタマーレ讃岐"],
+    ["J3", "愛媛FC"],
+    ["J3", "高知ユナイテッドSC"],
+    ["J3", "ギラヴァンツ北九州"],
+    ["J3", "ロアッソ熊本"],
+    ["J3", "鹿児島ユナイテッドFC"],
+    ["J3", "FC琉球"],
+  ];
 }

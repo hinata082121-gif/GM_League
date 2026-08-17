@@ -237,6 +237,298 @@ body {
   border-top: 1px solid var(--color-border);
 }
 
+/* ==========================================================================
+   Phase 1: マスタ & 閲覧
+   ========================================================================== */
+
+/* ---------- タブ ---------- */
+.tab-nav {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 20px;
+  border-bottom: 2px solid var(--color-border);
+  flex-wrap: wrap;
+}
+
+.tab-btn {
+  background: none;
+  border: none;
+  border-bottom: 3px solid transparent;
+  margin-bottom: -2px;
+  padding: 10px 18px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--color-text-sub);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.tab-btn:hover {
+  color: var(--color-primary);
+}
+
+.tab-btn.is-active {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+}
+
+/* ---------- 見出し ---------- */
+.sub-head {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--color-text);
+  margin: 24px 0 8px;
+  padding-left: 8px;
+  border-left: 3px solid var(--color-primary);
+}
+
+/* ---------- 統計カード ---------- */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.stat {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stat-label {
+  font-size: 0.75rem;
+  color: var(--color-text-sub);
+}
+
+.stat-value {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.stat-sm {
+  font-size: 0.9rem;
+}
+
+/* ---------- フィルタ行 ---------- */
+.filter-row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.filter-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-text-sub);
+}
+
+/* ---------- テーブル ---------- */
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.table-scroll {
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.data-table th,
+.data-table td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+
+.data-table thead th {
+  background: var(--color-bg);
+  font-weight: 700;
+  font-size: 0.78rem;
+  color: var(--color-text-sub);
+  position: sticky;
+  top: 0;
+}
+
+.data-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.data-table tbody tr:hover {
+  background: #f1f3f4;
+}
+
+.data-table tfoot th {
+  background: var(--color-bg);
+  font-weight: 700;
+  border-top: 2px solid var(--color-border);
+  border-bottom: none;
+}
+
+.data-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.data-table .pos-amount,
+.data-table .num.pos {
+  color: var(--color-success);
+}
+
+.data-table .num.neg {
+  color: var(--color-danger);
+}
+
+/* ---------- ポジションバッジ ---------- */
+.pos {
+  display: inline-block;
+  min-width: 32px;
+  text-align: center;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.pos-GK { background: #f9ab00; }
+.pos-DF { background: #1e8e3e; }
+.pos-MF { background: #1a73e8; }
+.pos-FW { background: #d93025; }
+
+/* ---------- タグ ---------- */
+.tag-ok,
+.tag-ng {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 99px;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.tag-ok {
+  background: #e6f4ea;
+  color: var(--color-success);
+}
+
+.tag-ng {
+  background: #fce8e6;
+  color: var(--color-danger);
+}
+
+/* ---------- フォーム ---------- */
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px 16px;
+  align-items: end;
+}
+
+.form-grid label,
+.filter-row label {
+  font-size: 0.8rem;
+}
+
+.form-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-weight: 600;
+  color: var(--color-text-sub);
+}
+
+.check-label {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 6px !important;
+  padding-bottom: 8px;
+}
+
+input[type="text"],
+input[type="email"],
+select,
+textarea {
+  font-family: inherit;
+  font-size: 0.9rem;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 7px 10px;
+  width: 100%;
+}
+
+textarea {
+  resize: vertical;
+  font-family: 'Courier New', monospace;
+  font-size: 0.85rem;
+  margin-bottom: 12px;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -1px;
+}
+
+.form-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.form-msg {
+  font-size: 0.82rem;
+  white-space: pre-wrap;
+}
+
+.list-area {
+  margin-top: 20px;
+}
+
+/* ---------- メッセージ ---------- */
+.msg-ok {
+  color: var(--color-success);
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+}
+
+.msg-error {
+  color: var(--color-danger);
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+}
+
+.muted {
+  color: var(--color-text-sub);
+  font-size: 0.85rem;
+}
+
+.note-sm {
+  font-size: 0.75rem;
+  margin-top: 6px;
+}
+
 /* ---------- ユーティリティ ---------- */
 code {
   background: var(--color-bg);

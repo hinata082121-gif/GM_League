@@ -30,6 +30,9 @@
 
   <!-- GAS API 共通ラッパ・UI ハンドラ（app.js） -->
   <script src="app.js"></script>
+
+  <!-- Phase 1 の各画面ロジック（views.js） -->
+  <script src="views.js"></script>
 </head>
 <body>
 
@@ -79,14 +82,161 @@
         </button>
       </div>
 
-      <!-- メインコンテンツ（Phase 1 以降で各画面を実装） -->
-      <div class="card">
-        <h2>ダッシュボード</h2>
-        <p>ログイン成功 ✅ — whoami の疎通が確認できました。</p>
-        <p style="margin-top:8px; color: var(--color-text-sub); font-size:0.9rem;">
-          以降のフェーズでチーム情報・移籍・試合集計などの画面を追加します。
-          詳細は <code>SPEC.md §9</code> の画面一覧を参照してください。
-        </p>
+      <!-- ===== タブナビゲーション ===== -->
+      <nav class="tab-nav">
+        <button class="tab-btn" data-tab="dashboard">ダッシュボード</button>
+        <button class="tab-btn" data-tab="teams">チーム閲覧</button>
+        <button class="tab-btn" id="tab-master" data-tab="master" style="display:none;">
+          マスタ管理
+        </button>
+      </nav>
+
+      <!-- ===== 画面1: ダッシュボード ===== -->
+      <div class="tab-panel" data-panel="dashboard" style="display:none;">
+        <div class="card">
+          <h2>ダッシュボード</h2>
+          <div id="dashboard-body"></div>
+        </div>
+      </div>
+
+      <!-- ===== 画面2: チーム閲覧 ===== -->
+      <div class="tab-panel" data-panel="teams" style="display:none;">
+        <div class="card">
+          <h2>チーム閲覧</h2>
+          <div class="filter-row">
+            <label>
+              チーム
+              <select id="tv-team"></select>
+            </label>
+            <label>
+              シーズン
+              <select id="tv-season"></select>
+            </label>
+          </div>
+          <div id="tv-body">
+            <p class="muted">チームを選択してください。</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== 画面3: マスタ管理（主催者限定） ===== -->
+      <div class="tab-panel" data-panel="master" style="display:none;">
+
+        <!-- 選手マスタ -->
+        <div class="card">
+          <h2>選手マスタ</h2>
+          <form id="form-player" class="form-grid">
+            <label>
+              選手名
+              <input type="text" id="mp-name" required placeholder="例: 山田太郎" />
+            </label>
+            <label>
+              ポジション
+              <select id="mp-pos" required>
+                <option value="GK">GK</option>
+                <option value="DF">DF</option>
+                <option value="MF">MF</option>
+                <option value="FW">FW</option>
+              </select>
+            </label>
+            <label>
+              カテゴリー
+              <select id="mp-category"></select>
+            </label>
+            <label>
+              現実クラブ
+              <select id="mp-club-select"></select>
+              <input type="text" id="mp-club" placeholder="クラブ名を入力" style="display:none;" />
+            </label>
+            <label class="check-label">
+              <input type="checkbox" id="mp-eligible" checked />
+              エントリー可（eligible）
+            </label>
+            <div class="form-actions">
+              <button type="submit" class="btn btn-primary">選手を登録</button>
+              <span id="mp-result" class="form-msg"></span>
+            </div>
+          </form>
+          <div id="mp-list" class="list-area"></div>
+        </div>
+
+        <!-- CSV 一括登録 -->
+        <div class="card">
+          <h2>選手 CSV 一括登録</h2>
+          <p class="muted">
+            1行目はヘッダー。<code>name,position,real_club</code> の順。
+            同名かつ同ポジションの選手は自動でスキップします。
+          </p>
+          <form id="form-csv">
+            <textarea id="mc-csv" rows="8" placeholder="name,position,real_club&#10;山田太郎,FW,川崎フロンターレ&#10;鈴木一郎,GK,鹿島アントラーズ"></textarea>
+            <div class="form-actions">
+              <button type="submit" class="btn btn-primary">CSV を取り込む</button>
+              <span id="mc-result" class="form-msg"></span>
+            </div>
+          </form>
+        </div>
+
+        <!-- チームマスタ -->
+        <div class="card">
+          <h2>チームマスタ</h2>
+          <form id="form-team" class="form-grid">
+            <label>
+              チーム名
+              <input type="text" id="mt-name" required placeholder="例: ○○FC" />
+            </label>
+            <label>
+              種別
+              <select id="mt-kind">
+                <option value="新規">新規</option>
+                <option value="継続">継続</option>
+              </select>
+            </label>
+            <label class="check-label">
+              <input type="checkbox" id="mt-active" checked />
+              大会参加中（active）
+            </label>
+            <div class="form-actions">
+              <button type="submit" class="btn btn-primary">チームを登録</button>
+              <span id="mt-result" class="form-msg"></span>
+            </div>
+          </form>
+        </div>
+
+        <!-- ユーザーマスタ -->
+        <div class="card">
+          <h2>ユーザーマスタ</h2>
+          <p class="muted">
+            ここに登録した Gmail だけがログインできます。
+            新規メンバーは OAuth 同意画面のテストユーザー追加も別途必要です。
+          </p>
+          <form id="form-user" class="form-grid">
+            <label>
+              メールアドレス
+              <input type="email" id="mu-email" required placeholder="example@gmail.com" />
+            </label>
+            <label>
+              表示名
+              <input type="text" id="mu-name" placeholder="例: 山田" />
+            </label>
+            <label>
+              ロール
+              <select id="mu-role">
+                <option value="team">チームオーナー</option>
+                <option value="organizer">主催者</option>
+              </select>
+            </label>
+            <label>
+              所属チーム
+              <select id="mu-team"></select>
+            </label>
+            <div class="form-actions">
+              <button type="submit" class="btn btn-primary">ユーザーを登録</button>
+              <span id="mu-result" class="form-msg"></span>
+            </div>
+          </form>
+          <div id="mu-list" class="list-area"></div>
+        </div>
+
       </div>
 
     </section>
@@ -94,7 +244,7 @@
   </main>
 
   <footer class="site-footer">
-    <small>GM League v0.1 — Phase 0</small>
+    <small>GM League v0.1 — Phase 1</small>
   </footer>
 
 </body>

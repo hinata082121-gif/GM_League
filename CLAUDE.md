@@ -27,6 +27,21 @@ Claude Code がこのリポジトリで作業するときに必ず読むファ�
 
 ---
 
+## GAS 運用ルール（確定・変更禁止）
+
+- **clasp は不採用。** スプレッドシートの「拡張機能 → Apps Script」からブラウザで直接編集・デプロイする。
+  `gas/` 配下はミラー（バックアップ兼レビュー用）であり、正はGASエディタ側。
+- **再デプロイは「新しいデプロイ」を作らない。**
+  「デプロイを管理 → 既存デプロイの編集（鉛筆）→ バージョン：新バージョン → デプロイ」で
+  **URLを変えずに**中身だけ更新する。URLが変わると `config.js` の更新が毎回必要になるため。
+- **GASへ貼るコードは行末コメント（`// ...`）を避けるか短くする。**
+  貼り付け時に日本語コメントが途中改行され構文エラー（Unexpected end of input 等）を起こした実績あり。
+  長いファイルを貼るときは全文コピーを確実に行い、貼付後に行数一致を確認する。
+- 対象シートは `SpreadsheetApp.openById(SPREADSHEET_ID)` で明示指定する（`getActiveSpreadsheet()` は使わない）。
+- 「このアプリは Google で確認されていません」警告は自作スクリプトへの通常表示。詳細→移動→許可で進めてよい。
+
+---
+
 ## アーキテクチャ概要
 
 ```
@@ -62,15 +77,17 @@ config.js
 ├─ config.js         # 設定値一元管理（OAuthClientID・GAS URL等）
 ├─ auth.js           # Google Identity Services ログイン処理
 ├─ app.js            # GAS API 共通 fetch ラッパ（callApi関数）
+├─ views.js          # Phase 1 画面（ダッシュボード/チーム閲覧/マスタ管理）
 ├─ style.css         # スタイルシート
-├─ gas/              # clasp 管理の GAS ソース
-│   ├─ .clasp.json   # scriptId（デプロイ後に記入）
+├─ gas/              # GAS ソースのミラー（正はGASエディタ側。clasp不採用）
 │   ├─ appsscript.json
 │   ├─ Code.gs       # doPost エントリポイント・ルーティング
 │   ├─ auth.gs       # トークン検証・whoami
 │   ├─ config.gs     # Config シート読み取りヘルパ
 │   ├─ lib.gs        # Sheets 読み書きヘルパ・LockService ラッパ
-│   └─ setupSheets.gs# 全14シートをヘッダー付きで一括作成
+│   ├─ setupSheets.gs# 全15シート作成・Config / Clubs 初期値投入（冪等）
+│   ├─ api_master.gs # Phase 1 の action ハンドラ（マスタ&閲覧）
+│   └─ seed.gs       # テストデータ投入/削除（手動実行）
 ├─ SPEC.md           # 確定仕様
 ├─ PROJECT.md        # 方針・進捗
 └─ CLAUDE.md         # 本ファイル
@@ -82,8 +99,8 @@ config.js
 
 | Phase | 内容 | 状態 |
 |---|---|---|
-| 0 | 基盤：Pages雛形 + Googleログイン + GASスケルトン + Sheetsセットアップ | 🔄 作業中 |
-| 1 | マスタ & 閲覧 | ⬜ |
+| 0 | 基盤：Pages雛形 + Googleログイン + GASスケルトン + Sheetsセットアップ | ✅ |
+| 1 | マスタ & 閲覧 | 🔄 作業中 |
 | 2 | エントリー | ⬜ |
 | 3 | 移籍 | ⬜ |
 | 4 | プロテクト | ⬜ |

@@ -64,10 +64,51 @@ function _route(action, token, payload) {
     case "whoami":
       return whoami(token);
 
-    // ---- チームオーナー向け ----
-    case "getMyTeam":
-      return { ok: false, error: "getMyTeam は Phase 1 で実装します。" };
+    // ---- Phase 1: マスタ読み取り（ログイン済みなら誰でも） ----
+    case "listPlayers":
+      return listPlayers(token, payload);
 
+    case "listTeams":
+      return listTeams(token, payload);
+
+    case "listSeasons":
+      return listSeasons(token);
+
+    case "listClubs":
+      return listClubs(token);
+
+    case "getTeamSquad":
+      return getTeamSquad(token, payload);
+
+    case "getTeamBudget":
+      return getTeamBudget(token, payload);
+
+    case "getMyTeam":
+      return getMyTeam(token, payload);
+
+    // ---- Phase 1: マスタ書き込み（主催者専用） ----
+    case "listUsers":
+      return listUsers(token);
+
+    case "listConfig":
+      return listConfig(token);
+
+    case "upsertPlayer":
+      return upsertPlayer(token, payload);
+
+    case "upsertTeam":
+      return upsertTeam(token, payload);
+
+    case "upsertUser":
+      return upsertUser(token, payload);
+
+    case "importPlayersCsv":
+      return importPlayersCsv(token, payload);
+
+    case "setConfig":
+      return setConfig(token, payload);
+
+    // ---- チームオーナー向け ----
     case "submitEntryList":
       return { ok: false, error: "submitEntryList は Phase 2 で実装します。" };
 
@@ -99,14 +140,10 @@ function _route(action, token, payload) {
     case "closeSeason":
       return { ok: false, error: action + " は Phase 7 で実装します。" };
 
-    case "setConfig":
-      return { ok: false, error: "setConfig は Phase 1 で実装します。" };
-
-    // ---- 読み取り（GAS 経由版） ----
+    // ---- 読み取り（集計系・Phase 6） ----
     case "getStandings":
     case "getTournament":
     case "getRankings":
-    case "getTeamSquad":
     case "getProtections":
     case "getHistory":
       return { ok: false, error: action + " は Phase 6 で実装します。" };

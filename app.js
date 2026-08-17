@@ -101,6 +101,11 @@ async function onSignIn(token) {
     if (appSection) appSection.style.display = 'block';
     renderUserInfo(res.data);
 
+    // Phase 1 の画面を初期化（views.js）
+    if (typeof initViews === 'function') {
+      initViews(res.data);
+    }
+
   } else if (res.error === 'unregistered') {
     // ❌ Users シートに email がない
     console.warn('[app] 未登録ユーザー');
