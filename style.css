@@ -561,6 +561,32 @@ body {
   white-space: nowrap;
 }
 
+/* ---------- 金額入力の単位表示 ---------- */
+.unit-hint {
+  display: inline-block;
+  background: #e8f0fe;
+  color: var(--color-primary);
+  border-radius: 4px;
+  padding: 0 6px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  margin-left: 4px;
+}
+
+.money-echo {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--color-text-sub);
+  font-variant-numeric: tabular-nums;
+  min-height: 1.4em;
+}
+
+.money-echo-on {
+  color: var(--color-primary);
+}
+
 /* ---------- 移籍のコスト表示 ---------- */
 .cost-preview {
   display: grid;

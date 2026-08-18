@@ -33,6 +33,49 @@ const cache = {
 /** カテゴリー選択で「その他」を選んだときの値。自由入力に切り替える */
 const CLUB_OTHER = '__other__';
 
+/**
+ * 金額入力の最小単位（円）。
+ *
+ * 大会ルール上、移籍金などの最小単位は 100万円。
+ * 画面の入力欄はこの単位で受け取り、GAS へ送る直前に円へ換算する。
+ * こうすると「0 を1つ多く打つ」種の入力ミスが構造的に起きなくなる。
+ * シートに保存される値は従来どおり円のまま。
+ */
+const MONEY_UNIT = 1000000;
+
+/**
+ * 100万円単位の入力値を円に変換する。
+ *
+ * @param {*} v 入力欄の値
+ * @returns {number} 円
+ */
+function unitToYen(v) {
+  const n = Number(v);
+  if (!isFinite(n) || n <= 0) return 0;
+  return Math.floor(n) * MONEY_UNIT;
+}
+
+/**
+ * 金額入力欄に「→ 2億5000万円」の確認表示を出す。
+ *
+ * @param {string} inputId
+ * @param {string} echoId
+ */
+function bindMoneyEcho(inputId, echoId) {
+  const input = document.getElementById(inputId);
+  const echo = document.getElementById(echoId);
+  if (!input || !echo) return;
+
+  const update = () => {
+    const yen = unitToYen(input.value);
+    echo.textContent = yen > 0 ? '→ ' + formatMoney(yen) : '—';
+    echo.className = 'money-echo' + (yen > 0 ? ' money-echo-on' : '');
+  };
+
+  input.addEventListener('input', update);
+  update();
+}
+
 // ---------------------------------------------------------------------------
 // 初期化
 // ---------------------------------------------------------------------------
@@ -98,8 +141,14 @@ function showTab(name) {
 // ---------------------------------------------------------------------------
 
 /**
- * 金額を「◯億◯万円」形式の読みやすい文字列にする。
- * 端数が出る場合はカンマ区切りの円表記にフォールバックする。
+ * 金額を「◯億◯◯00万円」形式の読みやすい文字列にする。
+ *
+ * 大会の最小単位が 100万円なので、億の位がある場合は万の位を必ず4桁で
+ * ゼロ埋めして表示する（例: 1億 → 「1億0000万円」）。
+ * 一覧で並んだときに桁が揃い、読み違いを防げる。
+ *
+ * 100万円未満の端数が出た場合（補填金の按分など）は
+ * カンマ区切りの円表記にフォールバックする。
  *
  * @param {number} n
  * @returns {string}
@@ -115,10 +164,11 @@ function formatMoney(n) {
   const oku = Math.floor(abs / 100000000);
   const man = Math.floor((abs % 100000000) / 10000);
 
-  let out = '';
-  if (oku > 0) out += oku + '億';
-  if (man > 0) out += man + '万';
-  return sign + out + '円';
+  if (oku > 0) {
+    // 億がある場合は万を4桁ゼロ埋めして桁を揃える
+    return sign + oku + '億' + String(man).padStart(4, '0') + '万円';
+  }
+  return sign + man + '万円';
 }
 
 /**
@@ -1242,6 +1292,7 @@ async function renderTransfer() {
     document.getElementById('tr-player').onchange = updateTransferPreview;
     document.getElementById('tr-fee').oninput = updateTransferPreview;
     document.getElementById('tr-submit').onclick = onSubmitTransfer;
+    bindMoneyEcho('tr-fee', 'tr-fee-echo');
     seasonSel.dataset.bound = '1';
   }
 
@@ -1422,7 +1473,7 @@ function updateTransferPreview() {
   if (!info) return;
 
   const playerId = document.getElementById('tr-player').value;
-  const fee = Number(document.getElementById('tr-fee').value) || 0;
+  const fee = unitToYen(document.getElementById('tr-fee').value);
 
   let cost;
   let payout;
@@ -1473,7 +1524,7 @@ async function onSubmitTransfer() {
     to_team: transferData.team_id,
     player_id: document.getElementById('tr-player').value,
     method: document.getElementById('tr-method').value,
-    gross_fee: Number(document.getElementById('tr-fee').value) || 0,
+    gross_fee: unitToYen(document.getElementById('tr-fee').value),
   });
 
   if (res.ok) {
@@ -1615,6 +1666,7 @@ async function renderTxApproval() {
     sel.onchange = loadTxApprovalList;
     document.getElementById('ta-pending-only').onchange = loadTxApprovalList;
     document.getElementById('au-submit').onclick = onSubmitAuction;
+    bindMoneyEcho('au-fee', 'au-fee-echo');
     sel.dataset.bound = '1';
   }
 
@@ -1767,7 +1819,7 @@ async function onSubmitAuction() {
   const seasonId = document.getElementById('ta-season').value;
   const teamId = document.getElementById('au-team').value;
   const playerId = document.getElementById('au-player').value;
-  const fee = Number(document.getElementById('au-fee').value) || 0;
+  const fee = unitToYen(document.getElementById('au-fee').value);
 
   if (!teamId || !playerId) {
     setResult('au-result', false, '落札チームと選手を選んでください。');

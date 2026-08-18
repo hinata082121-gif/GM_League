@@ -187,8 +187,9 @@
                 <select id="tr-player"></select>
               </label>
               <label id="tr-fee-wrap">
-                交渉額（円）
-                <input type="number" id="tr-fee" min="0" step="10000000" placeholder="例: 100000000" />
+                交渉額 <span class="unit-hint">100万円単位</span>
+                <input type="number" id="tr-fee" min="0" step="1" placeholder="例: 100 → 1億円" />
+                <span id="tr-fee-echo" class="money-echo">—</span>
               </label>
             </div>
             <div id="tr-preview" class="cost-preview"></div>
@@ -239,8 +240,9 @@
               <select id="au-player"></select>
             </label>
             <label>
-              落札額（円）
-              <input type="number" id="au-fee" min="0" step="10000000" />
+              落札額 <span class="unit-hint">100万円単位</span>
+              <input type="number" id="au-fee" min="0" step="1" placeholder="例: 50 → 5000万円" />
+              <span id="au-fee-echo" class="money-echo">—</span>
             </label>
             <div class="form-actions">
               <button type="button" id="au-submit" class="btn btn-primary">登録する</button>
