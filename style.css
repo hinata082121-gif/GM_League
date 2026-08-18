@@ -815,6 +815,16 @@ body {
   margin-bottom: 6px;
 }
 
+/* ---------- 終了処理レポート ---------- */
+.detail-grid-list {
+  list-style: none;
+  font-size: 0.82rem;
+}
+
+.detail-grid-list li {
+  padding: 2px 0;
+}
+
 /* ---------- 状態タグ ---------- */
 .tag-none,
 .tag-pending,

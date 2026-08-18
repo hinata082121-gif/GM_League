@@ -91,7 +91,7 @@ async function initViews(user) {
 
   // 主催者だけマスタ管理・承認タブを表示
   const organizerOnly = user.role === 'organizer';
-  ['tab-master', 'tab-approval', 'tab-txapproval'].forEach((id) => {
+  ['tab-master', 'tab-approval', 'tab-txapproval', 'tab-season'].forEach((id) => {
     const el = document.getElementById(id);
     if (el) el.style.display = organizerOnly ? 'inline-block' : 'none';
   });
@@ -134,6 +134,7 @@ function showTab(name) {
   if (name === 'protect') renderProtect();
   if (name === 'match') renderMatch();
   if (name === 'stats') renderStats();
+  if (name === 'season') renderSeasonAdmin();
   if (name === 'approval') renderApproval();
   if (name === 'txapproval') renderTxApproval();
   if (name === 'master') renderMaster();
@@ -2989,4 +2990,393 @@ async function renderRankings(seasonId) {
       シュートセーブ率は ${d.min_matches_for_save_rate} 試合以上出場した GK のみを対象とし、
       分母は出場試合における相手チームの枠内シュート数です。
     </p>`;
+}
+
+// ---------------------------------------------------------------------------
+// 画面8: 運営・進行（主催者限定・Phase 7）
+// ---------------------------------------------------------------------------
+
+/** 直近に取得したシーズン進行状況 */
+let seasonProgress = null;
+
+/**
+ * 運営画面を初期化する。
+ */
+async function renderSeasonAdmin() {
+  if (currentUser.role !== 'organizer') return;
+
+  const seasons = await loadSeasons(true);
+  fillSelect('sp-season', seasons, 'season_id', 'name');
+
+  const teams = await loadTeams();
+  fillSelect('pn-team', teams, 'team_id', 'name', 'チームを選択');
+  fillSelect('cp-team', teams, 'team_id', 'name', 'チームを選択');
+
+  const sel = document.getElementById('sp-season');
+  if (!sel.dataset.bound) {
+    sel.onchange = loadSeasonAdmin;
+    document.getElementById('sp-advance').onclick = onAdvanceSeason;
+    document.getElementById('sp-close').onclick = onCloseSeason;
+    document.getElementById('sp-sponsor-submit').onclick = onSubmitSponsor;
+    document.getElementById('pn-submit').onclick = onSubmitPenalty;
+    document.getElementById('cp-submit').onclick = onSubmitCompensation;
+    document.getElementById('cp-team').onchange = loadCompensationPlayers;
+    bindMoneyEcho('pn-amount', 'pn-amount-echo');
+    sel.dataset.bound = '1';
+  }
+
+  await loadSeasonAdmin();
+}
+
+/**
+ * 進行状況・引継ぎ先候補・スポンサー入力欄を組み立てる。
+ */
+async function loadSeasonAdmin() {
+  const seasonId = document.getElementById('sp-season').value;
+  if (!seasonId) return;
+
+  setLoading('sp-status');
+
+  const res = await callApi('getSeasonProgress', { season_id: seasonId });
+  if (!res.ok) {
+    setError('sp-status', '進行状況の取得に失敗しました: ' + res.error);
+    return;
+  }
+
+  seasonProgress = res.data;
+  renderSeasonStatusBox();
+
+  // 引継ぎ先は自分以外のシーズン
+  const seasons = (await loadSeasons()).filter((s) => s.season_id !== seasonId);
+  fillSelect('sp-next', seasons, 'season_id', 'name', '引継ぎしない');
+
+  renderSponsorInputs(await loadTeams());
+  await loadCompensationPlayers();
+}
+
+/**
+ * 現在の状態と実施済みの経済処理を表示する。
+ */
+function renderSeasonStatusBox() {
+  const d = seasonProgress;
+  const box = document.getElementById('sp-status');
+
+  const flag = (label, done) =>
+    `<div class="stat">
+      <span class="stat-label">${esc(label)}</span>
+      <span class="stat-value stat-sm">${done ? '<span class="tag-ok">計上済</span>' : '<span class="tag-none">未</span>'}</span>
+    </div>`;
+
+  const nextLine = d.can_advance
+    ? '<strong>' + esc(d.next_status) + '</strong> へ進めます'
+    : (d.closed ? '終了済みです' : 'これ以上は進められません（終了処理へ）');
+
+  box.innerHTML = `
+    <div class="stat-grid">
+      <div class="stat">
+        <span class="stat-label">現在の状態</span>
+        <span class="stat-value">${esc(d.status)}</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">次の状態</span>
+        <span class="stat-value stat-sm">${nextLine}</span>
+      </div>
+      ${flag('シーズン賞金', d.applied.season_prize)}
+      ${flag('スポンサー', d.applied.sponsor)}
+      ${flag('順位賞金', d.applied.rank_prize)}
+      ${flag('終了手数料', d.applied.season_fee)}
+    </div>
+    <p class="muted note-sm">
+      進行順: ${d.statuses.join(' → ')}
+    </p>`;
+
+  document.getElementById('sp-advance').disabled = !d.can_advance;
+  document.getElementById('sp-close').disabled = !d.can_close;
+}
+
+/**
+ * シーズンを1つ進める。
+ */
+async function onAdvanceSeason() {
+  const d = seasonProgress;
+  if (!confirm('シーズンを「' + d.next_status + '」へ進めます。よろしいですか？')) return;
+
+  const btn = document.getElementById('sp-advance');
+  btn.disabled = true;
+  setResult('sp-result', true, '実行中...');
+
+  const res = await callApi('advanceSeason', { season_id: d.season_id });
+
+  if (res.ok) {
+    const effects = res.data.effects || [];
+    setResult(
+      'sp-result',
+      true,
+      '「' + res.data.status + '」に進みました。' + (effects.length ? ' ' + effects.join(' / ') : '')
+    );
+    cache.seasons = null;
+    await loadSeasons(true);
+    await loadSeasonAdmin();
+  } else {
+    btn.disabled = false;
+    setResult('sp-result', false, '進められません: ' + res.error);
+  }
+}
+
+/**
+ * シーズン終了処理を実行する。取り消せないので二重に確認する。
+ */
+async function onCloseSeason() {
+  const d = seasonProgress;
+  const nextSel = document.getElementById('sp-next');
+  const nextId = nextSel.value;
+  const nextName = nextId ? nextSel.options[nextSel.selectedIndex].text : 'なし';
+
+  const msg =
+    'シーズン「' + d.season_name + '」を終了します。\n\n' +
+    '・順位賞金と得点王賞金を計上\n' +
+    '・残予算から手数料を控除\n' +
+    '・期限付き選手を離脱\n' +
+    '・引継ぎ先: ' + nextName + '\n\n' +
+    'この操作は取り消せません。実行しますか？';
+
+  if (!confirm(msg)) return;
+
+  const btn = document.getElementById('sp-close');
+  btn.disabled = true;
+  setResult('sp-close-result', true, '実行中...');
+
+  const res = await callApi('closeSeason', {
+    season_id: d.season_id,
+    next_season_id: nextId,
+  });
+
+  if (!res.ok) {
+    btn.disabled = false;
+    setResult('sp-close-result', false, '終了できません: ' + res.error);
+    return;
+  }
+
+  setResult('sp-close-result', true, 'シーズンを終了しました。');
+  renderCloseReport(res.data.report);
+  cache.seasons = null;
+  await loadSeasons(true);
+  await loadSeasonAdmin();
+}
+
+/**
+ * 終了処理の結果を表示する。
+ *
+ * @param {Object} report
+ */
+function renderCloseReport(report) {
+  const box = document.getElementById('sp-report');
+  const teams = cache.teams || [];
+  const nameOf = (id) => {
+    const t = teams.find((x) => x.team_id === id);
+    return t ? t.name : id;
+  };
+
+  const list = (title, rows, fmt) =>
+    rows.length
+      ? '<div><h4 class="rank-title">' + esc(title) + '</h4><ul class="detail-grid-list">' +
+        rows.map((r) => '<li>' + esc(fmt(r)) + '</li>').join('') + '</ul></div>'
+      : '';
+
+  box.innerHTML = `
+    <h3 class="sub-head">終了処理の結果</h3>
+    <div class="detail-grid">
+      ${list('順位賞金', report.rank_prizes, (r) => nameOf(r.team_id) + ' ' + r.rank + '位 ' + formatMoney(r.amount))}
+      ${list('得点王賞金', report.top_scorer_prizes, (r) => nameOf(r.team_id) + ' ' + r.goals + '点 ' + formatMoney(r.amount))}
+      ${list('終了手数料', report.fees, (r) => nameOf(r.team_id) + ' −' + formatMoney(r.fee))}
+    </div>
+    <p class="muted note-sm">
+      期限切れで離脱: ${report.expired} 名 ／ 次シーズンへ引継ぎ: ${report.carried} 名
+    </p>`;
+}
+
+/**
+ * スポンサー収益の入力欄をチーム分だけ生成する。
+ *
+ * @param {Object[]} teams
+ */
+function renderSponsorInputs(teams) {
+  const box = document.getElementById('sp-sponsor');
+  const active = teams.filter((t) => t.active);
+
+  box.innerHTML =
+    '<div class="form-grid">' +
+    active
+      .map(
+        (t) => `
+      <label>
+        ${esc(t.name)} <span class="unit-hint">100万円単位</span>
+        <input type="number" min="0" step="1" class="sponsor-input" data-team="${esc(t.team_id)}" />
+        <span class="money-echo" data-echo="${esc(t.team_id)}">—</span>
+      </label>`
+      )
+      .join('') +
+    '</div>';
+
+  box.querySelectorAll('.sponsor-input').forEach((input) => {
+    input.oninput = () => {
+      const echo = box.querySelector('[data-echo="' + input.dataset.team + '"]');
+      const yen = unitToYen(input.value);
+      echo.textContent = yen > 0 ? '→ ' + formatMoney(yen) : '—';
+      echo.className = 'money-echo' + (yen > 0 ? ' money-echo-on' : '');
+    };
+  });
+}
+
+/**
+ * スポンサー収益を反映する。
+ */
+async function onSubmitSponsor() {
+  const entries = [...document.querySelectorAll('.sponsor-input')]
+    .map((i) => ({ team_id: i.dataset.team, amount: unitToYen(i.value) }))
+    .filter((e) => e.amount > 0);
+
+  if (entries.length === 0) {
+    setResult('sp-sponsor-result', false, '金額を入力してください。');
+    return;
+  }
+
+  const total = entries.reduce((s, e) => s + e.amount, 0);
+  if (!confirm(entries.length + ' チームに合計 ' + formatMoney(total) + ' を計上します。よろしいですか？')) {
+    return;
+  }
+
+  const btn = document.getElementById('sp-sponsor-submit');
+  btn.disabled = true;
+  setResult('sp-sponsor-result', true, '反映中...');
+
+  const res = await callApi('applySponsorIncome', {
+    season_id: document.getElementById('sp-season').value,
+    entries,
+  });
+
+  btn.disabled = false;
+
+  if (res.ok) {
+    setResult('sp-sponsor-result', true, res.data.count + ' チームに反映しました。');
+    document.querySelectorAll('.sponsor-input').forEach((i) => {
+      i.value = '';
+      i.dispatchEvent(new Event('input'));
+    });
+    await loadSeasonAdmin();
+  } else {
+    setResult('sp-sponsor-result', false, '反映できません: ' + res.error);
+  }
+}
+
+/**
+ * 罰金を計上する。
+ */
+async function onSubmitPenalty() {
+  const teamSel = document.getElementById('pn-team');
+  const teamId = teamSel.value;
+  const amount = unitToYen(document.getElementById('pn-amount').value);
+
+  if (!teamId || amount <= 0) {
+    setResult('pn-result', false, 'チームと金額を入力してください。');
+    return;
+  }
+
+  const teamName = teamSel.options[teamSel.selectedIndex].text;
+  if (!confirm(teamName + ' に ' + formatMoney(amount) + ' の罰金を計上します。よろしいですか？')) return;
+
+  const btn = document.getElementById('pn-submit');
+  btn.disabled = true;
+  setResult('pn-result', true, '計上中...');
+
+  const res = await callApi('addPenalty', {
+    season_id: document.getElementById('sp-season').value,
+    team_id: teamId,
+    amount,
+    note: document.getElementById('pn-note').value.trim(),
+  });
+
+  btn.disabled = false;
+
+  if (res.ok) {
+    setResult('pn-result', true, formatMoney(-res.data.amount) + ' を計上しました。');
+    document.getElementById('pn-amount').value = '';
+    document.getElementById('pn-amount').dispatchEvent(new Event('input'));
+    document.getElementById('pn-note').value = '';
+  } else {
+    setResult('pn-result', false, '計上できません: ' + res.error);
+  }
+}
+
+/**
+ * 補填金の対象になりうる選手を読み込む。
+ *
+ * 獲得額が母数になるため、そのシーズンにそのチームで在籍記録がある選手を出す。
+ */
+async function loadCompensationPlayers() {
+  const seasonId = document.getElementById('sp-season').value;
+  const teamId = document.getElementById('cp-team').value;
+  const sel = document.getElementById('cp-player');
+
+  if (!seasonId || !teamId) {
+    sel.innerHTML = '<option value="">チームを選択してください</option>';
+    return;
+  }
+
+  const res = await callApi('getMatchOptions', {
+    season_id: seasonId,
+    home_team: teamId,
+  });
+
+  if (!res.ok) {
+    sel.innerHTML = '<option value="">取得に失敗しました</option>';
+    return;
+  }
+
+  const list = res.data.home_players || [];
+  sel.innerHTML =
+    '<option value="">選手を選択</option>' +
+    list
+      .map((p) => '<option value="' + esc(p.player_id) + '">' +
+        esc(p.position) + ' ' + esc(p.name) + (p.current ? '' : '（離脱）') + '</option>')
+      .join('');
+}
+
+/**
+ * 補填金を計上する。
+ */
+async function onSubmitCompensation() {
+  const teamSel = document.getElementById('cp-team');
+  const playerSel = document.getElementById('cp-player');
+  const kind = document.getElementById('cp-kind').value;
+
+  if (!teamSel.value || !playerSel.value) {
+    setResult('cp-result', false, 'チームと選手を選んでください。');
+    return;
+  }
+
+  const btn = document.getElementById('cp-submit');
+  btn.disabled = true;
+  setResult('cp-result', true, '計上中...');
+
+  const res = await callApi('addCompensation', {
+    season_id: document.getElementById('sp-season').value,
+    team_id: teamSel.value,
+    player_id: playerSel.value,
+    kind,
+  });
+
+  btn.disabled = false;
+
+  if (res.ok) {
+    const d = res.data;
+    setResult(
+      'cp-result',
+      true,
+      '獲得額 ' + formatMoney(d.acquired_cost) + ' × ' + Math.round(d.rate * 100) + '% = ' +
+        formatMoney(d.amount) + ' を計上しました。'
+    );
+  } else {
+    setResult('cp-result', false, '計上できません: ' + res.error);
+  }
 }

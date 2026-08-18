@@ -100,6 +100,9 @@
         <button class="tab-btn" id="tab-txapproval" data-tab="txapproval" style="display:none;">
           移籍承認
         </button>
+        <button class="tab-btn" id="tab-season" data-tab="season" style="display:none;">
+          運営・進行
+        </button>
         <button class="tab-btn" id="tab-master" data-tab="master" style="display:none;">
           マスタ管理
         </button>
@@ -371,7 +374,106 @@
         </div>
       </div>
 
-      <!-- ===== 画面8: 移籍承認（主催者限定） ===== -->
+      <!-- ===== 画面8: 運営・進行（主催者限定） ===== -->
+      <div class="tab-panel" data-panel="season" style="display:none;">
+        <div class="card">
+          <h2>シーズン進行</h2>
+          <div class="filter-row">
+            <label>
+              シーズン
+              <select id="sp-season"></select>
+            </label>
+          </div>
+          <div id="sp-status"></div>
+          <div class="form-actions">
+            <button type="button" id="sp-advance" class="btn btn-primary">次の状態へ進める</button>
+            <span id="sp-result" class="form-msg"></span>
+          </div>
+
+          <h3 class="sub-head">シーズン終了処理</h3>
+          <p class="muted">
+            順位賞金・得点王賞金を計上し、残予算から手数料を引き、期限付き選手を離脱させます。
+            <strong>一度実行すると取り消せません。</strong>
+          </p>
+          <div class="form-grid">
+            <label>
+              引継ぎ先シーズン <span class="unit-hint">先に作成しておく</span>
+              <select id="sp-next"></select>
+            </label>
+            <div class="form-actions">
+              <button type="button" id="sp-close" class="btn btn-secondary">シーズンを終了する</button>
+              <span id="sp-close-result" class="form-msg"></span>
+            </div>
+          </div>
+          <div id="sp-report"></div>
+        </div>
+
+        <div class="card">
+          <h2>スポンサー収益</h2>
+          <p class="muted">
+            第1次移籍市場の開始前に、チームごとの収益を入力します。100万円単位です。
+          </p>
+          <div id="sp-sponsor"></div>
+          <div class="form-actions">
+            <button type="button" id="sp-sponsor-submit" class="btn btn-primary">反映する</button>
+            <span id="sp-sponsor-result" class="form-msg"></span>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>罰金</h2>
+          <div class="form-grid">
+            <label>
+              チーム
+              <select id="pn-team"></select>
+            </label>
+            <label>
+              罰金額 <span class="unit-hint">100万円単位</span>
+              <input type="number" id="pn-amount" min="0" step="1" />
+              <span id="pn-amount-echo" class="money-echo">—</span>
+            </label>
+            <label>
+              理由（任意）
+              <input type="text" id="pn-note" placeholder="例: 報告遅延" />
+            </label>
+            <div class="form-actions">
+              <button type="button" id="pn-submit" class="btn btn-primary">罰金を計上</button>
+              <span id="pn-result" class="form-msg"></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>補填金</h2>
+          <p class="muted">
+            獲得額を母数に計算します（大会外移籍80% / 辞退90%）。
+            オークションで獲得した選手は対象外です。
+          </p>
+          <div class="form-grid">
+            <label>
+              チーム
+              <select id="cp-team"></select>
+            </label>
+            <label>
+              選手
+              <select id="cp-player"></select>
+            </label>
+            <label>
+              種別
+              <select id="cp-kind">
+                <option value="大会外移籍">大会外移籍（80%）</option>
+                <option value="辞退">辞退（90%）</option>
+              </select>
+            </label>
+            <div class="form-actions">
+              <button type="button" id="cp-submit" class="btn btn-primary">補填金を計上</button>
+              <span id="cp-result" class="form-msg"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== 画面9: 移籍承認（主催者限定） ===== -->
       <div class="tab-panel" data-panel="txapproval" style="display:none;">
         <div class="card">
           <h2>移籍承認</h2>

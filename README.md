@@ -47,6 +47,7 @@ J リーグ選手限定の eFootball 私設大会を運営するための集計�
 │   ├─ api_protection.gs # Phase 4: プロテクト
 │   ├─ api_match.gs      # Phase 5: 試合集計
 │   ├─ api_stats.gs      # Phase 6: 集計表示
+│   ├─ api_season.gs     # Phase 7: 経済周辺・シーズン進行
 │   └─ seed.gs         # テストデータ投入・削除（手動実行）
 ├─ SPEC.md           # 確定仕様（データモデル・経済ルール・API 一覧・画面一覧）
 ├─ PROJECT.md        # 方針・進捗管理
@@ -206,7 +207,7 @@ GAS エディタの関数プルダウンから選んで実行する。どちら�
 | 4 | プロテクト | ✅ 完了 |
 | 5 | 試合集計 | ✅ 完了 |
 | 6 | 集計表示 | ✅ 完了 |
-| 7 | 経済周辺 & シーズン進行 | ⬜ |
+| 7 | 経済周辺 & シーズン進行 | ✅ 完了 |
 | 8 | 仕上げ | ⬜ |
 
 詳細は `SPEC.md §13` / `PROJECT.md §5` を参照。
@@ -342,5 +343,29 @@ GAS エディタの関数プルダウンから選んで実行する。どちら�
 >
 > シュートセーブ率の分母は「出場試合における相手チームの `shots_on_target` 合計」。
 > `min_matches_for_save_rate`（既定2）未満の GK は除外する。
+
+### Phase 7：経済周辺 & シーズン進行
+
+| action | 権限 | payload | 内容 |
+|---|---|---|---|
+| `getSeasonProgress` | 全員 | `season_id` | 現在の状態・次の遷移・実施済みの経済処理 |
+| `addPenalty` | 主催者 | `season_id`, `team_id`, `amount`, `note?` | 罰金の計上 |
+| `addCompensation` | 主催者 | `season_id`, `team_id`, `player_id`, `kind` | 補填金（80% / 90%） |
+| `applySponsorIncome` | 主催者 | `season_id`, `entries:[{team_id,amount}]` | スポンサー収益の反映 |
+| `advanceSeason` | 主催者 | `season_id` | 状態を1つ進める |
+| `closeSeason` | 主催者 | `season_id`, `next_season_id?` | シーズン終了処理 |
+
+> **`closeSeason` は取り消せない。** 二重実行は「シーズン終了手数料」の有無で判定して拒否する。
+>
+> 賞金は**同順位・同点なら該当チーム全てに満額**支給する（按分しない）。
+> 手数料の母数は賞金計上**後**の残高。
+>
+> 引継ぎ先シーズンは**主催者が先に作成**しておく。closeSeason は自動生成しない。
+> 引継ぎ時は `acquisition_type` と `acquired_cost` を保持する（補填金の母数になるため）。
+>
+> 半期期限付きは `advanceSeason` の「シーズン1 → 移籍市場2」で離脱。
+> 全期期限付き・オークションは `closeSeason` まで残る。
+>
+> スポンサー収益は当面**主催者がアプリ上で入力**する（Google Form 連携は未実装）。
 
 未実装の action は `{ ok:false, error:"... は Phase N で実装します。" }` を返す。

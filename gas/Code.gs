@@ -187,14 +187,24 @@ function _route(action, token, payload) {
     case "correctMatch":
       return correctMatch(token, payload);
 
+    // ---- Phase 7: 経済周辺 & シーズン進行 ----
+    case "getSeasonProgress":
+      return getSeasonProgress(token, payload);
+
     case "addPenalty":
+      return addPenalty(token, payload);
+
     case "addCompensation":
+      return addCompensation(token, payload);
+
     case "applySponsorIncome":
-      return { ok: false, error: action + " は Phase 7 で実装します。" };
+      return applySponsorIncome(token, payload);
 
     case "advanceSeason":
+      return advanceSeason(token, payload);
+
     case "closeSeason":
-      return { ok: false, error: action + " は Phase 7 で実装します。" };
+      return closeSeason(token, payload);
 
     // ---- Phase 6: 集計表示 ----
     case "getStandings":
