@@ -82,10 +82,17 @@
         </button>
       </div>
 
+      <!-- ===== セッション期限の通知バナー ===== -->
+      <div id="session-banner" class="session-banner" style="display:none;"></div>
+
       <!-- ===== タブナビゲーション ===== -->
       <nav class="tab-nav">
         <button class="tab-btn" data-tab="dashboard">ダッシュボード</button>
         <button class="tab-btn" data-tab="teams">チーム閲覧</button>
+        <button class="tab-btn" data-tab="entry">エントリー</button>
+        <button class="tab-btn" id="tab-approval" data-tab="approval" style="display:none;">
+          エントリー承認
+        </button>
         <button class="tab-btn" id="tab-master" data-tab="master" style="display:none;">
           マスタ管理
         </button>
@@ -119,7 +126,51 @@
         </div>
       </div>
 
-      <!-- ===== 画面3: マスタ管理（主催者限定） ===== -->
+      <!-- ===== 画面3: エントリー提出 ===== -->
+      <div class="tab-panel" data-panel="entry" style="display:none;">
+        <div class="card">
+          <h2>エントリー提出</h2>
+          <div class="filter-row">
+            <label>
+              シーズン
+              <select id="en-season"></select>
+            </label>
+            <label id="en-team-wrap" style="display:none;">
+              チーム（主催者は代理提出できます）
+              <select id="en-team"></select>
+            </label>
+          </div>
+          <div id="en-status"></div>
+          <div id="en-picker"></div>
+        </div>
+      </div>
+
+      <!-- ===== 画面4: エントリー承認（主催者限定） ===== -->
+      <div class="tab-panel" data-panel="approval" style="display:none;">
+        <div class="card">
+          <h2>エントリー承認</h2>
+          <div class="filter-row">
+            <label>
+              シーズン
+              <select id="ap-season"></select>
+            </label>
+            <label>
+              シーズン状態
+              <select id="ap-season-status"></select>
+            </label>
+            <label>
+              &nbsp;
+              <button type="button" id="ap-status-save" class="btn btn-secondary btn-sm">
+                状態を変更
+              </button>
+            </label>
+          </div>
+          <p id="ap-status-result" class="form-msg"></p>
+          <div id="ap-body"></div>
+        </div>
+      </div>
+
+      <!-- ===== 画面5: マスタ管理（主催者限定） ===== -->
       <div class="tab-panel" data-panel="master" style="display:none;">
 
         <!-- 選手マスタ -->
@@ -244,7 +295,7 @@
   </main>
 
   <footer class="site-footer">
-    <small>GM League v0.1 — Phase 1</small>
+    <small>GM League v0.1 — Phase 2</small>
   </footer>
 
 </body>

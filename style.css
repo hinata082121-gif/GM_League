@@ -241,6 +241,32 @@ body {
    Phase 1: マスタ & 閲覧
    ========================================================================== */
 
+/* ---------- セッション期限バナー ---------- */
+.session-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 16px;
+  margin-bottom: 16px;
+  border-radius: var(--radius);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.session-warn {
+  background: #fef7e0;
+  color: #a56100;
+  border: 1px solid #fbbc04;
+}
+
+.session-expired {
+  background: #fce8e6;
+  color: var(--color-danger);
+  border: 1px solid #f28b82;
+}
+
 /* ---------- タブ ---------- */
 .tab-nav {
   display: flex;
@@ -430,6 +456,136 @@ body {
 .tag-ng {
   background: #fce8e6;
   color: var(--color-danger);
+}
+
+/* ---------- エントリー画面 ---------- */
+.entry-counter {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 10px 16px;
+  border-radius: var(--radius);
+  margin-bottom: 16px;
+  font-size: 1rem;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.entry-ok {
+  background: #e6f4ea;
+  color: var(--color-success);
+  border: 1px solid #a8dab5;
+}
+
+.entry-ng {
+  background: #fef7e0;
+  color: #a56100;
+  border: 1px solid #fbbc04;
+}
+
+.entry-counter .muted {
+  font-size: 0.8rem;
+}
+
+.pos-group {
+  margin-bottom: 18px;
+}
+
+.pos-group-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.pos-group-head .muted {
+  font-size: 0.75rem;
+}
+
+.player-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 8px;
+}
+
+.player-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.player-chip:hover {
+  border-color: var(--color-primary);
+}
+
+.player-chip:has(input:checked) {
+  background: #e8f0fe;
+  border-color: var(--color-primary);
+}
+
+.player-chip:has(input:disabled) {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.player-chip input {
+  flex: none;
+  width: auto;
+}
+
+.player-chip-name {
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.player-chip-club {
+  font-size: 0.7rem;
+  color: var(--color-text-sub);
+  flex: none;
+  max-width: 70px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- 状態タグ ---------- */
+.tag-none,
+.tag-pending,
+.tag-kind {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 99px;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.tag-none {
+  background: #f1f3f4;
+  color: var(--color-text-sub);
+}
+
+.tag-pending {
+  background: #fef7e0;
+  color: #a56100;
+}
+
+.tag-kind {
+  background: #e8eaed;
+  color: var(--color-secondary);
+  font-size: 0.68rem;
 }
 
 /* ---------- フォーム ---------- */

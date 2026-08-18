@@ -113,7 +113,11 @@ J リーグ選手のみを使用する eFootball の私設大会を運営する�
 | acquired_cost | number | 獲得時に支払った額（補填金計算の母数） |
 | acquired_at | datetime | |
 | expires_season | string | 期限切れシーズン（オークション=当該、半期=期限季、永続は空） |
-| status | enum | 在籍 / 離脱 |
+| status | enum | 申請中 / 在籍 / 離脱 |
+
+> `申請中` はエントリー提出済・主催者未承認の状態（Phase 2 で追加）。
+> スカッド・順位・ランキングの集計はすべて `status=在籍` のみを対象とするため、
+> 未承認データは自動的に集計から外れる（§3 原則5）。
 
 ### 4.6 EntryLists
 | カラム | 型 | 説明 |
@@ -122,7 +126,7 @@ J リーグ選手のみを使用する eFootball の私設大会を運営する�
 | team_id | string | |
 | count | number | 登録人数（新規=28 / 継続=引継ぎ） |
 | submitted_at | datetime | |
-| status | enum | 下書き / 提出済 / 承認 |
+| status | enum | 未提出 / 提出済 / 承認 / 差戻 |
 
 ### 4.7 Transfers
 | カラム | 型 | 説明 |
@@ -309,6 +313,24 @@ J リーグ選手のみを使用する eFootball の私設大会を運営する�
 - IDトークン → email → Users 解決。role と team_id を確定。
 - 対象 team_id が自チームか（organizer は全許可）。
 
+### 7.1.5 エントリー提出（Phase 2）
+- 現シーズン status が `エントリー受付` であること。
+- 対象チームが自チームであること（organizer は全許可）。
+- 既に `承認` 済みのエントリーは再提出不可（差戻・未提出・提出済のみ再提出可）。
+- 新規チーム（kind=新規）：人数は `new_team_entry_count`（=28）ちょうど。
+- 継続チーム（kind=継続）：引継ぎ済みスカッドの人数が `squad_min`〜`squad_max` の範囲内。
+- 選手はすべて Players に実在し、`eligible=true` であること。
+- リスト内に同一選手の重複がないこと。
+- **他チームが同一シーズンで既に確保（`申請中` または `在籍`）している選手を含まないこと。**
+  ドラフトはツール外で実施する前提のため、ツールは重複検知して拒否するのみ。
+  拒否時は重複した選手名を理由に含めて返す。
+
+> 提出時に Rosters へ `status=申請中` で書き込み、主催者の承認で `在籍` に変わる。
+> 差戻時は `申請中` の行を削除して再提出できる状態に戻す。
+>
+> 新規チームのエントリーリストはスカッド全体を定義するため、提出時に
+> **そのシーズン・チームの `申請中` と `在籍` の行を総入れ替え**する（`離脱` の履歴は残す）。
+
 ### 7.2 移籍申請
 - 現シーズン status が 移籍市場1 または 移籍市場2。
 - 獲得側の現予算 ≥ cost_to_buyer（BudgetTx の SUM で算出）。
@@ -341,13 +363,18 @@ open = windowN_open_at を基準に判定（すべて GAS の new Date() で）�
 - whoami — トークンからユーザー情報と権限を返す。
 
 ### チームオーナー向け
-- submitEntryList — エントリーリスト提出。
+- getEntryStatus — 自チームのエントリー状況＋選択可能な選手一覧（他チーム確保済みを除外）。
+- submitEntryList — エントリーリスト提出（§7.1.5 の検証 → Rosters を status=申請中 で保存）。
 - getMyTeam — 自チームのスカッド・予算・プロテクト状況。
 - requestTransfer — 移籍申請（method 別にコスト算出 → 検証 → status=申請中で保存）。
 - setProtection — プロテクト設定（期限ゲート §7.3）。
 - submitMatchResult — 試合結果申請（Matches + Goals + TeamStats + GKStats を一括保存、status=申請中）。
 
 ### 主催者向け
+- listEntryLists — 全チームのエントリー提出状況一覧。
+- listSeasonStatuses / setSeasonStatus — シーズン状態の選択肢取得と切替（Phase 2 で先行実装）。
+  Phase 7 の `advanceSeason`（順方向の遷移＋付随処理）を実装後は巻き戻し用として残す。
+- approveEntryList / rejectEntryList — エントリー承認（Rosters を 在籍 に）／差戻（申請中の行を削除）。
 - approveTransfer / rejectTransfer — 移籍承認時に BudgetTx（買い手支出・売り手収入）を自動計上。
 - approveMatch / rejectMatch / correctMatch — 試合の承認・差戻・訂正。
 - addPenalty — 罰金計上。

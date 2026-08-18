@@ -108,10 +108,29 @@ function _route(action, token, payload) {
     case "setConfig":
       return setConfig(token, payload);
 
-    // ---- チームオーナー向け ----
-    case "submitEntryList":
-      return { ok: false, error: "submitEntryList は Phase 2 で実装します。" };
+    // ---- Phase 2: エントリー ----
+    case "getEntryStatus":
+      return getEntryStatus(token, payload);
 
+    case "submitEntryList":
+      return submitEntryList(token, payload);
+
+    case "listEntryLists":
+      return listEntryLists(token, payload);
+
+    case "approveEntryList":
+      return approveEntryList(token, payload);
+
+    case "rejectEntryList":
+      return rejectEntryList(token, payload);
+
+    case "listSeasonStatuses":
+      return listSeasonStatuses(token);
+
+    case "setSeasonStatus":
+      return setSeasonStatus(token, payload);
+
+    // ---- チームオーナー向け（未実装） ----
     case "requestTransfer":
       return { ok: false, error: "requestTransfer は Phase 3 で実装します。" };
 

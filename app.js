@@ -47,6 +47,14 @@ async function callApi(action, payload = {}) {
     return { ok: false, error: 'gas_url_not_set' };
   }
 
+  // トークンが切れているなら通信せずに打ち切り、再ログインを促す
+  // （切れたまま投げても GAS 側で invalid_token になるだけなので無駄な往復を省く）
+  if (isTokenExpired()) {
+    console.warn('[callApi] トークン期限切れのため中断:', action);
+    showSessionExpired();
+    return { ok: false, error: 'token_expired' };
+  }
+
   const body = JSON.stringify({ action, token, payload });
 
   try {
@@ -57,17 +65,104 @@ async function callApi(action, payload = {}) {
       redirect: 'follow',   // GAS の 302 リダイレクトを自動追跡
     });
 
+    // GAS はデプロイ直後の伝播中に一時的に 404 を返すことがある。
+    // 1回だけ間を置いて再試行する。
+    if (res.status === 404 && !payload.__retried) {
+      console.warn('[callApi] http_404。1.5秒後に再試行します:', action);
+      await new Promise((r) => setTimeout(r, 1500));
+      return callApi(action, Object.assign({}, payload, { __retried: true }));
+    }
+
     if (!res.ok) {
       return { ok: false, error: `http_${res.status}` };
     }
 
     const json = await res.json();
+
+    // whoami 以外の action でトークン切れが返ってきた場合もここで拾う
+    if (!json.ok && json.error === 'invalid_token' && action !== 'whoami') {
+      showSessionExpired();
+    }
+
     return json; // { ok, data } or { ok:false, error }
 
   } catch (err) {
     console.error('[callApi] fetch 失敗:', err);
     return { ok: false, error: err.message };
   }
+}
+
+// ---------------------------------------------------------------------------
+// セッション期限の通知
+// ---------------------------------------------------------------------------
+
+/**
+ * 期限が近づいたときに auth.js のタイマーから呼ばれる。
+ * まだ操作は可能なので、警告だけ出して続行させる。
+ */
+function onTokenExpiring() {
+  const left = getTokenMinutesLeft();
+  _showSessionBanner(
+    'warn',
+    'ログインセッションがまもなく切れます（残り約 ' + left + ' 分）。',
+    '今すぐ再ログイン'
+  );
+}
+
+/**
+ * トークンが切れて API が呼べなくなったときに表示する。
+ * 同じバナーを何度も出さないよう、表示済みなら何もしない。
+ */
+function showSessionExpired() {
+  const el = document.getElementById('session-banner');
+  if (el && el.dataset.state === 'expired') return;
+
+  _showSessionBanner(
+    'expired',
+    'ログインセッションの有効期限が切れました。再ログインしてください。',
+    '再ログイン'
+  );
+}
+
+/**
+ * セッション通知バナーを表示する。
+ *
+ * @param {string} state   'warn' | 'expired'
+ * @param {string} message 本文
+ * @param {string} btnText ボタン文言
+ */
+function _showSessionBanner(state, message, btnText) {
+  const el = document.getElementById('session-banner');
+  if (!el) return;
+
+  el.dataset.state = state;
+  el.className = 'session-banner session-' + state;
+  el.innerHTML = '';
+
+  const span = document.createElement('span');
+  span.textContent = message;
+  el.appendChild(span);
+
+  const btn = document.createElement('button');
+  btn.className = 'btn btn-sm btn-secondary';
+  btn.textContent = btnText;
+  btn.onclick = () => {
+    hideSessionBanner();
+    requestReauth();
+  };
+  el.appendChild(btn);
+
+  el.style.display = 'flex';
+}
+
+/**
+ * セッション通知バナーを隠す。
+ */
+function hideSessionBanner() {
+  const el = document.getElementById('session-banner');
+  if (!el) return;
+  el.style.display = 'none';
+  delete el.dataset.state;
 }
 
 // ---------------------------------------------------------------------------
@@ -98,6 +193,7 @@ async function onSignIn(token) {
   if (res.ok) {
     // ✅ 登録済みユーザー
     console.log('[app] whoami 成功:', res.data);
+    hideSessionBanner();
     if (appSection) appSection.style.display = 'block';
     renderUserInfo(res.data);
 
@@ -146,6 +242,7 @@ function onSignOut() {
   if (appSection)   appSection.style.display   = 'none';
   if (loginSection) loginSection.style.display = 'block';
   if (errorEl)      errorEl.style.display      = 'none'; // エラーメッセージをクリア
+  hideSessionBanner();
 
   console.log('[app] onSignOut — ログイン画面に戻りました');
 }

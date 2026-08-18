@@ -195,8 +195,8 @@ GAS エディタの関数プルダウンから選んで実行する。どちら�
 | Phase | 内容 | 状態 |
 |-------|------|------|
 | 0 | 基盤：Pages + Google ログイン + GAS スケルトン + Sheets セットアップ | ✅ 完了 |
-| 1 | マスタ & 閲覧 | 🔄 作業中 |
-| 2 | エントリー | ⬜ |
+| 1 | マスタ & 閲覧 | ✅ 完了 |
+| 2 | エントリー | ✅ 完了 |
 | 3 | 移籍 | ⬜ |
 | 4 | プロテクト | ⬜ |
 | 5 | 試合集計 | ⬜ |
@@ -241,5 +241,20 @@ GAS エディタの関数プルダウンから選んで実行する。どちら�
 | `upsertUser` | `user_id?`, `email`, `display_name?`, `role?`, `team_id?` | ユーザーの追加・更新（email が一意キー） |
 | `importPlayersCsv` | `csv` | CSV 一括登録（ヘッダー `name,position,real_club`） |
 | `setConfig` | `key`, `value` | Config 値の更新・追加 |
+
+### Phase 2：エントリー
+
+| action | 権限 | payload | 内容 |
+|---|---|---|---|
+| `getEntryStatus` | チーム | `season_id`, `team_id?` | 提出状況＋選択可能な選手（他チーム確保済みを除外） |
+| `submitEntryList` | チーム | `season_id`, `team_id?`, `player_ids` | 提出。Rosters に `申請中` で保存 |
+| `listEntryLists` | 主催者 | `season_id` | 全チームの提出状況 |
+| `approveEntryList` | 主催者 | `season_id`, `team_id` | 承認 → Rosters を `在籍` に |
+| `rejectEntryList` | 主催者 | `season_id`, `team_id` | 差戻 → `申請中` の行を削除 |
+| `listSeasonStatuses` | 全員 | — | シーズン状態の選択肢 |
+| `setSeasonStatus` | 主催者 | `season_id`, `status` | シーズン状態の切替 |
+
+> エントリーを試すには、シーズン状態を「エントリー承認」画面で **`エントリー受付`** にする。
+> `seedTestData` はシーズンを `準備中` で作り直すため、**seed を実行した後に**状態を変更すること。
 
 未実装の action は `{ ok:false, error:"... は Phase N で実装します。" }` を返す。

@@ -46,11 +46,12 @@ const CLUB_OTHER = '__other__';
 async function initViews(user) {
   currentUser = user;
 
-  // 主催者だけマスタ管理タブを表示
-  const masterTab = document.getElementById('tab-master');
-  if (masterTab) {
-    masterTab.style.display = user.role === 'organizer' ? 'inline-block' : 'none';
-  }
+  // 主催者だけマスタ管理・承認タブを表示
+  const organizerOnly = user.role === 'organizer';
+  ['tab-master', 'tab-approval'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = organizerOnly ? 'inline-block' : 'none';
+  });
 
   bindTabs();
   bindMasterForms();
@@ -85,6 +86,8 @@ function showTab(name) {
 
   if (name === 'dashboard') renderDashboard();
   if (name === 'teams') renderTeamViewer();
+  if (name === 'entry') renderEntry();
+  if (name === 'approval') renderApproval();
   if (name === 'master') renderMaster();
 }
 
@@ -763,4 +766,444 @@ async function onSubmitCsv(e) {
 
   document.getElementById('mc-csv').value = '';
   await refreshPlayerList();
+}
+
+// ---------------------------------------------------------------------------
+// 画面3: エントリー提出（Phase 2）
+// ---------------------------------------------------------------------------
+
+/** エントリー画面で現在チェックされている player_id の集合 */
+let entrySelection = new Set();
+
+/** 直近に取得したエントリー状況 */
+let entryData = null;
+
+/**
+ * エントリー画面のシーズン／チーム選択を用意する。
+ * 主催者はチームを選べる（代理提出）。team ロールは自チーム固定。
+ */
+async function renderEntry() {
+  const seasons = await loadSeasons();
+  fillSelect('en-season', seasons, 'season_id', 'name');
+
+  const seasonSel = document.getElementById('en-season');
+  const teamSel = document.getElementById('en-team');
+  const teamWrap = document.getElementById('en-team-wrap');
+
+  if (currentUser.role === 'organizer') {
+    const teams = await loadTeams();
+    fillSelect('en-team', teams, 'team_id', 'name', 'チームを選択');
+    teamWrap.style.display = 'flex';
+  } else {
+    teamWrap.style.display = 'none';
+  }
+
+  if (!seasonSel.dataset.bound) {
+    seasonSel.onchange = loadEntryStatus;
+    teamSel.onchange = loadEntryStatus;
+    seasonSel.dataset.bound = '1';
+  }
+
+  await loadEntryStatus();
+}
+
+/**
+ * 選択中のシーズン・チームのエントリー状況を取得して描画する。
+ */
+async function loadEntryStatus() {
+  const seasonId = document.getElementById('en-season').value;
+  const teamId = document.getElementById('en-team').value;
+  const statusBox = document.getElementById('en-status');
+  const pickerBox = document.getElementById('en-picker');
+
+  entryData = null;
+  entrySelection = new Set();
+  pickerBox.innerHTML = '';
+
+  if (!seasonId) {
+    statusBox.innerHTML = '<p class="muted">シーズンを選択してください。</p>';
+    return;
+  }
+  if (currentUser.role === 'organizer' && !teamId) {
+    statusBox.innerHTML = '<p class="muted">代理提出するチームを選択してください。</p>';
+    return;
+  }
+
+  setLoading('en-status');
+
+  const res = await callApi('getEntryStatus', { season_id: seasonId, team_id: teamId });
+  if (!res.ok) {
+    setError('en-status', 'エントリー状況の取得に失敗しました: ' + res.error);
+    return;
+  }
+
+  entryData = res.data;
+  entrySelection = new Set(res.data.selected_ids);
+
+  renderEntryStatusBox();
+  renderEntryPicker();
+}
+
+/**
+ * 状態サマリー（チーム・提出状態・必要人数）を描画する。
+ */
+function renderEntryStatusBox() {
+  const d = entryData;
+  const box = document.getElementById('en-status');
+
+  const badge = {
+    未提出: 'tag-none',
+    提出済: 'tag-pending',
+    承認: 'tag-ok',
+    差戻: 'tag-ng',
+  }[d.entry_status] || 'tag-none';
+
+  let notice = '';
+  if (d.season_status !== 'エントリー受付') {
+    notice =
+      '<p class="msg-error">このシーズンは現在「' + esc(d.season_status) +
+      '」のため提出できません。エントリー受付中のみ提出できます。</p>';
+  } else if (d.entry_status === '承認') {
+    notice = '<p class="msg-ok">承認済みです。内容を変更するには主催者に差戻を依頼してください。</p>';
+  } else if (d.entry_status === '差戻') {
+    notice = '<p class="msg-error">差し戻されています。選び直して再提出してください。</p>';
+  }
+
+  box.innerHTML = `
+    <div class="stat-grid">
+      <div class="stat">
+        <span class="stat-label">チーム</span>
+        <span class="stat-value">${esc(d.team_name)} <span class="tag-kind">${esc(d.team_kind)}</span></span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">提出状態</span>
+        <span class="stat-value stat-sm"><span class="${badge}">${esc(d.entry_status)}</span></span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">必要人数</span>
+        <span class="stat-value stat-sm">${esc(d.required.label)}</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">選択可能な選手</span>
+        <span class="stat-value stat-sm">${d.available_count} 名</span>
+      </div>
+    </div>
+    ${notice}`;
+}
+
+/**
+ * 選手選択UIを描画する。
+ * 継続チームは選手を選ばないため、確認と提出ボタンだけ出す。
+ */
+function renderEntryPicker() {
+  const d = entryData;
+  const box = document.getElementById('en-picker');
+  const editable = d.can_submit;
+
+  if (d.team_kind === '継続') {
+    box.innerHTML = `
+      <h3 class="sub-head">引継ぎスカッドの確認</h3>
+      <p class="muted">
+        継続チームは前シーズンのスカッドをそのまま引き継ぎます（現在 ${d.selected_count} 名）。
+        内容は「チーム閲覧」で確認できます。
+      </p>
+      <div class="form-actions">
+        <button type="button" id="en-submit" class="btn btn-primary" ${editable ? '' : 'disabled'}>
+          この内容で提出する
+        </button>
+        <span id="en-result" class="form-msg"></span>
+      </div>`;
+    document.getElementById('en-submit').onclick = onSubmitEntry;
+    return;
+  }
+
+  const byPos = { GK: [], DF: [], MF: [], FW: [] };
+  d.available.forEach((p) => {
+    if (byPos[p.position]) byPos[p.position].push(p);
+  });
+
+  let html = '<h3 class="sub-head">選手を選ぶ</h3>';
+  html += '<div id="en-counter" class="entry-counter"></div>';
+
+  ['GK', 'DF', 'MF', 'FW'].forEach((pos) => {
+    const list = byPos[pos];
+    if (list.length === 0) return;
+
+    html += `
+      <div class="pos-group">
+        <div class="pos-group-head">
+          <span class="pos pos-${pos}">${pos}</span>
+          <span class="muted" id="en-count-${pos}"></span>
+        </div>
+        <div class="player-grid">`;
+
+    list.forEach((p) => {
+      const checked = entrySelection.has(p.player_id) ? 'checked' : '';
+      html += `
+          <label class="player-chip">
+            <input type="checkbox" class="en-pick" value="${esc(p.player_id)}" ${checked} ${editable ? '' : 'disabled'} />
+            <span class="player-chip-name">${esc(p.name)}</span>
+            <span class="player-chip-club">${esc(p.real_club)}</span>
+          </label>`;
+    });
+
+    html += '</div></div>';
+  });
+
+  html += `
+    <div class="form-actions">
+      <button type="button" id="en-submit" class="btn btn-primary">提出する</button>
+      <button type="button" id="en-clear" class="btn btn-secondary btn-sm">選択をすべて解除</button>
+      <span id="en-result" class="form-msg"></span>
+    </div>`;
+
+  box.innerHTML = html;
+
+  box.querySelectorAll('.en-pick').forEach((cb) => {
+    cb.onchange = () => {
+      if (cb.checked) entrySelection.add(cb.value);
+      else entrySelection.delete(cb.value);
+      updateEntryCounter();
+    };
+  });
+
+  document.getElementById('en-submit').onclick = onSubmitEntry;
+  document.getElementById('en-clear').onclick = () => {
+    entrySelection.clear();
+    box.querySelectorAll('.en-pick').forEach((cb) => { cb.checked = false; });
+    updateEntryCounter();
+  };
+
+  updateEntryCounter();
+}
+
+/**
+ * 選択人数のカウンタとポジション別内訳を更新し、
+ * 必要人数に満たない場合は提出ボタンを無効にする。
+ *
+ * 最終的な人数判定は GAS 側でも行う（クライアント側は操作性のため）。
+ */
+function updateEntryCounter() {
+  const d = entryData;
+  if (!d) return;
+
+  const counts = { GK: 0, DF: 0, MF: 0, FW: 0 };
+  d.available.forEach((p) => {
+    if (entrySelection.has(p.player_id) && counts[p.position] !== undefined) {
+      counts[p.position]++;
+    }
+  });
+
+  const n = entrySelection.size;
+  const exact = d.required.exact;
+  const okCount = exact === null
+    ? n >= d.required.min && n <= d.required.max
+    : n === exact;
+
+  const counter = document.getElementById('en-counter');
+  if (counter) {
+    counter.className = 'entry-counter ' + (okCount ? 'entry-ok' : 'entry-ng');
+    counter.innerHTML =
+      '<strong>' + n + ' / ' + esc(d.required.label) + '</strong>' +
+      '<span class="muted">GK' + counts.GK + ' / DF' + counts.DF +
+      ' / MF' + counts.MF + ' / FW' + counts.FW + '</span>';
+  }
+
+  ['GK', 'DF', 'MF', 'FW'].forEach((pos) => {
+    const el = document.getElementById('en-count-' + pos);
+    if (el) el.textContent = counts[pos] + ' 名選択中';
+  });
+
+  const btn = document.getElementById('en-submit');
+  if (btn) btn.disabled = !okCount || !d.can_submit;
+}
+
+/**
+ * エントリーを提出する。
+ */
+async function onSubmitEntry() {
+  const btn = document.getElementById('en-submit');
+  btn.disabled = true;
+  setResult('en-result', true, '送信中...');
+
+  const res = await callApi('submitEntryList', {
+    season_id: entryData.season_id,
+    team_id: entryData.team_id,
+    player_ids: Array.from(entrySelection),
+  });
+
+  if (res.ok) {
+    setResult('en-result', true, res.data.count + ' 名で提出しました。主催者の承認をお待ちください。');
+    await loadEntryStatus();
+  } else {
+    setResult('en-result', false, '提出できません: ' + res.error);
+    btn.disabled = false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 画面4: エントリー承認（主催者限定）
+// ---------------------------------------------------------------------------
+
+/**
+ * 承認画面のシーズン選択を用意する。
+ */
+async function renderApproval() {
+  if (currentUser.role !== 'organizer') return;
+
+  const seasons = await loadSeasons();
+  fillSelect('ap-season', seasons, 'season_id', 'name');
+
+  const sel = document.getElementById('ap-season');
+  if (!sel.dataset.bound) {
+    sel.onchange = loadApprovalList;
+    document.getElementById('ap-status-save').onclick = onSaveSeasonStatus;
+    sel.dataset.bound = '1';
+  }
+
+  await renderSeasonStatusSelect();
+  await loadApprovalList();
+}
+
+/**
+ * シーズン状態のプルダウンを用意し、現在の状態を選択状態にする。
+ * 選択肢は GAS 側の SEASON_STATUSES を正とする。
+ */
+async function renderSeasonStatusSelect() {
+  const seasonId = document.getElementById('ap-season').value;
+  const sel = document.getElementById('ap-season-status');
+  if (!sel) return;
+
+  const res = await callApi('listSeasonStatuses', {});
+  const list = res.ok ? res.data : [];
+
+  sel.innerHTML = list
+    .map((s) => '<option value="' + esc(s) + '">' + esc(s) + '</option>')
+    .join('');
+
+  const seasons = await loadSeasons(true);
+  const cur = seasons.find((s) => s.season_id === seasonId);
+  if (cur) sel.value = cur.status;
+}
+
+/**
+ * シーズン状態を変更する。
+ * エントリー受付・移籍市場などのフェーズ切替に使う。
+ */
+async function onSaveSeasonStatus() {
+  const seasonId = document.getElementById('ap-season').value;
+  const status = document.getElementById('ap-season-status').value;
+  if (!seasonId) return;
+
+  const btn = document.getElementById('ap-status-save');
+  btn.disabled = true;
+  setResult('ap-status-result', true, '変更中...');
+
+  const res = await callApi('setSeasonStatus', { season_id: seasonId, status });
+  btn.disabled = false;
+
+  if (res.ok) {
+    setResult('ap-status-result', true, 'シーズン状態を「' + status + '」に変更しました。');
+    cache.seasons = null;
+    await loadSeasons(true);
+  } else {
+    setResult('ap-status-result', false, '変更できません: ' + res.error);
+  }
+}
+
+/**
+ * 全チームの提出状況を取得して表に描画する。
+ */
+async function loadApprovalList() {
+  const seasonId = document.getElementById('ap-season').value;
+  const box = document.getElementById('ap-body');
+
+  if (!seasonId) {
+    box.innerHTML = '<p class="muted">シーズンを選択してください。</p>';
+    return;
+  }
+
+  setLoading('ap-body');
+
+  const res = await callApi('listEntryLists', { season_id: seasonId });
+  if (!res.ok) {
+    setError('ap-body', '提出状況の取得に失敗しました: ' + res.error);
+    return;
+  }
+
+  const badgeClass = {
+    未提出: 'tag-none',
+    提出済: 'tag-pending',
+    承認: 'tag-ok',
+    差戻: 'tag-ng',
+  };
+
+  const rows = res.data
+    .map((e) => {
+      const canAct = e.status === '提出済';
+      return `
+      <tr>
+        <td>${esc(e.team_name)}</td>
+        <td><span class="tag-kind">${esc(e.kind)}</span></td>
+        <td><span class="${badgeClass[e.status] || 'tag-none'}">${esc(e.status)}</span></td>
+        <td class="num">${e.count}</td>
+        <td class="num muted">${e.pending}</td>
+        <td class="num muted">${e.active}</td>
+        <td>
+          <button class="btn btn-sm btn-primary ap-approve" data-team="${esc(e.team_id)}" ${canAct ? '' : 'disabled'}>承認</button>
+          <button class="btn btn-sm btn-secondary ap-reject" data-team="${esc(e.team_id)}" ${canAct ? '' : 'disabled'}>差戻</button>
+        </td>
+      </tr>`;
+    })
+    .join('');
+
+  box.innerHTML = `
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>チーム</th><th>種別</th><th>状態</th>
+            <th class="num">提出人数</th><th class="num">申請中</th><th class="num">在籍</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <p id="ap-result" class="form-msg"></p>`;
+
+  box.querySelectorAll('.ap-approve').forEach((b) => {
+    b.onclick = () => onApprovalAction('approveEntryList', b.dataset.team, '承認');
+  });
+  box.querySelectorAll('.ap-reject').forEach((b) => {
+    b.onclick = () => onApprovalAction('rejectEntryList', b.dataset.team, '差戻');
+  });
+}
+
+/**
+ * 承認／差戻を実行する。
+ *
+ * @param {string} action   approveEntryList | rejectEntryList
+ * @param {string} teamId
+ * @param {string} label    表示用の操作名
+ */
+async function onApprovalAction(action, teamId, label) {
+  const seasonId = document.getElementById('ap-season').value;
+
+  if (action === 'rejectEntryList') {
+    if (!confirm('このチームのエントリーを差し戻します。申請中のスカッドは削除されます。よろしいですか？')) {
+      return;
+    }
+  }
+
+  setResult('ap-result', true, label + '中...');
+
+  const res = await callApi(action, { season_id: seasonId, team_id: teamId });
+
+  if (res.ok) {
+    await loadApprovalList();
+    setResult('ap-result', true, label + 'しました。');
+  } else {
+    setResult('ap-result', false, label + 'できません: ' + res.error);
+  }
 }

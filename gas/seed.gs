@@ -60,23 +60,38 @@ function seedTestData() {
 }
 
 /**
- * seedTestData で投入した行をすべて削除する。
- * ID が SEED_PREFIX で始まる行のみが対象。
+ * seedTestData で投入した行と、テスト中に生まれた派生行をすべて削除する。
+ *
+ * 判定は2段階:
+ *   1. ID が SEED_PREFIX で始まる行（seed が直接作った行）
+ *   2. season_id が SEED_SEASON_ID の行（エントリー提出や承認で生まれた行）
+ *
+ * 2 を入れないと、承認で在籍化した Rosters（ID が r_xxxx）や
+ * EntryLists の提出記録が残り、再テスト時に前回の状態を引きずる。
  */
 function clearTestData() {
   Logger.log("=== clearTestData 開始 ===");
 
-  var targets = [
-    { sheet: "BudgetTx",  pk: "tx_id" },
-    { sheet: "Rosters",   pk: "roster_id" },
-    { sheet: "Players",   pk: "player_id" },
-    { sheet: "Teams",     pk: "team_id" },
-    { sheet: "Seasons",   pk: "season_id" },
+  // ID の接頭辞で消すもの
+  var byPrefix = [
+    { sheet: "BudgetTx", pk: "tx_id" },
+    { sheet: "Rosters",  pk: "roster_id" },
+    { sheet: "Players",  pk: "player_id" },
+    { sheet: "Teams",    pk: "team_id" },
+    { sheet: "Seasons",  pk: "season_id" },
   ];
 
-  targets.forEach(function (t) {
+  // テスト用シーズンに紐づく行をまとめて消すもの
+  var bySeason = ["Rosters", "EntryLists", "BudgetTx", "Transfers", "Protections"];
+
+  bySeason.forEach(function (name) {
+    var removed = _deleteRowsByColumn(name, "season_id", SEED_SEASON_ID);
+    Logger.log(name + "（season 一致）: " + removed + " 行削除");
+  });
+
+  byPrefix.forEach(function (t) {
     var removed = _deleteRowsByPrefix(t.sheet, t.pk, SEED_PREFIX);
-    Logger.log(t.sheet + ": " + removed + " 行削除");
+    Logger.log(t.sheet + "（ID 接頭辞）: " + removed + " 行削除");
   });
 
   Logger.log("=== clearTestData 完了 ===");
@@ -321,18 +336,46 @@ function _seedBudget(teams, amount) {
  * @returns {number} 削除した行数
  */
 function _deleteRowsByPrefix(sheetName, pkColumn, prefix) {
+  return _deleteRowsWhere(sheetName, pkColumn, function (val) {
+    return val.indexOf(prefix) === 0;
+  });
+}
+
+/**
+ * 指定カラムの値が target と完全一致する行をすべて削除する。
+ *
+ * @param {string} sheetName
+ * @param {string} column
+ * @param {string} target
+ * @returns {number} 削除した行数
+ */
+function _deleteRowsByColumn(sheetName, column, target) {
+  return _deleteRowsWhere(sheetName, column, function (val) {
+    return val === target;
+  });
+}
+
+/**
+ * 指定カラムの値が条件を満たす行をすべて削除する。
+ * 下の行から削除して行番号のズレを避ける。
+ * 対象カラムが無いシートは何もしない。
+ *
+ * @param {string} sheetName
+ * @param {string} column
+ * @param {function(string): boolean} predicate
+ * @returns {number} 削除した行数
+ */
+function _deleteRowsWhere(sheetName, column, predicate) {
   var sheet = getSheet(sheetName);
   var values = sheet.getDataRange().getValues();
   if (values.length < 2) return 0;
 
-  var headers = values[0];
-  var pkIdx = headers.indexOf(pkColumn);
-  if (pkIdx === -1) return 0;
+  var idx = values[0].indexOf(column);
+  if (idx === -1) return 0;
 
   var removed = 0;
   for (var i = values.length - 1; i >= 1; i--) {
-    var val = String(values[i][pkIdx] || "");
-    if (val.indexOf(prefix) === 0) {
+    if (predicate(String(values[i][idx] || ""))) {
       sheet.deleteRow(i + 1);
       removed++;
     }
