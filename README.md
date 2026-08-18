@@ -197,7 +197,7 @@ GAS エディタの関数プルダウンから選んで実行する。どちら�
 | 0 | 基盤：Pages + Google ログイン + GAS スケルトン + Sheets セットアップ | ✅ 完了 |
 | 1 | マスタ & 閲覧 | ✅ 完了 |
 | 2 | エントリー | ✅ 完了 |
-| 3 | 移籍 | ⬜ |
+| 3 | 移籍 | ✅ 完了 |
 | 4 | プロテクト | ⬜ |
 | 5 | 試合集計 | ⬜ |
 | 6 | 集計表示 | ⬜ |
@@ -256,5 +256,23 @@ GAS エディタの関数プルダウンから選んで実行する。どちら�
 
 > エントリーを試すには、シーズン状態を「エントリー承認」画面で **`エントリー受付`** にする。
 > `seedTestData` はシーズンを `準備中` で作り直すため、**seed を実行した後に**状態を変更すること。
+
+### Phase 3：移籍
+
+| action | 権限 | payload | 内容 |
+|---|---|---|---|
+| `getTransferOptions` | 全員 | `season_id`, `team_id?` | 市場状況・使える予算・形態別コスト・獲得候補 |
+| `requestTransfer` | チーム | `season_id`, `to_team?`, `player_id`, `method`, `gross_fee?` | 移籍申請 |
+| `respondTransfer` | 売り手 | `transfer_id`, `agree` | 同意／拒否 |
+| `registerAuction` | 主催者 | `season_id`, `to_team`, `player_id`, `gross_fee` | オークション結果の登録 |
+| `listTransfers` | 全員 | `season_id`, `pending_only?` | 移籍一覧 |
+| `approveTransfer` | 主催者 | `transfer_id` | 承認（Rosters 移動 + BudgetTx 計上） |
+| `rejectTransfer` | 主催者 | `transfer_id` | 差戻 |
+
+> **獲得チームは `to_team` で渡す**（`team_id` ではない）。フロントの `requestTransfer` 呼び出しで
+> 取り違えて「獲得チームが特定できません」になった実績あり。
+>
+> 移籍を試すには、シーズン状態を **`移籍市場1`** または **`移籍市場2`** にする。
+> 予算は申請した時点で押さえられ、差戻・売り手拒否で解放される。
 
 未実装の action は `{ ok:false, error:"... は Phase N で実装します。" }` を返す。

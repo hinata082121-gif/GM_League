@@ -130,9 +130,29 @@ function _route(action, token, payload) {
     case "setSeasonStatus":
       return setSeasonStatus(token, payload);
 
-    // ---- チームオーナー向け（未実装） ----
+    // ---- Phase 3: 移籍 ----
+    case "getTransferOptions":
+      return getTransferOptions(token, payload);
+
+    case "listTransfers":
+      return listTransfers(token, payload);
+
     case "requestTransfer":
-      return { ok: false, error: "requestTransfer は Phase 3 で実装します。" };
+      return requestTransfer(token, payload);
+
+    case "respondTransfer":
+      return respondTransfer(token, payload);
+
+    case "registerAuction":
+      return registerAuction(token, payload);
+
+    case "approveTransfer":
+      return approveTransfer(token, payload);
+
+    case "rejectTransfer":
+      return rejectTransfer(token, payload);
+
+    // ---- チームオーナー向け（未実装） ----
 
     case "setProtection":
       return { ok: false, error: "setProtection は Phase 4 で実装します。" };
@@ -140,11 +160,7 @@ function _route(action, token, payload) {
     case "submitMatchResult":
       return { ok: false, error: "submitMatchResult は Phase 5 で実装します。" };
 
-    // ---- 主催者向け ----
-    case "approveTransfer":
-    case "rejectTransfer":
-      return { ok: false, error: action + " は Phase 3 で実装します。" };
-
+    // ---- 主催者向け（未実装） ----
     case "approveMatch":
     case "rejectMatch":
     case "correctMatch":

@@ -90,8 +90,12 @@
         <button class="tab-btn" data-tab="dashboard">ダッシュボード</button>
         <button class="tab-btn" data-tab="teams">チーム閲覧</button>
         <button class="tab-btn" data-tab="entry">エントリー</button>
+        <button class="tab-btn" data-tab="transfer">移籍</button>
         <button class="tab-btn" id="tab-approval" data-tab="approval" style="display:none;">
           エントリー承認
+        </button>
+        <button class="tab-btn" id="tab-txapproval" data-tab="txapproval" style="display:none;">
+          移籍承認
         </button>
         <button class="tab-btn" id="tab-master" data-tab="master" style="display:none;">
           マスタ管理
@@ -145,7 +149,108 @@
         </div>
       </div>
 
-      <!-- ===== 画面4: エントリー承認（主催者限定） ===== -->
+      <!-- ===== 画面4: 移籍申請 ===== -->
+      <div class="tab-panel" data-panel="transfer" style="display:none;">
+        <div class="card">
+          <h2>移籍申請</h2>
+          <div class="filter-row">
+            <label>
+              シーズン
+              <select id="tr-season"></select>
+            </label>
+            <label id="tr-team-wrap" style="display:none;">
+              獲得チーム（主催者は代理申請できます）
+              <select id="tr-team"></select>
+            </label>
+          </div>
+          <div id="tr-market"></div>
+
+          <div id="tr-form-wrap" style="display:none;">
+            <h3 class="sub-head">申請内容</h3>
+            <div class="form-grid">
+              <label>
+                移籍形態
+                <select id="tr-method"></select>
+              </label>
+              <label>
+                ポジション
+                <select id="tr-pos">
+                  <option value="">すべて</option>
+                  <option value="GK">GK</option>
+                  <option value="DF">DF</option>
+                  <option value="MF">MF</option>
+                  <option value="FW">FW</option>
+                </select>
+              </label>
+              <label>
+                対象選手
+                <select id="tr-player"></select>
+              </label>
+              <label id="tr-fee-wrap">
+                交渉額（円）
+                <input type="number" id="tr-fee" min="0" step="10000000" placeholder="例: 100000000" />
+              </label>
+            </div>
+            <div id="tr-preview" class="cost-preview"></div>
+            <div class="form-actions">
+              <button type="button" id="tr-submit" class="btn btn-primary">申請する</button>
+              <span id="tr-result" class="form-msg"></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>移籍の状況</h2>
+          <p class="muted">自チームが関与する移籍を表示します。売り手として応答が必要なものはボタンが出ます。</p>
+          <div id="tr-list"></div>
+        </div>
+      </div>
+
+      <!-- ===== 画面5: 移籍承認（主催者限定） ===== -->
+      <div class="tab-panel" data-panel="txapproval" style="display:none;">
+        <div class="card">
+          <h2>移籍承認</h2>
+          <div class="filter-row">
+            <label>
+              シーズン
+              <select id="ta-season"></select>
+            </label>
+            <label class="check-label">
+              <input type="checkbox" id="ta-pending-only" checked />
+              未確定のみ表示
+            </label>
+          </div>
+          <div id="ta-body"></div>
+        </div>
+
+        <div class="card">
+          <h2>オークション結果の登録</h2>
+          <p class="muted">
+            入札はツール外で行い、確定した結果をここに記録します。
+            登録後は下の一覧から承認してください。
+          </p>
+          <div class="form-grid">
+            <label>
+              落札チーム
+              <select id="au-team"></select>
+            </label>
+            <label>
+              選手（フリーのみ）
+              <select id="au-player"></select>
+            </label>
+            <label>
+              落札額（円）
+              <input type="number" id="au-fee" min="0" step="10000000" />
+            </label>
+            <div class="form-actions">
+              <button type="button" id="au-submit" class="btn btn-primary">登録する</button>
+              <span id="au-result" class="form-msg"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== 画面6: エントリー承認（主催者限定） ===== -->
       <div class="tab-panel" data-panel="approval" style="display:none;">
         <div class="card">
           <h2>エントリー承認</h2>

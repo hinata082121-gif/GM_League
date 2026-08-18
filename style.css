@@ -561,6 +561,48 @@ body {
   white-space: nowrap;
 }
 
+/* ---------- 移籍のコスト表示 ---------- */
+.cost-preview {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px 20px;
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  margin: 12px 0;
+  font-size: 0.9rem;
+}
+
+.cost-ok {
+  background: #e6f4ea;
+  border: 1px solid #a8dab5;
+}
+
+.cost-ng {
+  background: #f1f3f4;
+  border: 1px solid var(--color-border);
+}
+
+.cost-preview > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.cost-preview strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.cost-note {
+  grid-column: 1 / -1;
+  display: block !important;
+  font-size: 0.78rem;
+  color: var(--color-text-sub);
+  border-top: 1px dashed var(--color-border);
+  padding-top: 6px;
+  margin-top: 2px;
+}
+
 /* ---------- 状態タグ ---------- */
 .tag-none,
 .tag-pending,
