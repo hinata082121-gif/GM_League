@@ -196,12 +196,19 @@ function _route(action, token, payload) {
     case "closeSeason":
       return { ok: false, error: action + " は Phase 7 で実装します。" };
 
-    // ---- 読み取り（集計系・Phase 6） ----
+    // ---- Phase 6: 集計表示 ----
     case "getStandings":
+      return getStandings(token, payload);
+
     case "getTournament":
+      return getTournament(token, payload);
+
     case "getRankings":
+      return getRankings(token, payload);
+
+    // ---- 読み取り（Phase 8） ----
     case "getHistory":
-      return { ok: false, error: action + " は Phase 6 で実装します。" };
+      return { ok: false, error: action + " は Phase 8 で実装します。" };
 
     // ---- 不明な action ----
     default:

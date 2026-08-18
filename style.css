@@ -732,6 +732,89 @@ body {
   padding: 2px 0;
 }
 
+/* ---------- 順位表 ---------- */
+.rank-top {
+  background: #f6faff;
+}
+
+.rank-top td:first-child {
+  border-left: 3px solid var(--color-primary);
+}
+
+/* ---------- トーナメント ---------- */
+.tie-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.tie-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  background: var(--color-surface);
+}
+
+.tie-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.tie-round {
+  font-weight: 700;
+  font-size: 0.85rem;
+  color: var(--color-primary);
+}
+
+.tie-agg {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 0.95rem;
+  padding: 8px 0;
+  border-top: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.tie-agg strong {
+  font-size: 1.15rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.tie-winner {
+  font-weight: 700;
+  color: var(--color-success);
+}
+
+.tie-legs {
+  list-style: none;
+  margin-top: 8px;
+  font-size: 0.8rem;
+}
+
+.tie-legs li {
+  padding: 2px 0;
+}
+
+/* ---------- ランキング ---------- */
+.rank-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+.rank-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--color-primary);
+  margin-bottom: 6px;
+}
+
 /* ---------- 状態タグ ---------- */
 .tag-none,
 .tag-pending,

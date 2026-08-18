@@ -93,6 +93,7 @@
         <button class="tab-btn" data-tab="transfer">移籍</button>
         <button class="tab-btn" data-tab="protect">プロテクト</button>
         <button class="tab-btn" data-tab="match">試合</button>
+        <button class="tab-btn" data-tab="stats">順位・記録</button>
         <button class="tab-btn" id="tab-approval" data-tab="approval" style="display:none;">
           エントリー承認
         </button>
@@ -349,7 +350,28 @@
         </div>
       </div>
 
-      <!-- ===== 画面7: 移籍承認（主催者限定） ===== -->
+      <!-- ===== 画面7: 順位・記録 ===== -->
+      <div class="tab-panel" data-panel="stats" style="display:none;">
+        <div class="card">
+          <div class="filter-row">
+            <label>
+              シーズン
+              <select id="st-season"></select>
+            </label>
+            <label>
+              表示
+              <select id="st-view">
+                <option value="standings">リーグ順位表</option>
+                <option value="tournament">トーナメント</option>
+                <option value="rankings">個人ランキング</option>
+              </select>
+            </label>
+          </div>
+          <div id="st-body"></div>
+        </div>
+      </div>
+
+      <!-- ===== 画面8: 移籍承認（主催者限定） ===== -->
       <div class="tab-panel" data-panel="txapproval" style="display:none;">
         <div class="card">
           <h2>移籍承認</h2>

@@ -361,6 +361,9 @@ function _setupConfig() {
     ["protect_paid_before_days",    1,           "有料プロテクトの開始（開幕の何日前から）"],
     ["protect_paid_start",          "23:00",     "有料プロテクトの開始時刻"],
     ["market_days",                 3,           "移籍市場の日数（有料プロテクトの終了判定に使用）"],
+    ["win_points",                  3,           "勝利の勝点"],
+    ["draw_points",                 1,           "引き分けの勝点"],
+    ["min_matches_for_save_rate",   2,           "シュートセーブ率ランキングの最低出場試合数"],
   ];
 
   // 新規追加分のみを収集してバッチ書き込み（API 呼び出し1回）

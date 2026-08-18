@@ -133,6 +133,7 @@ function showTab(name) {
   if (name === 'transfer') renderTransfer();
   if (name === 'protect') renderProtect();
   if (name === 'match') renderMatch();
+  if (name === 'stats') renderStats();
   if (name === 'approval') renderApproval();
   if (name === 'txapproval') renderTxApproval();
   if (name === 'master') renderMaster();
@@ -2737,4 +2738,255 @@ async function onMatchAction(action, matchId, label) {
   } else {
     setResult('mt-list-result', false, label + 'できません: ' + res.error);
   }
+}
+
+// ---------------------------------------------------------------------------
+// 画面7: 順位・記録（Phase 6）
+// ---------------------------------------------------------------------------
+
+/**
+ * 集計画面を初期化する。
+ */
+async function renderStats() {
+  const seasons = await loadSeasons();
+  fillSelect('st-season', seasons, 'season_id', 'name');
+
+  const seasonSel = document.getElementById('st-season');
+  if (!seasonSel.dataset.bound) {
+    seasonSel.onchange = loadStatsView;
+    document.getElementById('st-view').onchange = loadStatsView;
+    seasonSel.dataset.bound = '1';
+  }
+
+  await loadStatsView();
+}
+
+/**
+ * 選択中の表示種別に応じて描画する。
+ */
+async function loadStatsView() {
+  const seasonId = document.getElementById('st-season').value;
+  const view = document.getElementById('st-view').value;
+  const box = document.getElementById('st-body');
+
+  if (!seasonId) {
+    box.innerHTML = '<p class="muted">シーズンを選択してください。</p>';
+    return;
+  }
+
+  setLoading('st-body');
+
+  if (view === 'standings') return renderStandings(seasonId);
+  if (view === 'tournament') return renderTournament(seasonId);
+  return renderRankings(seasonId);
+}
+
+/**
+ * リーグ順位表を描画する。
+ *
+ * @param {string} seasonId
+ */
+async function renderStandings(seasonId) {
+  const res = await callApi('getStandings', { season_id: seasonId });
+  if (!res.ok) {
+    setError('st-body', '順位表の取得に失敗しました: ' + res.error);
+    return;
+  }
+
+  const d = res.data;
+  const box = document.getElementById('st-body');
+
+  if (d.match_count === 0) {
+    box.innerHTML =
+      '<h3 class="sub-head">リーグ順位表</h3>' +
+      '<p class="muted">承認済みのリーグ戦がまだありません。</p>';
+    return;
+  }
+
+  const anyH2H = d.table.some((r) => r.h2h);
+
+  const rows = d.table
+    .map((r) => {
+      const h2h = r.h2h
+        ? '<span class="muted">' + r.h2h.points + '点 / ' +
+          (r.h2h.gd >= 0 ? '+' : '') + r.h2h.gd + '</span>'
+        : '<span class="muted">—</span>';
+
+      return `
+      <tr${r.rank <= 2 ? ' class="rank-top"' : ''}>
+        <td class="num">${r.rank}${r.tied ? '<span class="tag-none">同</span>' : ''}</td>
+        <td>${esc(r.team_name)}</td>
+        <td class="num">${r.played}</td>
+        <td class="num">${r.won}</td>
+        <td class="num">${r.drawn}</td>
+        <td class="num">${r.lost}</td>
+        <td class="num">${r.gf}</td>
+        <td class="num">${r.ga}</td>
+        <td class="num">${r.gd >= 0 ? '+' : ''}${r.gd}</td>
+        <td class="num"><strong>${r.points}</strong></td>
+        ${anyH2H ? '<td class="num">' + h2h + '</td>' : ''}
+      </tr>`;
+    })
+    .join('');
+
+  box.innerHTML = `
+    <h3 class="sub-head">リーグ順位表</h3>
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th class="num">順位</th><th>チーム</th>
+            <th class="num">試合</th><th class="num">勝</th><th class="num">分</th><th class="num">敗</th>
+            <th class="num">得点</th><th class="num">失点</th><th class="num">得失</th><th class="num">勝点</th>
+            ${anyH2H ? '<th class="num">直接対決</th>' : ''}
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <p class="muted note-sm">
+      承認済み ${d.match_count} 試合を集計（シーズン1・シーズン2の合算）。
+      勝${d.win_points}・分${d.draw_points}・敗0。
+      同点時は 得失点差 → 総得点 → 直接対決 の順で比較し、すべて並ぶ場合は同順位（「同」表示）です。
+    </p>`;
+}
+
+/**
+ * トーナメント表を描画する。
+ *
+ * @param {string} seasonId
+ */
+async function renderTournament(seasonId) {
+  const res = await callApi('getTournament', { season_id: seasonId });
+  if (!res.ok) {
+    setError('st-body', 'トーナメントの取得に失敗しました: ' + res.error);
+    return;
+  }
+
+  const d = res.data;
+  const box = document.getElementById('st-body');
+
+  if (d.ties.length === 0) {
+    box.innerHTML =
+      '<h3 class="sub-head">トーナメント</h3>' +
+      '<p class="muted">承認済みのトーナメント戦がまだありません。</p>';
+    return;
+  }
+
+  const cards = d.ties
+    .map((t) => {
+      const legRows = t.legs
+        .map((l) => {
+          const pk =
+            l.home_pk !== null && l.away_pk !== null
+              ? ' <span class="muted">PK ' + l.home_pk + '-' + l.away_pk + '</span>'
+              : '';
+          return `
+          <li>
+            <span class="muted">${esc(l.leg && l.leg !== '-' ? l.leg + 'st/nd レグ' : '単発')}</span>
+            ${esc(l.home_name)} <strong>${l.home_score} - ${l.away_score}</strong> ${esc(l.away_name)}${pk}
+          </li>`;
+        })
+        .join('');
+
+      const pkAgg =
+        t.pk_a !== null && t.pk_b !== null
+          ? '<span class="muted">（PK ' + t.pk_a + '-' + t.pk_b + '）</span>'
+          : '';
+
+      const decided =
+        t.winner
+          ? '<span class="tag-ok">' + esc(t.winner_name) + ' 勝ち上がり</span>' +
+            '<span class="muted"> — ' + esc(t.decided_by) + '</span>'
+          : '<span class="tag-pending">未決着</span>';
+
+      return `
+      <div class="tie-card">
+        <div class="tie-head">
+          <span class="tie-round">${esc(t.round || t.tie_id || '—')}</span>
+          ${decided}
+        </div>
+        <div class="tie-agg">
+          <span${t.winner === t.team_a ? ' class="tie-winner"' : ''}>${esc(t.team_a_name)}</span>
+          <strong>${t.agg_a} - ${t.agg_b}</strong>
+          <span${t.winner === t.team_b ? ' class="tie-winner"' : ''}>${esc(t.team_b_name)}</span>
+          ${pkAgg}
+        </div>
+        <ul class="tie-legs">${legRows}</ul>
+      </div>`;
+    })
+    .join('');
+
+  box.innerHTML = `
+    <h3 class="sub-head">トーナメント</h3>
+    <div class="tie-grid">${cards}</div>
+    <p class="muted note-sm">
+      合計スコアで判定します（アウェイゴールは採用しません）。合計が同点の場合は PK 戦の結果で決まります。
+      各レグの結果も併記しています。
+    </p>`;
+}
+
+/**
+ * 個人ランキング4種を描画する。
+ *
+ * @param {string} seasonId
+ */
+async function renderRankings(seasonId) {
+  const res = await callApi('getRankings', { season_id: seasonId });
+  if (!res.ok) {
+    setError('st-body', 'ランキングの取得に失敗しました: ' + res.error);
+    return;
+  }
+
+  const d = res.data;
+  const box = document.getElementById('st-body');
+
+  if (d.match_count === 0) {
+    box.innerHTML =
+      '<h3 class="sub-head">個人ランキング</h3>' +
+      '<p class="muted">承認済みの試合がまだありません。</p>';
+    return;
+  }
+
+  const table = (title, list, valueKey, unit, extra) => {
+    if (!list || list.length === 0) {
+      return '<div><h4 class="rank-title">' + esc(title) + '</h4><p class="muted">該当なし</p></div>';
+    }
+
+    const rows = list
+      .slice(0, 20)
+      .map((r) => `
+        <tr>
+          <td class="num">${r.rank}${r.tied ? '<span class="tag-none">同</span>' : ''}</td>
+          <td><span class="pos pos-${esc(r.position)}">${esc(r.position)}</span> ${esc(r.name)}</td>
+          <td class="muted">${esc(r.team_name)}</td>
+          <td class="num"><strong>${esc(r[valueKey])}</strong>${esc(unit)}</td>
+          ${extra ? '<td class="num muted">' + esc(extra(r)) + '</td>' : ''}
+        </tr>`)
+      .join('');
+
+    return `
+      <div>
+        <h4 class="rank-title">${esc(title)}</h4>
+        <div class="table-wrap">
+          <table class="data-table">
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>`;
+  };
+
+  box.innerHTML = `
+    <h3 class="sub-head">個人ランキング</h3>
+    <div class="rank-grid">
+      ${table('得点', d.goals, 'goals', ' 点')}
+      ${table('アシスト', d.assists, 'assists', ' 回')}
+      ${table('セーブ数', d.saves, 'saves', ' 本')}
+      ${table('シュートセーブ率', d.save_rate, 'rate', ' %', (r) => r.saves + '/' + r.faced)}
+    </div>
+    <p class="muted note-sm">
+      承認済み ${d.match_count} 試合を集計。得点ランキングにオウンゴールは含めません。
+      シュートセーブ率は ${d.min_matches_for_save_rate} 試合以上出場した GK のみを対象とし、
+      分母は出場試合における相手チームの枠内シュート数です。
+    </p>`;
 }
