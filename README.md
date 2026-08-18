@@ -41,7 +41,11 @@ J リーグ選手限定の eFootball 私設大会を運営するための集計�
 │   ├─ config.gs       # Config シート読み取りヘルパ
 │   ├─ lib.gs          # Sheets 読み書きヘルパ・LockService ラッパ
 │   ├─ setupSheets.gs  # 全15シート作成・Config / Clubs 初期値投入（冪等）
-│   ├─ api_master.gs   # Phase 1: マスタ & 閲覧の action ハンドラ
+│   ├─ api_master.gs     # Phase 1: マスタ & 閲覧
+│   ├─ api_entry.gs      # Phase 2: エントリー提出・承認
+│   ├─ api_transfer.gs   # Phase 3: 移籍
+│   ├─ api_protection.gs # Phase 4: プロテクト
+│   ├─ api_match.gs      # Phase 5: 試合集計
 │   └─ seed.gs         # テストデータ投入・削除（手動実行）
 ├─ SPEC.md           # 確定仕様（データモデル・経済ルール・API 一覧・画面一覧）
 ├─ PROJECT.md        # 方針・進捗管理
@@ -198,8 +202,8 @@ GAS エディタの関数プルダウンから選んで実行する。どちら�
 | 1 | マスタ & 閲覧 | ✅ 完了 |
 | 2 | エントリー | ✅ 完了 |
 | 3 | 移籍 | ✅ 完了 |
-| 4 | プロテクト | ⬜ |
-| 5 | 試合集計 | ⬜ |
+| 4 | プロテクト | ✅ 完了 |
+| 5 | 試合集計 | ✅ 完了 |
 | 6 | 集計表示 | ⬜ |
 | 7 | 経済周辺 & シーズン進行 | ⬜ |
 | 8 | 仕上げ | ⬜ |
@@ -274,5 +278,50 @@ GAS エディタの関数プルダウンから選んで実行する。どちら�
 >
 > 移籍を試すには、シーズン状態を **`移籍市場1`** または **`移籍市場2`** にする。
 > 予算は申請した時点で押さえられ、差戻・売り手拒否で解放される。
+
+### Phase 4：プロテクト
+
+| action | 権限 | payload | 内容 |
+|---|---|---|---|
+| `getProtectionStatus` | チーム | `season_id`, `team_id?` | フェーズ・残枠・次の料金・設定可能な選手 |
+| `setProtection` | チーム | `season_id`, `team_id?`, `player_id` | 設定（有料は即時 BudgetTx 計上） |
+| `getProtections` | 全員 | `season_id`, `window?` | プロテクト掲示 |
+
+> tier は指定せず、フェーズと消費枠数から**自動で決まる**（無料1→無料2、有料1→有料2→有料3）。
+> 受付期間は §7.3 のとおり時刻から導出する。シーズン status では判定していない。
+>
+> **解除できない。放出しても枠は戻らない。** `Protections` の行を削除する処理は存在しない。
+
+### Phase 5：試合集計
+
+| action | 権限 | payload | 内容 |
+|---|---|---|---|
+| `getMatchOptions` | 全員 | `season_id`, `home_team?`, `away_team?` | 両軍の選手一覧・オウンゴールの番兵値 |
+| `listMatches` | 全員 | `season_id`, `stage?`, `status?` | 試合一覧 |
+| `getMatchDetail` | 全員 | `match_id` | 得点・シュート・GK の明細 |
+| `submitMatchResult` | 当事者/主催者 | 下記参照 | 試合結果の申請 |
+| `approveMatch` | 主催者 | `match_id` | 承認 |
+| `rejectMatch` | 主催者 | `match_id` | 差戻 |
+| `correctMatch` | 主催者 | `match_id` + 申請と同じ内容 | 全項目を差し替え |
+
+`submitMatchResult` の payload:
+
+```
+{
+  season_id, stage: 'league'|'tournament', round,
+  tie_id?, leg?, home_team, away_team, home_score, away_score, home_pk?, away_pk?,
+  goals:      [{ team_id, scorer_id, assist_id? }],
+  team_stats: [{ team_id, shots, shots_on_target }],
+  gk_stats:   [{ team_id, gk_player_id, saves }]
+}
+```
+
+> **オウンゴールは `scorer_id` に `__OG__`** を入れ、`team_id` は**得点が入った側**にする。
+> ランキング集計では除外する（SPEC.md §10.4）。
+>
+> 得点者の件数はスコアと一致必須。画面側は得点者の入力行をスコアに連動させて生成するため、
+> 不一致が構造的に起きない。
+>
+> 同じ節・同じ対戦は1件のみ。home/away を入れ替えても重複として検出する。
 
 未実装の action は `{ ok:false, error:"... は Phase N で実装します。" }` を返す。

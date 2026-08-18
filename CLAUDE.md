@@ -92,17 +92,21 @@ config.js
 ├─ config.js         # 設定値一元管理（OAuthClientID・GAS URL等）
 ├─ auth.js           # Google Identity Services ログイン処理
 ├─ app.js            # GAS API 共通 fetch ラッパ（callApi関数）
-├─ views.js          # Phase 1 画面（ダッシュボード/チーム閲覧/マスタ管理）
+├─ views.js          # 全画面のロジック（タブ単位で関数を分けている）
 ├─ style.css         # スタイルシート
 ├─ gas/              # GAS ソースのミラー（正はGASエディタ側。clasp不採用）
 │   ├─ appsscript.json
-│   ├─ Code.gs       # doPost エントリポイント・ルーティング
-│   ├─ auth.gs       # トークン検証・whoami
-│   ├─ config.gs     # Config シート読み取りヘルパ
-│   ├─ lib.gs        # Sheets 読み書きヘルパ・LockService ラッパ
-│   ├─ setupSheets.gs# 全15シート作成・Config / Clubs 初期値投入（冪等）
-│   ├─ api_master.gs # Phase 1 の action ハンドラ（マスタ&閲覧）
-│   └─ seed.gs       # テストデータ投入/削除（手動実行）
+│   ├─ Code.gs         # doPost エントリポイント・ルーティング
+│   ├─ auth.gs         # トークン検証・whoami
+│   ├─ config.gs       # Config シート読み取りヘルパ
+│   ├─ lib.gs          # Sheets 読み書きヘルパ・LockService ラッパ
+│   ├─ setupSheets.gs  # 全15シート作成・Config / Clubs 初期値投入（冪等）
+│   ├─ api_master.gs   # Phase 1: マスタ & 閲覧
+│   ├─ api_entry.gs    # Phase 2: エントリー提出・承認
+│   ├─ api_transfer.gs # Phase 3: 移籍（コスト算出・承認・オークション）
+│   ├─ api_protection.gs # Phase 4: プロテクト（期限ゲート・枠管理）
+│   ├─ api_match.gs    # Phase 5: 試合集計（申請・承認・訂正）
+│   └─ seed.gs         # テストデータ投入/削除（手動実行）
 ├─ SPEC.md           # 確定仕様
 ├─ PROJECT.md        # 方針・進捗
 └─ CLAUDE.md         # 本ファイル
@@ -118,8 +122,8 @@ config.js
 | 1 | マスタ & 閲覧 | ✅ |
 | 2 | エントリー | ✅ |
 | 3 | 移籍 | ✅ |
-| 4 | プロテクト | ⬜ |
-| 5 | 試合集計 | ⬜ |
+| 4 | プロテクト | ✅ |
+| 5 | 試合集計 | ✅ |
 | 6 | 集計表示 | ⬜ |
 | 7 | 経済周辺 & シーズン進行 | ⬜ |
 | 8 | 仕上げ | ⬜ |

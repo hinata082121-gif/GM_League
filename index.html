@@ -91,6 +91,8 @@
         <button class="tab-btn" data-tab="teams">チーム閲覧</button>
         <button class="tab-btn" data-tab="entry">エントリー</button>
         <button class="tab-btn" data-tab="transfer">移籍</button>
+        <button class="tab-btn" data-tab="protect">プロテクト</button>
+        <button class="tab-btn" data-tab="match">試合</button>
         <button class="tab-btn" id="tab-approval" data-tab="approval" style="display:none;">
           エントリー承認
         </button>
@@ -207,7 +209,147 @@
         </div>
       </div>
 
-      <!-- ===== 画面5: 移籍承認（主催者限定） ===== -->
+      <!-- ===== 画面5: プロテクト ===== -->
+      <div class="tab-panel" data-panel="protect" style="display:none;">
+        <div class="card">
+          <h2>プロテクト設定</h2>
+          <div class="filter-row">
+            <label>
+              シーズン
+              <select id="pr-season"></select>
+            </label>
+            <label id="pr-team-wrap" style="display:none;">
+              チーム（主催者は代理設定できます）
+              <select id="pr-team"></select>
+            </label>
+          </div>
+          <div id="pr-status"></div>
+          <div id="pr-form" style="display:none;">
+            <div class="form-grid">
+              <label>
+                プロテクトする選手
+                <select id="pr-player"></select>
+              </label>
+              <div class="form-actions">
+                <button type="button" id="pr-submit" class="btn btn-primary">設定する</button>
+                <span id="pr-result" class="form-msg"></span>
+              </div>
+            </div>
+          </div>
+          <div id="pr-mine"></div>
+        </div>
+
+        <div class="card">
+          <h2>プロテクト掲示</h2>
+          <p class="muted">
+            全チームのプロテクト状況です。特別ルールで強奪できない選手を確認できます
+            （無効化特別ルールはプロテクトを貫通します）。
+          </p>
+          <div class="filter-row">
+            <label>
+              移籍市場
+              <select id="pb-window">
+                <option value="">すべて</option>
+                <option value="1">第1次</option>
+                <option value="2">第2次</option>
+              </select>
+            </label>
+          </div>
+          <div id="pb-body"></div>
+        </div>
+      </div>
+
+      <!-- ===== 画面6: 試合 ===== -->
+      <div class="tab-panel" data-panel="match" style="display:none;">
+        <div class="card">
+          <h2 id="mt-form-title">試合結果の申請</h2>
+          <div class="filter-row">
+            <label>
+              シーズン
+              <select id="mt-season"></select>
+            </label>
+            <label>
+              種別
+              <select id="mt-stage">
+                <option value="league">リーグ戦</option>
+                <option value="tournament">トーナメント</option>
+              </select>
+            </label>
+            <label>
+              節 / ラウンド
+              <input type="text" id="mt-round" placeholder="例: 第1節" />
+            </label>
+          </div>
+
+          <div class="filter-row" id="mt-tie-row" style="display:none;">
+            <label>
+              tie_id <span class="unit-hint">2レグを束ねるID</span>
+              <input type="text" id="mt-tie" placeholder="例: qf1" />
+            </label>
+            <label>
+              レグ
+              <select id="mt-leg">
+                <option value="-">-</option>
+                <option value="1">1st</option>
+                <option value="2">2nd</option>
+              </select>
+            </label>
+          </div>
+
+          <h3 class="sub-head">スコア</h3>
+          <div class="score-row">
+            <div class="score-side">
+              <label>ホーム<select id="mt-home"></select></label>
+              <input type="number" id="mt-home-score" min="0" value="0" class="score-input" />
+            </div>
+            <span class="score-vs">—</span>
+            <div class="score-side">
+              <input type="number" id="mt-away-score" min="0" value="0" class="score-input" />
+              <label>アウェイ<select id="mt-away"></select></label>
+            </div>
+          </div>
+          <div class="filter-row" id="mt-pk-row" style="display:none;">
+            <label>ホーム PK<input type="number" id="mt-home-pk" min="0" /></label>
+            <label>アウェイ PK<input type="number" id="mt-away-pk" min="0" /></label>
+          </div>
+
+          <h3 class="sub-head">得点者</h3>
+          <div id="mt-goals"></div>
+
+          <h3 class="sub-head">シュート</h3>
+          <div id="mt-shots"></div>
+
+          <h3 class="sub-head">起用 GK とセーブ数</h3>
+          <div id="mt-gks"></div>
+          <button type="button" id="mt-add-gk" class="btn btn-secondary btn-sm">GK を追加</button>
+
+          <div class="form-actions">
+            <button type="button" id="mt-submit" class="btn btn-primary">申請する</button>
+            <button type="button" id="mt-cancel" class="btn btn-secondary btn-sm" style="display:none;">
+              訂正をやめる
+            </button>
+            <span id="mt-result" class="form-msg"></span>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>試合一覧</h2>
+          <div class="filter-row">
+            <label>
+              表示
+              <select id="mt-filter">
+                <option value="">すべて</option>
+                <option value="申請中">申請中のみ</option>
+                <option value="承認">承認済のみ</option>
+                <option value="差戻">差戻のみ</option>
+              </select>
+            </label>
+          </div>
+          <div id="mt-list"></div>
+        </div>
+      </div>
+
+      <!-- ===== 画面7: 移籍承認（主催者限定） ===== -->
       <div class="tab-panel" data-panel="txapproval" style="display:none;">
         <div class="card">
           <h2>移籍承認</h2>
@@ -340,22 +482,22 @@
           <form id="form-team" class="form-grid">
             <label>
               チーム名
-              <input type="text" id="mt-name" required placeholder="例: ○○FC" />
+              <input type="text" id="tm-name" required placeholder="例: ○○FC" />
             </label>
             <label>
               種別
-              <select id="mt-kind">
+              <select id="tm-kind">
                 <option value="新規">新規</option>
                 <option value="継続">継続</option>
               </select>
             </label>
             <label class="check-label">
-              <input type="checkbox" id="mt-active" checked />
+              <input type="checkbox" id="tm-active" checked />
               大会参加中（active）
             </label>
             <div class="form-actions">
               <button type="submit" class="btn btn-primary">チームを登録</button>
-              <span id="mt-result" class="form-msg"></span>
+              <span id="tm-result" class="form-msg"></span>
             </div>
           </form>
         </div>

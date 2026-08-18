@@ -131,6 +131,8 @@ function showTab(name) {
   if (name === 'teams') renderTeamViewer();
   if (name === 'entry') renderEntry();
   if (name === 'transfer') renderTransfer();
+  if (name === 'protect') renderProtect();
+  if (name === 'match') renderMatch();
   if (name === 'approval') renderApproval();
   if (name === 'txapproval') renderTxApproval();
   if (name === 'master') renderMaster();
@@ -736,23 +738,23 @@ async function onSubmitTeam(e) {
   e.preventDefault();
   const btn = e.target.querySelector('button[type=submit]');
   btn.disabled = true;
-  setResult('mt-result', true, '送信中...');
+  setResult('tm-result', true, '送信中...');
 
   const res = await callApi('upsertTeam', {
-    name: document.getElementById('mt-name').value.trim(),
-    kind: document.getElementById('mt-kind').value,
-    active: document.getElementById('mt-active').checked,
+    name: document.getElementById('tm-name').value.trim(),
+    kind: document.getElementById('tm-kind').value,
+    active: document.getElementById('tm-active').checked,
   });
 
   btn.disabled = false;
 
   if (res.ok) {
-    setResult('mt-result', true, '登録しました。');
+    setResult('tm-result', true, '登録しました。');
     e.target.reset();
-    document.getElementById('mt-active').checked = true;
+    document.getElementById('tm-active').checked = true;
     await renderMaster();
   } else {
-    setResult('mt-result', false, '失敗: ' + res.error);
+    setResult('tm-result', false, '失敗: ' + res.error);
   }
 }
 
@@ -1844,5 +1846,895 @@ async function onSubmitAuction() {
     await loadTxApprovalList();
   } else {
     setResult('au-result', false, '登録できません: ' + res.error);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 画面5: プロテクト（Phase 4）
+// ---------------------------------------------------------------------------
+
+/** 直近に取得したプロテクト状況 */
+let protectData = null;
+
+/**
+ * プロテクト画面のシーズン／チーム選択を用意する。
+ */
+async function renderProtect() {
+  const seasons = await loadSeasons();
+  fillSelect('pr-season', seasons, 'season_id', 'name');
+
+  const seasonSel = document.getElementById('pr-season');
+  const teamSel = document.getElementById('pr-team');
+
+  if (currentUser.role === 'organizer') {
+    fillSelect('pr-team', await loadTeams(), 'team_id', 'name', 'チームを選択');
+    document.getElementById('pr-team-wrap').style.display = 'flex';
+  } else {
+    document.getElementById('pr-team-wrap').style.display = 'none';
+  }
+
+  if (!seasonSel.dataset.bound) {
+    seasonSel.onchange = loadProtectStatus;
+    teamSel.onchange = loadProtectStatus;
+    document.getElementById('pr-submit').onclick = onSubmitProtection;
+    document.getElementById('pb-window').onchange = loadProtectionBoard;
+    seasonSel.dataset.bound = '1';
+  }
+
+  await loadProtectStatus();
+}
+
+/**
+ * 現在のフェーズ・残枠・設定可能な選手を取得して描画する。
+ */
+async function loadProtectStatus() {
+  const seasonId = document.getElementById('pr-season').value;
+  const teamId = document.getElementById('pr-team').value;
+  const statusBox = document.getElementById('pr-status');
+  const form = document.getElementById('pr-form');
+
+  protectData = null;
+  form.style.display = 'none';
+  document.getElementById('pr-mine').innerHTML = '';
+
+  if (!seasonId) {
+    statusBox.innerHTML = '<p class="muted">シーズンを選択してください。</p>';
+    return;
+  }
+
+  setLoading('pr-status');
+
+  const res = await callApi('getProtectionStatus', { season_id: seasonId, team_id: teamId });
+  if (!res.ok) {
+    setError('pr-status', 'プロテクト状況の取得に失敗しました: ' + res.error);
+    return;
+  }
+
+  protectData = res.data;
+  renderProtectStatusBox();
+
+  if (res.data.team_id) {
+    renderMyProtections();
+    if (res.data.can_set) {
+      form.style.display = 'block';
+      renderProtectPlayerSelect();
+    }
+  }
+
+  await loadProtectionBoard();
+}
+
+/**
+ * フェーズ・期間・残枠・次の料金を表示する。
+ */
+function renderProtectStatusBox() {
+  const d = protectData;
+  const box = document.getElementById('pr-status');
+
+  const phaseClass = {
+    無料: 'tag-ok',
+    有料: 'tag-pending',
+    受付外: 'tag-none',
+  }[d.phase] || 'tag-none';
+
+  const fmt = (iso) => (iso ? String(iso).replace('T', ' ').slice(5, 16) : '—');
+
+  let periodInfo = '';
+  if (d.periods) {
+    periodInfo = `
+      <p class="muted note-sm">
+        第${d.window}次の受付期間 —
+        無料: 〜 ${esc(fmt(d.periods.free_end))} ／
+        有料: ${esc(fmt(d.periods.paid_start))} 〜 ${esc(fmt(d.periods.paid_end))}
+      </p>`;
+  }
+
+  let usageBlock = '';
+  if (d.usage) {
+    usageBlock = `
+      <div class="stat">
+        <span class="stat-label">無料枠</span>
+        <span class="stat-value">${d.usage.free} / ${d.free_max}</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">有料枠</span>
+        <span class="stat-value">${d.usage.paid} / ${d.paid_max}</span>
+      </div>`;
+  }
+
+  let nextBlock = '';
+  if (d.next_tier) {
+    const feeText = d.next_tier.fee > 0 ? formatMoney(d.next_tier.fee) : '無料';
+    nextBlock = `
+      <div class="stat">
+        <span class="stat-label">次に設定する枠</span>
+        <span class="stat-value">${esc(d.next_tier.tier)}<span class="stat-sm"> ${esc(feeText)}</span></span>
+      </div>`;
+  }
+
+  let notice = '';
+  if (d.phase === '受付外') {
+    notice = '<p class="msg-error">現在はプロテクトの受付期間外です。</p>';
+  } else if (d.team_id && !d.can_set) {
+    notice = '<p class="msg-ok">' + esc(d.phase) + '枠をすべて使い切っています。</p>';
+  } else if (d.phase === '有料') {
+    notice =
+      '<p class="msg-error">有料枠は<strong>設定した瞬間に料金が引かれ、後から解除できません。</strong>' +
+      '選手をよく確認してください。</p>';
+  }
+
+  box.innerHTML = `
+    <div class="stat-grid">
+      <div class="stat">
+        <span class="stat-label">現在のフェーズ</span>
+        <span class="stat-value">第${d.window || '—'}次 <span class="${phaseClass}">${esc(d.phase)}</span></span>
+      </div>
+      ${usageBlock}
+      ${nextBlock}
+    </div>
+    ${periodInfo}
+    ${notice}`;
+}
+
+/**
+ * プロテクト可能な選手のプルダウンを組み立てる。
+ */
+function renderProtectPlayerSelect() {
+  const sel = document.getElementById('pr-player');
+  const list = protectData.protectable || [];
+
+  sel.innerHTML =
+    '<option value="">選手を選択</option>' +
+    list
+      .map((p) => '<option value="' + esc(p.player_id) + '">' +
+        esc(p.position) + ' ' + esc(p.name) + '</option>')
+      .join('');
+}
+
+/**
+ * 自チームの設定済みプロテクトを一覧表示する。
+ */
+function renderMyProtections() {
+  const d = protectData;
+  const box = document.getElementById('pr-mine');
+
+  if (!d.my_protections || d.my_protections.length === 0) {
+    box.innerHTML = '<h3 class="sub-head">設定済み</h3><p class="muted">まだ設定していません。</p>';
+    return;
+  }
+
+  const rows = d.my_protections
+    .map((p) => `
+      <tr>
+        <td><span class="pos pos-${esc(p.position)}">${esc(p.position)}</span></td>
+        <td>${esc(p.name)}</td>
+        <td>${esc(p.tier)}</td>
+        <td class="num">${p.fee > 0 ? esc(formatMoney(p.fee)) : '無料'}</td>
+        <td class="muted">${esc(String(p.set_at).replace('T', ' ').slice(5, 16))}</td>
+      </tr>`)
+    .join('');
+
+  box.innerHTML = `
+    <h3 class="sub-head">設定済み（第${d.window}次）</h3>
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr><th>Pos</th><th>選手</th><th>枠</th><th class="num">料金</th><th>設定日時</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <p class="muted note-sm">プロテクトは解除できません。放出しても枠は戻りません。</p>`;
+}
+
+/**
+ * プロテクトを設定する。
+ * 有料枠は取り消せないので、料金と選手名を明示して確認を取る。
+ */
+async function onSubmitProtection() {
+  const d = protectData;
+  const sel = document.getElementById('pr-player');
+  const playerId = sel.value;
+
+  if (!playerId) {
+    setResult('pr-result', false, '選手を選んでください。');
+    return;
+  }
+
+  const playerName = sel.options[sel.selectedIndex].text;
+  const tier = d.next_tier.tier;
+  const fee = d.next_tier.fee;
+
+  const confirmMsg =
+    playerName + ' を「' + tier + '」でプロテクトします。\n' +
+    (fee > 0
+      ? '料金 ' + formatMoney(fee) + ' が今すぐ予算から引かれます。\n'
+      : '料金はかかりません。\n') +
+    '\n※ 一度設定すると解除できません。放出しても枠は戻りません。\n\n実行しますか？';
+
+  if (!confirm(confirmMsg)) return;
+
+  const btn = document.getElementById('pr-submit');
+  btn.disabled = true;
+  setResult('pr-result', true, '設定中...');
+
+  const res = await callApi('setProtection', {
+    season_id: d.season_id,
+    team_id: d.team_id,
+    player_id: playerId,
+  });
+
+  btn.disabled = false;
+
+  if (res.ok) {
+    setResult(
+      'pr-result',
+      true,
+      res.data.tier + ' で設定しました' +
+        (res.data.fee > 0 ? '（' + formatMoney(res.data.fee) + ' を計上）' : '') + '。'
+    );
+    await loadProtectStatus();
+  } else {
+    setResult('pr-result', false, '設定できません: ' + res.error);
+  }
+}
+
+/**
+ * プロテクト掲示を描画する。全ロールが閲覧できる。
+ */
+async function loadProtectionBoard() {
+  const seasonId = document.getElementById('pr-season').value;
+  const windowNo = document.getElementById('pb-window').value;
+  const box = document.getElementById('pb-body');
+  if (!seasonId) return;
+
+  setLoading('pb-body');
+
+  const res = await callApi('getProtections', {
+    season_id: seasonId,
+    window: windowNo ? Number(windowNo) : 0,
+  });
+
+  if (!res.ok) {
+    setError('pb-body', 'プロテクト掲示の取得に失敗しました: ' + res.error);
+    return;
+  }
+  if (res.data.length === 0) {
+    box.innerHTML = '<p class="muted">プロテクトされている選手はいません。</p>';
+    return;
+  }
+
+  const rows = res.data
+    .map((p) => `
+      <tr>
+        <td>第${p.window}次</td>
+        <td>${esc(p.team_name)}</td>
+        <td><span class="pos pos-${esc(p.position)}">${esc(p.position)}</span></td>
+        <td>${esc(p.name)}${p.still_on_team ? '' : ' <span class="tag-ng">放出済</span>'}</td>
+        <td>${esc(p.tier)}</td>
+        <td class="num muted">${p.fee > 0 ? esc(formatMoney(p.fee)) : '—'}</td>
+      </tr>`)
+    .join('');
+
+  box.innerHTML = `
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr><th>市場</th><th>チーム</th><th>Pos</th><th>選手</th><th>枠</th><th class="num">料金</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <p class="muted note-sm">「放出済」は設定後に移籍などで抜けた選手です。枠は戻りません。</p>`;
+}
+
+// ---------------------------------------------------------------------------
+// 画面6: 試合（Phase 5）
+// ---------------------------------------------------------------------------
+
+/** 申請フォーム用に取得した両軍の選手など */
+let matchOptions = null;
+
+/** 訂正モードのときの match_id。通常の申請時は null */
+let correctingMatchId = null;
+
+/** GK 入力欄の行数（チームごと） */
+let gkRowSeq = 0;
+
+/**
+ * 試合画面を初期化する。
+ */
+async function renderMatch() {
+  const seasons = await loadSeasons();
+  fillSelect('mt-season', seasons, 'season_id', 'name');
+
+  const teams = await loadTeams();
+  fillSelect('mt-home', teams, 'team_id', 'name', 'チームを選択');
+  fillSelect('mt-away', teams, 'team_id', 'name', 'チームを選択');
+
+  const seasonSel = document.getElementById('mt-season');
+  if (!seasonSel.dataset.bound) {
+    seasonSel.onchange = () => { loadMatchOptions(); loadMatchList(); };
+    document.getElementById('mt-stage').onchange = onMatchStageChange;
+    document.getElementById('mt-home').onchange = loadMatchOptions;
+    document.getElementById('mt-away').onchange = loadMatchOptions;
+    document.getElementById('mt-home-score').oninput = renderGoalRows;
+    document.getElementById('mt-away-score').oninput = renderGoalRows;
+    document.getElementById('mt-add-gk').onclick = () => addGkRow();
+    document.getElementById('mt-submit').onclick = onSubmitMatch;
+    document.getElementById('mt-cancel').onclick = exitCorrectionMode;
+    document.getElementById('mt-filter').onchange = loadMatchList;
+    seasonSel.dataset.bound = '1';
+  }
+
+  onMatchStageChange();
+  await loadMatchOptions();
+  await loadMatchList();
+}
+
+/**
+ * 種別の切り替え。トーナメントのときだけ tie_id / レグ / PK を出す。
+ */
+function onMatchStageChange() {
+  const isTournament = document.getElementById('mt-stage').value === 'tournament';
+  document.getElementById('mt-tie-row').style.display = isTournament ? 'flex' : 'none';
+  document.getElementById('mt-pk-row').style.display = isTournament ? 'flex' : 'none';
+}
+
+/**
+ * 両軍の選手一覧を取得し、得点者・GK のプルダウンを組み直す。
+ */
+async function loadMatchOptions() {
+  const seasonId = document.getElementById('mt-season').value;
+  const home = document.getElementById('mt-home').value;
+  const away = document.getElementById('mt-away').value;
+
+  if (!seasonId) return;
+
+  const res = await callApi('getMatchOptions', {
+    season_id: seasonId,
+    home_team: home,
+    away_team: away,
+  });
+
+  if (!res.ok) {
+    setResult('mt-result', false, '選手情報の取得に失敗しました: ' + res.error);
+    return;
+  }
+
+  matchOptions = res.data;
+
+  // team ロールは自チームを自動で埋める
+  if (!home && !away && matchOptions.my_team) {
+    document.getElementById('mt-home').value = matchOptions.my_team;
+    return loadMatchOptions();
+  }
+
+  renderGoalRows();
+  renderShotInputs();
+  if (document.querySelectorAll('.gk-row').length === 0) {
+    const t = currentMatchTeams();
+    if (t.home) addGkRow(t.home);
+    if (t.away) addGkRow(t.away);
+  }
+}
+
+/**
+ * 選択中のチームIDと表示名を返す。
+ *
+ * @returns {{home: string, away: string, homeName: string, awayName: string}}
+ */
+function currentMatchTeams() {
+  const homeSel = document.getElementById('mt-home');
+  const awaySel = document.getElementById('mt-away');
+  return {
+    home: homeSel.value,
+    away: awaySel.value,
+    homeName: homeSel.value ? homeSel.options[homeSel.selectedIndex].text : 'ホーム',
+    awayName: awaySel.value ? awaySel.options[awaySel.selectedIndex].text : 'アウェイ',
+  };
+}
+
+/**
+ * 選手プルダウンの option 群を組み立てる。
+ *
+ * @param {Object[]} players
+ * @param {boolean} withOwnGoal オウンゴールの選択肢を入れるか
+ * @param {string} [selected]
+ * @returns {string}
+ */
+function playerOptions(players, withOwnGoal, selected) {
+  let html = '<option value="">選択</option>';
+  if (withOwnGoal) {
+    html += '<option value="' + esc(matchOptions.own_goal_id) + '">— オウンゴール —</option>';
+  }
+  (players || []).forEach((p) => {
+    const mark = p.current ? '' : '（離脱）';
+    html +=
+      '<option value="' + esc(p.player_id) + '"' +
+      (selected === p.player_id ? ' selected' : '') + '>' +
+      esc(p.position) + ' ' + esc(p.name) + esc(mark) + '</option>';
+  });
+  return html;
+}
+
+/**
+ * スコアの数だけ得点者の入力行を生成する。
+ *
+ * 行数をスコアに連動させることで、件数の不一致が構造的に起きなくなる。
+ * 既に選ばれている内容はできるだけ引き継ぐ。
+ */
+function renderGoalRows() {
+  const box = document.getElementById('mt-goals');
+  if (!matchOptions) return;
+
+  const t = currentMatchTeams();
+  const homeScore = Math.max(0, Number(document.getElementById('mt-home-score').value) || 0);
+  const awayScore = Math.max(0, Number(document.getElementById('mt-away-score').value) || 0);
+
+  // 既存の入力を保持する
+  const prev = [...box.querySelectorAll('.goal-row')].map((r) => ({
+    team: r.dataset.team,
+    scorer: r.querySelector('.goal-scorer').value,
+    assist: r.querySelector('.goal-assist').value,
+  }));
+
+  const pick = (team, n) => {
+    const same = prev.filter((p) => p.team === team);
+    return same[n] || { scorer: '', assist: '' };
+  };
+
+  if (homeScore + awayScore === 0) {
+    box.innerHTML = '<p class="muted">スコアを入力すると得点者の欄が出ます。</p>';
+    return;
+  }
+
+  let html = '';
+  const build = (teamId, teamName, players, count) => {
+    for (let i = 0; i < count; i++) {
+      const p = pick(teamId, i);
+      html += `
+        <div class="goal-row" data-team="${esc(teamId)}">
+          <span class="goal-team">${esc(teamName)}</span>
+          <label>得点者
+            <select class="goal-scorer">${playerOptions(players, true, p.scorer)}</select>
+          </label>
+          <label>アシスト
+            <select class="goal-assist">${playerOptions(players, false, p.assist)}</select>
+          </label>
+        </div>`;
+    }
+  };
+
+  build(t.home, t.homeName, matchOptions.home_players, homeScore);
+  build(t.away, t.awayName, matchOptions.away_players, awayScore);
+
+  box.innerHTML = html;
+
+  // オウンゴールを選んだらアシストを無効にする
+  box.querySelectorAll('.goal-row').forEach((row) => {
+    const scorer = row.querySelector('.goal-scorer');
+    const assist = row.querySelector('.goal-assist');
+    const sync = () => {
+      const isOg = scorer.value === matchOptions.own_goal_id;
+      assist.disabled = isOg;
+      if (isOg) assist.value = '';
+    };
+    scorer.onchange = sync;
+    sync();
+  });
+}
+
+/**
+ * シュート数の入力欄を組み立てる。
+ */
+function renderShotInputs() {
+  const t = currentMatchTeams();
+  const box = document.getElementById('mt-shots');
+
+  const prev = {};
+  box.querySelectorAll('.shot-input').forEach((i) => { prev[i.dataset.key] = i.value; });
+
+  const side = (teamId, teamName) => `
+    <div class="shot-side">
+      <span class="goal-team">${esc(teamName)}</span>
+      <label>シュート
+        <input type="number" min="0" class="shot-input" data-key="${esc(teamId)}_shots"
+               data-team="${esc(teamId)}" data-kind="shots" value="${esc(prev[teamId + '_shots'] || 0)}" />
+      </label>
+      <label>枠内
+        <input type="number" min="0" class="shot-input" data-key="${esc(teamId)}_on"
+               data-team="${esc(teamId)}" data-kind="on" value="${esc(prev[teamId + '_on'] || 0)}" />
+      </label>
+    </div>`;
+
+  box.innerHTML = side(t.home, t.homeName) + side(t.away, t.awayName);
+}
+
+/**
+ * GK の入力行を1つ追加する。
+ *
+ * @param {string} [teamId] 初期選択するチーム
+ * @param {string} [playerId]
+ * @param {number} [saves]
+ */
+function addGkRow(teamId, playerId, saves) {
+  const t = currentMatchTeams();
+  const box = document.getElementById('mt-gks');
+  const id = 'gk' + ++gkRowSeq;
+
+  const row = document.createElement('div');
+  row.className = 'gk-row';
+  row.dataset.id = id;
+  row.innerHTML = `
+    <label>チーム
+      <select class="gk-team">
+        <option value="${esc(t.home)}">${esc(t.homeName)}</option>
+        <option value="${esc(t.away)}">${esc(t.awayName)}</option>
+      </select>
+    </label>
+    <label>起用GK<select class="gk-player"></select></label>
+    <label>セーブ<input type="number" min="0" class="gk-saves" value="${esc(saves || 0)}" /></label>
+    <button type="button" class="btn btn-secondary btn-sm gk-remove">削除</button>`;
+
+  box.appendChild(row);
+
+  const teamSel = row.querySelector('.gk-team');
+  if (teamId) teamSel.value = teamId;
+
+  const fillPlayers = () => {
+    const isHome = teamSel.value === t.home;
+    const players = isHome ? matchOptions.home_players : matchOptions.away_players;
+    row.querySelector('.gk-player').innerHTML = playerOptions(players, false, playerId);
+  };
+
+  teamSel.onchange = fillPlayers;
+  row.querySelector('.gk-remove').onclick = () => row.remove();
+  fillPlayers();
+}
+
+/**
+ * フォームの内容を submitMatchResult / correctMatch の payload に変換する。
+ *
+ * @returns {Object}
+ */
+function collectMatchPayload() {
+  const t = currentMatchTeams();
+  const stage = document.getElementById('mt-stage').value;
+
+  const goals = [...document.querySelectorAll('.goal-row')].map((r) => ({
+    team_id: r.dataset.team,
+    scorer_id: r.querySelector('.goal-scorer').value,
+    assist_id: r.querySelector('.goal-assist').value,
+  }));
+
+  const shots = {};
+  document.querySelectorAll('.shot-input').forEach((i) => {
+    const tid = i.dataset.team;
+    if (!shots[tid]) shots[tid] = { team_id: tid, shots: 0, shots_on_target: 0 };
+    if (i.dataset.kind === 'shots') shots[tid].shots = Number(i.value) || 0;
+    else shots[tid].shots_on_target = Number(i.value) || 0;
+  });
+
+  const gkStats = [...document.querySelectorAll('.gk-row')]
+    .map((r) => ({
+      team_id: r.querySelector('.gk-team').value,
+      gk_player_id: r.querySelector('.gk-player').value,
+      saves: Number(r.querySelector('.gk-saves').value) || 0,
+    }))
+    .filter((g) => g.gk_player_id);
+
+  const payload = {
+    season_id: document.getElementById('mt-season').value,
+    stage,
+    round: document.getElementById('mt-round').value.trim(),
+    home_team: t.home,
+    away_team: t.away,
+    home_score: Number(document.getElementById('mt-home-score').value) || 0,
+    away_score: Number(document.getElementById('mt-away-score').value) || 0,
+    goals,
+    team_stats: Object.keys(shots).map((k) => shots[k]),
+    gk_stats: gkStats,
+  };
+
+  if (stage === 'tournament') {
+    payload.tie_id = document.getElementById('mt-tie').value.trim();
+    payload.leg = document.getElementById('mt-leg').value;
+    payload.home_pk = document.getElementById('mt-home-pk').value;
+    payload.away_pk = document.getElementById('mt-away-pk').value;
+  }
+
+  return payload;
+}
+
+/**
+ * 試合を申請、または訂正モードなら訂正する。
+ */
+async function onSubmitMatch() {
+  const btn = document.getElementById('mt-submit');
+  const payload = collectMatchPayload();
+
+  // 得点者の未選択はサーバーに投げる前に気づけるようにする
+  const missing = payload.goals.some((g) => !g.scorer_id);
+  if (missing) {
+    setResult('mt-result', false, '得点者が選ばれていない行があります。');
+    return;
+  }
+
+  btn.disabled = true;
+  setResult('mt-result', true, '送信中...');
+
+  let res;
+  if (correctingMatchId) {
+    payload.match_id = correctingMatchId;
+    res = await callApi('correctMatch', payload);
+  } else {
+    res = await callApi('submitMatchResult', payload);
+  }
+
+  btn.disabled = false;
+
+  if (res.ok) {
+    setResult(
+      'mt-result',
+      true,
+      correctingMatchId ? '訂正しました。' : '申請しました。主催者の承認をお待ちください。'
+    );
+    if (correctingMatchId) exitCorrectionMode();
+    await loadMatchList();
+  } else {
+    setResult('mt-result', false, (correctingMatchId ? '訂正' : '申請') + 'できません: ' + res.error);
+  }
+}
+
+/**
+ * 訂正モードを抜けてフォームを申請用に戻す。
+ */
+function exitCorrectionMode() {
+  correctingMatchId = null;
+  document.getElementById('mt-form-title').textContent = '試合結果の申請';
+  document.getElementById('mt-submit').textContent = '申請する';
+  document.getElementById('mt-cancel').style.display = 'none';
+  setResult('mt-result', true, '');
+}
+
+/**
+ * 既存の試合をフォームに読み込んで訂正モードに入る。
+ *
+ * @param {string} matchId
+ */
+async function startCorrection(matchId) {
+  setResult('mt-result', true, '読み込み中...');
+
+  const res = await callApi('getMatchDetail', { match_id: matchId });
+  if (!res.ok) {
+    setResult('mt-result', false, '取得に失敗しました: ' + res.error);
+    return;
+  }
+
+  const { match, goals, team_stats, gk_stats } = res.data;
+
+  document.getElementById('mt-stage').value = match.stage;
+  onMatchStageChange();
+  document.getElementById('mt-round').value = match.round;
+  document.getElementById('mt-tie').value = match.tie_id;
+  document.getElementById('mt-leg').value = match.leg || '-';
+  document.getElementById('mt-home').value = match.home_team;
+  document.getElementById('mt-away').value = match.away_team;
+  document.getElementById('mt-home-score').value = match.home_score;
+  document.getElementById('mt-away-score').value = match.away_score;
+  document.getElementById('mt-home-pk').value = match.home_pk === null ? '' : match.home_pk;
+  document.getElementById('mt-away-pk').value = match.away_pk === null ? '' : match.away_pk;
+
+  await loadMatchOptions();
+
+  // 得点者を反映
+  const rows = [...document.querySelectorAll('.goal-row')];
+  const byTeam = {};
+  goals.forEach((g) => {
+    if (!byTeam[g.team_id]) byTeam[g.team_id] = [];
+    byTeam[g.team_id].push(g);
+  });
+  const used = {};
+  rows.forEach((r) => {
+    const tid = r.dataset.team;
+    used[tid] = (used[tid] || 0);
+    const g = (byTeam[tid] || [])[used[tid]++];
+    if (!g) return;
+    r.querySelector('.goal-scorer').value = g.scorer_id;
+    r.querySelector('.goal-scorer').dispatchEvent(new Event('change'));
+    if (g.assist_id) r.querySelector('.goal-assist').value = g.assist_id;
+  });
+
+  // シュートを反映
+  team_stats.forEach((s) => {
+    const a = document.querySelector('.shot-input[data-key="' + s.team_id + '_shots"]');
+    const b = document.querySelector('.shot-input[data-key="' + s.team_id + '_on"]');
+    if (a) a.value = s.shots;
+    if (b) b.value = s.shots_on_target;
+  });
+
+  // GK を反映
+  document.getElementById('mt-gks').innerHTML = '';
+  gk_stats.forEach((g) => addGkRow(g.team_id, g.gk_player_id, g.saves));
+  if (gk_stats.length === 0) addGkRow();
+
+  correctingMatchId = matchId;
+  document.getElementById('mt-form-title').textContent = '試合結果の訂正';
+  document.getElementById('mt-submit').textContent = 'この内容で訂正する';
+  document.getElementById('mt-cancel').style.display = 'inline-block';
+  setResult('mt-result', true, '訂正モードです。内容を書き換えて「訂正する」を押してください。');
+
+  document.getElementById('mt-form-title').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+/**
+ * 試合一覧を描画する。
+ */
+async function loadMatchList() {
+  const seasonId = document.getElementById('mt-season').value;
+  const status = document.getElementById('mt-filter').value;
+  const box = document.getElementById('mt-list');
+  if (!seasonId) return;
+
+  setLoading('mt-list');
+
+  const res = await callApi('listMatches', { season_id: seasonId, status });
+  if (!res.ok) {
+    setError('mt-list', '試合一覧の取得に失敗しました: ' + res.error);
+    return;
+  }
+  if (res.data.length === 0) {
+    box.innerHTML = '<p class="muted">該当する試合はありません。</p>';
+    return;
+  }
+
+  const badge = { 申請中: 'tag-pending', 承認: 'tag-ok', 差戻: 'tag-ng' };
+  const isOrganizer = currentUser.role === 'organizer';
+
+  const rows = res.data
+    .map((m) => {
+      const pk =
+        m.home_pk !== null && m.away_pk !== null
+          ? ' <span class="muted">(PK ' + m.home_pk + '-' + m.away_pk + ')</span>'
+          : '';
+
+      let actions =
+        '<button class="btn btn-sm btn-secondary mt-detail" data-id="' + esc(m.match_id) + '">明細</button> ';
+      if (isOrganizer) {
+        if (m.can_approve) {
+          actions +=
+            '<button class="btn btn-sm btn-primary mt-approve" data-id="' + esc(m.match_id) + '">承認</button> ' +
+            '<button class="btn btn-sm btn-secondary mt-reject" data-id="' + esc(m.match_id) + '">差戻</button> ';
+        } else if (m.status === '承認') {
+          actions +=
+            '<button class="btn btn-sm btn-secondary mt-reject" data-id="' + esc(m.match_id) + '">差戻</button> ';
+        }
+        actions +=
+          '<button class="btn btn-sm btn-secondary mt-correct" data-id="' + esc(m.match_id) + '">訂正</button>';
+      }
+
+      return `
+      <tr>
+        <td class="muted">${esc(m.stage === 'tournament' ? 'T' : 'L')} ${esc(m.round)}</td>
+        <td>${esc(m.home_name)} <strong>${m.home_score} - ${m.away_score}</strong> ${esc(m.away_name)}${pk}</td>
+        <td><span class="${badge[m.status] || 'tag-none'}">${esc(m.status)}</span></td>
+        <td>${actions}</td>
+      </tr>
+      <tr class="detail-row" id="det-${esc(m.match_id)}" style="display:none;">
+        <td colspan="4" class="detail-cell"></td>
+      </tr>`;
+    })
+    .join('');
+
+  box.innerHTML = `
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr><th>節</th><th>対戦</th><th>状態</th><th>操作</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <p id="mt-list-result" class="form-msg"></p>`;
+
+  box.querySelectorAll('.mt-detail').forEach((b) => {
+    b.onclick = () => toggleMatchDetail(b.dataset.id);
+  });
+  box.querySelectorAll('.mt-approve').forEach((b) => {
+    b.onclick = () => onMatchAction('approveMatch', b.dataset.id, '承認');
+  });
+  box.querySelectorAll('.mt-reject').forEach((b) => {
+    b.onclick = () => onMatchAction('rejectMatch', b.dataset.id, '差戻');
+  });
+  box.querySelectorAll('.mt-correct').forEach((b) => {
+    b.onclick = () => startCorrection(b.dataset.id);
+  });
+}
+
+/**
+ * 試合明細の開閉。
+ *
+ * @param {string} matchId
+ */
+async function toggleMatchDetail(matchId) {
+  const row = document.getElementById('det-' + matchId);
+  if (!row) return;
+
+  if (row.style.display !== 'none') {
+    row.style.display = 'none';
+    return;
+  }
+
+  const cell = row.querySelector('.detail-cell');
+  cell.innerHTML = '<p class="muted">読み込み中...</p>';
+  row.style.display = 'table-row';
+
+  const res = await callApi('getMatchDetail', { match_id: matchId });
+  if (!res.ok) {
+    cell.innerHTML = '<p class="msg-error">' + esc(res.error) + '</p>';
+    return;
+  }
+
+  const { goals, team_stats, gk_stats } = res.data;
+
+  const goalList = goals.length
+    ? goals
+        .map((g) =>
+          '<li>' + esc(g.team_name) + ' — ' + esc(g.scorer_name) +
+          (g.assist_name ? '<span class="muted">（A: ' + esc(g.assist_name) + '）</span>' : '') +
+          '</li>')
+        .join('')
+    : '<li class="muted">得点なし</li>';
+
+  const shotList = team_stats
+    .map((s) => '<li>' + esc(s.team_name) + ' — ' + s.shots + ' 本（枠内 ' + s.shots_on_target + '）</li>')
+    .join('') || '<li class="muted">未入力</li>';
+
+  const gkList = gk_stats
+    .map((g) => '<li>' + esc(g.team_name) + ' — ' + esc(g.gk_name) + ' ' + g.saves + ' セーブ</li>')
+    .join('') || '<li class="muted">未入力</li>';
+
+  cell.innerHTML = `
+    <div class="detail-grid">
+      <div><h4>得点</h4><ul>${goalList}</ul></div>
+      <div><h4>シュート</h4><ul>${shotList}</ul></div>
+      <div><h4>GK</h4><ul>${gkList}</ul></div>
+    </div>`;
+}
+
+/**
+ * 試合の承認／差戻を実行する。
+ *
+ * @param {string} action
+ * @param {string} matchId
+ * @param {string} label
+ */
+async function onMatchAction(action, matchId, label) {
+  if (action === 'rejectMatch' && !confirm('この試合を差し戻します。よろしいですか？')) return;
+
+  setResult('mt-list-result', true, label + '中...');
+
+  const res = await callApi(action, { match_id: matchId });
+
+  if (res.ok) {
+    await loadMatchList();
+    setResult('mt-list-result', true, label + 'しました。');
+  } else {
+    setResult('mt-list-result', false, label + 'できません: ' + res.error);
   }
 }

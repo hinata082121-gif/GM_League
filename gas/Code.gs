@@ -154,17 +154,38 @@ function _route(action, token, payload) {
 
     // ---- チームオーナー向け（未実装） ----
 
+    // ---- Phase 4: プロテクト ----
+    case "getProtectionStatus":
+      return getProtectionStatus(token, payload);
+
     case "setProtection":
-      return { ok: false, error: "setProtection は Phase 4 で実装します。" };
+      return setProtection(token, payload);
+
+    case "getProtections":
+      return getProtections(token, payload);
+
+    // ---- Phase 5: 試合集計 ----
+    case "getMatchOptions":
+      return getMatchOptions(token, payload);
+
+    case "listMatches":
+      return listMatches(token, payload);
+
+    case "getMatchDetail":
+      return getMatchDetail(token, payload);
 
     case "submitMatchResult":
-      return { ok: false, error: "submitMatchResult は Phase 5 で実装します。" };
+      return submitMatchResult(token, payload);
 
     // ---- 主催者向け（未実装） ----
     case "approveMatch":
+      return approveMatch(token, payload);
+
     case "rejectMatch":
+      return rejectMatch(token, payload);
+
     case "correctMatch":
-      return { ok: false, error: action + " は Phase 5 で実装します。" };
+      return correctMatch(token, payload);
 
     case "addPenalty":
     case "addCompensation":
@@ -179,7 +200,6 @@ function _route(action, token, payload) {
     case "getStandings":
     case "getTournament":
     case "getRankings":
-    case "getProtections":
     case "getHistory":
       return { ok: false, error: action + " は Phase 6 で実装します。" };
 

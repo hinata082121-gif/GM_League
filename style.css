@@ -629,6 +629,109 @@ body {
   margin-top: 2px;
 }
 
+/* ---------- 試合結果の入力 ---------- */
+.score-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.score-side {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.score-side label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-text-sub);
+  min-width: 160px;
+}
+
+.score-input {
+  width: 68px !important;
+  text-align: center;
+  font-size: 1.3rem;
+  font-weight: 700;
+  padding: 4px !important;
+}
+
+.score-vs {
+  font-size: 1.2rem;
+  color: var(--color-text-sub);
+  padding-bottom: 8px;
+}
+
+.goal-row,
+.gk-row,
+.shot-side {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  margin-bottom: 6px;
+  background: var(--color-surface);
+}
+
+.goal-row label,
+.gk-row label,
+.shot-side label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-sub);
+}
+
+.goal-team {
+  font-weight: 700;
+  font-size: 0.85rem;
+  min-width: 130px;
+  padding-bottom: 8px;
+}
+
+.gk-row .btn,
+.goal-row .btn {
+  margin-bottom: 2px;
+}
+
+.detail-cell {
+  background: var(--color-bg);
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+  padding: 8px 4px;
+}
+
+.detail-grid h4 {
+  font-size: 0.8rem;
+  color: var(--color-primary);
+  margin-bottom: 4px;
+}
+
+.detail-grid ul {
+  list-style: none;
+  font-size: 0.82rem;
+}
+
+.detail-grid li {
+  padding: 2px 0;
+}
+
 /* ---------- 状態タグ ---------- */
 .tag-none,
 .tag-pending,
