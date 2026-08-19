@@ -3814,7 +3814,15 @@ async function renderSignupAdmin() {
     btn.dataset.bound = '1';
   }
 
-  await loadSignupConfig();
+  // 設定の読み込みで失敗しても申請一覧は出す。
+  // 片方の不具合でもう片方が見えなくなるのを避ける。
+  try {
+    await loadSignupConfig();
+  } catch (e) {
+    console.error('[signup] 設定の読み込みに失敗:', e);
+    setResult('sg-config-result', false, '設定を読み込めませんでした: ' + e.message);
+  }
+
   await loadSignups();
 }
 
@@ -3826,16 +3834,16 @@ async function renderSignupAdmin() {
 async function loadSignupConfig() {
   const res = await callApi('listConfig');
   if (!res.ok) {
-    setError('sg-list', '設定の取得に失敗しました: ' + res.error);
+    setResult('sg-config-result', false, '設定の取得に失敗しました: ' + res.error);
     return;
   }
 
-  const map = {};
-  res.data.forEach((r) => { map[r.key] = r.value; });
+  // listConfig は配列ではなく { key: value } のオブジェクトを返す
+  const map = res.data || {};
 
   document.getElementById('sg-code').value = map.signup_code || '';
   document.getElementById('sg-open').checked =
-    String(map.signup_open).toLowerCase() === 'true' || map.signup_open === true;
+    map.signup_open === true || String(map.signup_open).toLowerCase() === 'true';
 
   renderSignupLink();
 }
