@@ -47,6 +47,9 @@ function setupAll() {
     }
   });
 
+  // --- 既存シートに不足カラムを追加（x_id など後から増えた列）---
+  var headerResult = _ensureHeaders(defs);
+
   // --- Config 初期値投入 ---
   var configResult = _setupConfig();
 
@@ -57,6 +60,7 @@ function setupAll() {
   Logger.log("────────────────────────────────────────");
   Logger.log("【作成】 " + results.created.length + " シート: " + (results.created.join(", ") || "なし"));
   Logger.log("【スキップ】 " + results.skipped.length + " シート: " + (results.skipped.join(", ") || "なし"));
+  Logger.log("【列追加】 " + (headerResult.added.length ? headerResult.added.join(" / ") : "なし"));
   Logger.log("【Config】 追加 " + configResult.added + " 件 / スキップ " + configResult.skipped + " 件");
   Logger.log("【Clubs】 追加 " + clubResult.added + " 件 / スキップ " + clubResult.skipped + " 件");
   if (results.errors.length > 0) {
@@ -71,7 +75,7 @@ function setupAll() {
 // =============================================================================
 
 /**
- * 全17シートの名前・ヘッダー配列・SPEC参照を返す。
+ * 全18シートの名前・ヘッダー配列・SPEC参照を返す。
  *
  * カラム名は SPEC.md §4 の表の「カラム」列と完全一致させる。
  * ここを変更した場合は lib.gs の getSheetData / appendRow も影響を受ける。
@@ -90,6 +94,7 @@ function _getSheetDefinitions() {
         "display_name",  // string  表示名
         "role",          // enum    team / organizer
         "team_id",       // string  role=team の場合の所属チーム
+        "x_id",          // string  X（旧Twitter）のID。@ は付けない
       ],
     },
     {
@@ -300,6 +305,24 @@ function _getSheetDefinitions() {
       ],
     },
     {
+      // §4.18 Signups ─ 参加登録の申請
+      name: "Signups",
+      spec: "SPEC.md §4.18",
+      headers: [
+        "signup_id",    // string    主キー
+        "email",        // string    Google アカウント email（トークンから取得）
+        "display_name", // string    表示名
+        "team_name",    // string    希望するチーム名
+        "x_id",         // string    X の ID
+        "note",         // string    自由記述
+        "status",       // enum      申請中 / 承認 / 却下
+        "created_at",   // datetime
+        "decided_at",   // datetime
+        "decided_by",   // string    承認/却下した主催者の user_id
+        "team_id",      // string    承認時に作られたチームの team_id
+      ],
+    },
+    {
       // §4.15 Clubs ─ 現実のJリーグクラブ一覧
       // 選手登録画面の「カテゴリー→クラブ」2段プルダウンの元データ。
       // 毎シーズンの昇降格はこのシートを直接編集して反映する。
@@ -339,6 +362,9 @@ function _setupConfig() {
   // [key, value, 備考（ログ表示用）]
   var initialConfig = [
     // ── 賞金（未定のため仮値 0）─────────────────────────────────────────
+    ["signup_code",                 "",          "参加登録の合言葉（空のままだと登録を受け付けない）"],
+    ["signup_open",                 false,       "参加登録の受付中フラグ"],
+
     ["two_division_min_teams",      15,          "二部制にできる最小チーム数"],
 
     ["prize_gm1_1div_1",            150000000,   "一部制 GM1リーグ 1位 1.5億"],
@@ -482,6 +508,58 @@ function _createSheetIfNotExists(name, headers) {
 
   Logger.log("  [sheet] 作成: " + name + "（" + headers.length + " 列）");
   return true;
+}
+
+/**
+ * 既存シートのヘッダーに不足している列を右端に追加する。
+ *
+ * _createSheetIfNotExists は既存シートを触らないため、後から列が増えた場合
+ * （Users.x_id など）に追随できない。setupAll を再実行するだけで
+ * 列が揃うようにするための補助。
+ *
+ * 列の削除・並べ替えは行わない。既存データは動かさない。
+ *
+ * @param {Array<{name: string, headers: string[]}>} defs
+ * @returns {{ added: string[] }}
+ */
+function _ensureHeaders(defs) {
+  var ss = getSpreadsheet();
+  var added = [];
+
+  defs.forEach(function (def) {
+    var sheet = ss.getSheetByName(def.name);
+    if (!sheet) return;
+
+    var lastCol = sheet.getLastColumn();
+    if (lastCol === 0) {
+      sheet.getRange(1, 1, 1, def.headers.length).setValues([def.headers]);
+      added.push(def.name + ": ヘッダー新規");
+      return;
+    }
+
+    var current = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (v) {
+      return String(v).trim();
+    });
+
+    var missing = def.headers.filter(function (h) {
+      return current.indexOf(h) === -1;
+    });
+
+    if (missing.length === 0) return;
+
+    sheet.getRange(1, lastCol + 1, 1, missing.length).setValues([missing]);
+
+    var range = sheet.getRange(1, lastCol + 1, 1, missing.length);
+    range.setFontWeight("bold");
+    range.setBackground("#e8f0fe");
+    range.setFontColor("#1a1a1a");
+    range.setFontSize(10);
+
+    added.push(def.name + ": " + missing.join(", "));
+    Logger.log("  [header] 列追加 " + def.name + " → " + missing.join(", "));
+  });
+
+  return { added: added };
 }
 
 // =============================================================================

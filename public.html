@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GM League — 大会情報</title>
+
+  <link rel="stylesheet" href="style.css" />
+  <script src="config.js"></script>
+</head>
+<body>
+
+  <header class="site-header">
+    <h1 class="site-title">⚽ GM League</h1>
+    <p class="site-subtitle">eFootball Jリーグ限定私設大会 — 大会情報</p>
+  </header>
+
+  <main class="main-content">
+
+    <div class="public-bar">
+      <span class="muted">ログインなしで見られる公開ページです。</span>
+      <span class="public-bar-actions">
+        <a class="btn btn-secondary btn-sm" href="register.html">参加登録</a>
+        <a class="btn btn-secondary btn-sm" href="index.html">ログイン</a>
+      </span>
+    </div>
+
+    <div id="pb-signup" class="hint-box" style="display:none;"></div>
+
+    <div class="card">
+      <div class="filter-row">
+        <label>
+          シーズン
+          <select id="pb-season"></select>
+        </label>
+        <label>
+          表示
+          <select id="pb-view">
+            <option value="standings">順位表</option>
+            <option value="transfers">移籍動向</option>
+            <option value="participants">参加者一覧</option>
+          </select>
+        </label>
+      </div>
+      <div id="pb-body">
+        <p class="muted">読み込み中...</p>
+      </div>
+    </div>
+
+    <p class="muted note-sm" id="pb-footer"></p>
+
+  </main>
+
+<script>
+/**
+ * public.html — 認証不要の閲覧ページ
+ *
+ * getPublicData だけを呼ぶ。ログインもトークンも使わない。
+ * 表示できるのは承認済みのデータのみ（GAS 側で絞っている）。
+ */
+
+/** getPublicData の結果をそのまま保持する */
+let publicData = null;
+
+/**
+ * HTML エスケープ。公開ページはチーム名を自由入力から受け取るため必須。
+ *
+ * @param {*} v
+ * @returns {string}
+ */
+function esc(v) {
+  return String(v === null || v === undefined ? '' : v)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/**
+ * 金額を「〇億〇〇00万円」形式にする。
+ *
+ * @param {number} yen
+ * @returns {string}
+ */
+function formatMoney(yen) {
+  const n = Number(yen) || 0;
+  if (n === 0) return '0円';
+
+  const sign = n < 0 ? '−' : '';
+  const abs = Math.abs(n);
+  const oku = Math.floor(abs / 100000000);
+  const man = Math.floor((abs % 100000000) / 10000);
+
+  let out = '';
+  if (oku > 0) out += oku + '億';
+  if (man > 0) out += man + '万';
+  if (!out) out = abs + '';
+  return sign + out + '円';
+}
+
+/**
+ * X のプロフィールリンクを作る。ID が無ければ「—」を返す。
+ *
+ * rel="noopener" を付けるのは、開いた先から window.opener を触られないようにするため。
+ *
+ * @param {string} xId
+ * @returns {string} HTML
+ */
+function xLink(xId) {
+  const id = String(xId || '').trim();
+  if (!id) return '<span class="muted">—</span>';
+  return '<a class="x-link" href="https://x.com/' + encodeURIComponent(id) +
+    '" target="_blank" rel="noopener noreferrer">@' + esc(id) + '</a>';
+}
+
+/**
+ * 公開データを取得する。トークンは送らない。
+ *
+ * @param {string} [seasonId]
+ * @returns {Promise<Object>}
+ */
+async function fetchPublic(seasonId) {
+  const body = JSON.stringify({
+    action: 'getPublicData',
+    token: '',
+    payload: seasonId ? { season_id: seasonId } : {},
+  });
+
+  const res = await fetch(GM_CONFIG.GAS_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body,
+    redirect: 'follow',
+  });
+
+  if (!res.ok) throw new Error('http_' + res.status);
+  return res.json();
+}
+
+/**
+ * 初期化。シーズン一覧を作って最初の描画を行う。
+ */
+async function initPublic() {
+  const box = document.getElementById('pb-body');
+
+  let res;
+  try {
+    res = await fetchPublic();
+  } catch (e) {
+    box.innerHTML = '<p class="form-msg msg-error">読み込みに失敗しました: ' + esc(e.message) + '</p>';
+    return;
+  }
+
+  if (!res.ok) {
+    box.innerHTML = '<p class="form-msg msg-error">読み込みに失敗しました: ' + esc(res.error) + '</p>';
+    return;
+  }
+
+  publicData = res.data;
+
+  const sel = document.getElementById('pb-season');
+  sel.innerHTML = publicData.seasons
+    .map((s) => '<option value="' + esc(s.season_id) + '">' + esc(s.name) + '</option>')
+    .join('');
+  sel.value = publicData.season_id;
+
+  sel.onchange = async () => {
+    box.innerHTML = '<p class="muted">読み込み中...</p>';
+    const r = await fetchPublic(sel.value);
+    if (r.ok) publicData = r.data;
+    render();
+  };
+  document.getElementById('pb-view').onchange = render;
+
+  renderSignupNotice();
+  render();
+}
+
+/**
+ * 参加募集中かどうかを上部に出す。
+ */
+function renderSignupNotice() {
+  const el = document.getElementById('pb-signup');
+  if (!publicData.signup_open) {
+    el.style.display = 'none';
+    return;
+  }
+  el.style.display = 'block';
+  el.innerHTML =
+    '<strong>参加者募集中です。</strong> ' +
+    '主催者から合言葉を受け取って <a href="register.html">参加登録ページ</a> からお申し込みください。';
+}
+
+/**
+ * 選択中の表示種別を描画する。
+ */
+function render() {
+  const view = document.getElementById('pb-view').value;
+  const box = document.getElementById('pb-body');
+
+  if (view === 'standings') box.innerHTML = renderStandings();
+  else if (view === 'transfers') box.innerHTML = renderTransfers();
+  else box.innerHTML = renderParticipants();
+
+  document.getElementById('pb-footer').textContent =
+    publicData.season_name
+      ? publicData.season_name + '（' + publicData.season_status + '）の情報です。承認済みのデータのみ表示しています。'
+      : '';
+}
+
+/**
+ * 順位表。二部制なら GM1 と GM2 を続けて出す。
+ *
+ * @returns {string} HTML
+ */
+function renderStandings() {
+  const st = publicData.standings;
+  if (!st) return '<p class="muted">順位表がまだありません。</p>';
+
+  const one = (label, block) => {
+    if (!block) return '';
+    if (!block.table || block.table.length === 0 || block.match_count === 0) {
+      return '<h3 class="sub-head">' + esc(label) + '</h3>' +
+        '<p class="muted">承認済みの試合がまだありません。</p>';
+    }
+
+    const rows = block.table.map((r) => `
+      <tr${r.rank <= 2 ? ' class="rank-top"' : ''}>
+        <td class="num">${r.rank}${r.tied ? '<span class="tag-none">同</span>' : ''}</td>
+        <td>${esc(r.team_name)}</td>
+        <td class="num">${r.played}</td>
+        <td class="num">${r.won}</td>
+        <td class="num">${r.drawn}</td>
+        <td class="num">${r.lost}</td>
+        <td class="num">${r.gf}</td>
+        <td class="num">${r.ga}</td>
+        <td class="num">${r.gd >= 0 ? '+' : ''}${r.gd}</td>
+        <td class="num"><strong>${r.points}</strong></td>
+      </tr>`).join('');
+
+    return `
+      <h3 class="sub-head">${esc(label)}</h3>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th class="num">順位</th><th>チーム</th>
+              <th class="num">試合</th><th class="num">勝</th><th class="num">分</th><th class="num">敗</th>
+              <th class="num">得点</th><th class="num">失点</th><th class="num">得失</th><th class="num">勝点</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  };
+
+  return (
+    '<p class="muted note-sm">形式: ' + esc(st.format) + '</p>' +
+    one(st.two_division ? 'GM1リーグ' : 'GM1リーグ（一部制）', st.gm1) +
+    one('GM2リーグ', st.gm2)
+  );
+}
+
+/**
+ * 移籍動向。新しい順。
+ *
+ * @returns {string} HTML
+ */
+function renderTransfers() {
+  const list = publicData.transfers || [];
+  if (list.length === 0) {
+    return '<h3 class="sub-head">移籍動向</h3><p class="muted">承認済みの移籍がまだありません。</p>';
+  }
+
+  const rows = list.map((t) => `
+    <tr>
+      <td class="muted">${esc(String(t.at).slice(0, 10))}</td>
+      <td><span class="pos pos-${esc(t.position)}">${esc(t.position)}</span> ${esc(t.player_name)}</td>
+      <td>${t.from_name ? esc(t.from_name) : '<span class="muted">—</span>'}</td>
+      <td>→ ${esc(t.to_name)}</td>
+      <td class="muted">${esc(t.method)}</td>
+      <td class="num">${esc(formatMoney(t.fee))}</td>
+    </tr>`).join('');
+
+  return `
+    <h3 class="sub-head">移籍動向</h3>
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>日付</th><th>選手</th><th>移籍元</th><th>移籍先</th><th>形態</th><th class="num">移籍金</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <p class="muted note-sm">移籍金は獲得側の実支払額です。オークションは移籍元が「—」になります。</p>`;
+}
+
+/**
+ * 参加者一覧。X ID をリンクにする。
+ *
+ * @returns {string} HTML
+ */
+function renderParticipants() {
+  const list = publicData.participants || [];
+  if (list.length === 0) {
+    return '<h3 class="sub-head">参加者一覧</h3><p class="muted">まだ参加チームがありません。</p>';
+  }
+
+  const rows = list.map((p) => `
+    <tr${p.active ? '' : ' class="row-inactive"'}>
+      <td>${esc(p.team_name)}</td>
+      <td>${esc(p.owner_name)}</td>
+      <td>${xLink(p.owner_x_id)}</td>
+      <td class="muted">${p.active ? '参加中' : '不参加'}</td>
+    </tr>`).join('');
+
+  return `
+    <h3 class="sub-head">参加者一覧</h3>
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr><th>チーム</th><th>オーナー</th><th>X</th><th>状態</th></tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <p class="muted note-sm">試合日程や移籍の交渉は X（旧Twitter）で行います。</p>`;
+}
+
+initPublic();
+</script>
+
+</body>
+</html>

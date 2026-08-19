@@ -101,7 +101,7 @@ function _findUserByEmail(email) {
     Logger.log("[_findUserByEmail] Users シート読み取りエラー: " + e.message);
     return null;
   }
-  // data = [{ user_id, email, display_name, role, team_id }, ...]
+  // data = [{ user_id, email, display_name, role, team_id, x_id }, ...]
 
   for (var i = 0; i < data.length; i++) {
     var row = data[i];
@@ -113,6 +113,7 @@ function _findUserByEmail(email) {
         display_name: String(row.display_name || email),
         role:         String(row.role         || "team"),
         team_id:      String(row.team_id      || ""),
+        x_id:         String(row.x_id         || ""),
       };
     }
   }

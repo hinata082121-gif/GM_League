@@ -23,6 +23,16 @@ Claude Code がこのリポジトリで作業するときに必ず読むファ�
 4. **移籍は「買い手支払」と「売り手受取」を別カラム。** 特別ルールの「買い手3億・売り手0円」を1カラムでは表せない。
 5. **承認前データを集計に混ぜない。** 順位表・ランキングは `status=承認` のデータのみで都度導出。シートに保存しない。
 
+**公開エンドポイントの原則：**
+
+`getPublicData` / `getSignupInfo` / `verifySignupCode` は**トークンなしで誰でも叩ける**。
+ここに追加してよいのは読み取り専用の action だけで、書き込みは絶対に置かない。
+返す内容に email などの個人情報を含めないこと（`api_public.gs` のテストで検査している）。
+
+集計関数を内部から認証なしで呼ぶための合鍵 `PUBLIC_ACCESS` は**オブジェクト**。
+JSON で届く token は必ず文字列なので `===` にならず、外部から詐称できない。
+文字列の定数に変えてはいけない。
+
 **補助原則：**
 - 金額・人数・率・時刻はすべて Config シート参照（コードへの直書き禁止）。
 - GAS の書き込みは LockService で直列化する（同時申請対策）。
@@ -91,6 +101,8 @@ config.js
 ```
 /
 ├─ index.html        # ログイン画面（GitHub Pages root公開）
+├─ public.html       # 公開ページ（ログイン不要）
+├─ register.html     # 参加登録ページ（合言葉が必要）
 ├─ config.js         # 設定値一元管理（OAuthClientID・GAS URL等）
 ├─ auth.js           # Google Identity Services ログイン処理
 ├─ app.js            # GAS API 共通 fetch ラッパ（callApi関数）
@@ -102,7 +114,7 @@ config.js
 │   ├─ auth.gs         # トークン検証・whoami
 │   ├─ config.gs       # Config シート読み取りヘルパ
 │   ├─ lib.gs          # Sheets 読み書きヘルパ・LockService ラッパ
-│   ├─ setupSheets.gs  # 全17シート作成・Config / Clubs 初期値投入（冪等）
+│   ├─ setupSheets.gs  # 全18シート作成・Config / Clubs 初期値投入（冪等）
 │   ├─ api_master.gs   # Phase 1: マスタ & 閲覧
 │   ├─ api_entry.gs    # Phase 2: エントリー提出・承認
 │   ├─ api_transfer.gs # Phase 3: 移籍（コスト算出・承認・オークション）
@@ -111,6 +123,8 @@ config.js
 │   ├─ api_stats.gs    # Phase 6: 順位表・トーナメント・ランキング
 │   ├─ api_season.gs   # Phase 7: 経済周辺・シーズン進行・賞金支給
 │   ├─ api_division.gs # ディビジョン割り当て・GMスーパーカップ
+│   ├─ api_signup.gs   # 参加登録（合言葉・申請・承認）
+│   ├─ api_public.gs   # 認証不要の公開データ
 │   └─ seed.gs         # テストデータ投入/削除（手動実行）
 ├─ SPEC.md           # 確定仕様
 ├─ OPERATION.md      # 主催者向け運用マニュアル

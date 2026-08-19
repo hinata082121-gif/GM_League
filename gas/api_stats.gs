@@ -80,8 +80,10 @@ function _playerInfoMap() {
  * @returns {{ ok: boolean, data?: Object, error?: string }}
  */
 function getStandings(token, payload) {
-  var auth = _requireUser(token);
-  if (!auth.ok) return auth;
+  if (token !== PUBLIC_ACCESS) {
+    var auth = _requireUser(token);
+    if (!auth.ok) return auth;
+  }
 
   var seasonId = _str(payload.season_id);
   if (!seasonId) return { ok: false, error: "season_id は必須です。" };
@@ -325,8 +327,10 @@ function _headToHead(group, matches, winPts, drawPts) {
  * @returns {{ ok: boolean, data?: Object, error?: string }}
  */
 function getTournament(token, payload) {
-  var auth = _requireUser(token);
-  if (!auth.ok) return auth;
+  if (token !== PUBLIC_ACCESS) {
+    var auth = _requireUser(token);
+    if (!auth.ok) return auth;
+  }
 
   var seasonId = _str(payload.season_id);
   if (!seasonId) return { ok: false, error: "season_id は必須です。" };
@@ -480,8 +484,10 @@ function _matchesOfCompetition(seasonId, competition) {
  * @returns {{ ok: boolean, data?: Object, error?: string }}
  */
 function getRankings(token, payload) {
-  var auth = _requireUser(token);
-  if (!auth.ok) return auth;
+  if (token !== PUBLIC_ACCESS) {
+    var auth = _requireUser(token);
+    if (!auth.ok) return auth;
+  }
 
   var seasonId = _str(payload.season_id);
   if (!seasonId) return { ok: false, error: "season_id は必須です。" };

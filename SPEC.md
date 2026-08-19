@@ -68,6 +68,12 @@ J リーグ選手のみを使用する eFootball の私設大会を運営する�
 | display_name | string | 表示名 |
 | role | enum | team / organizer |
 | team_id | string | role=team の場合の所属チーム |
+| x_id | string | X（旧Twitter）の ID。`@` や URL は付けずに ID 部分だけ保存する |
+
+> 試合連絡と移籍交渉は X で行うため、x_id は連絡先として実質必須。
+> 保存時に `@` や `https://x.com/...` を剥がして ID だけにする（`normalizeXId`）。
+> 表示側は常に `https://x.com/<x_id>` を組み立てればよい。
+> 本人が「ダッシュボード → 連絡先（X）」から自分で更新できる。
 
 ### 4.2 Seasons
 | カラム | 型 | 説明 |
@@ -269,6 +275,30 @@ GMスーパーカップの出場チームと配信の有無。1シーズンに�
 
 > 出場チームは主催者が手動で選ぶ。前シーズンの結果から自動で引かないのは、
 > 同一チームが両方の王者になった場合の代替規則が運営判断になるため。
+
+### 4.18 Signups
+参加登録の申請。**承認されるまで Users / Teams には入らない**（設計原則5と同じ考え方）。
+
+| カラム | 型 | 説明 |
+|---|---|---|
+| signup_id | string | 主キー |
+| email | string | Google アカウント email。**必ずトークンから取る** |
+| display_name | string | 申請者の表示名 |
+| team_name | string | 希望するチーム名。承認時に主催者が変更できる |
+| x_id | string | X の ID |
+| note | string | 主催者への連絡事項 |
+| status | enum | 申請中 / 承認 / 却下 |
+| created_at | datetime | 申請日時 |
+| decided_at | datetime | 承認・却下した日時 |
+| decided_by | string | 判断した主催者の user_id |
+| team_id | string | 承認時に作られたチームの team_id |
+
+> **email をペイロードから受け取らない。** 他人の email で申請されるのを防ぐため、
+> 必ず `_verifyToken(token)` の戻り値を使う。
+>
+> 申請中の再提出は同じ行を上書きする（入力ミスの訂正）。
+> 却下された人が再申請した場合も同じ行を `申請中` に戻す。
+> 1つの email につき Signups の行は常に1つ。
 
 ---
 
@@ -515,6 +545,23 @@ open = windowN_open_at。判定はすべて GAS の `now()` で行う。
 
 ### 認証・共通
 - whoami — トークンからユーザー情報と権限を返す。
+- updateMyProfile — 本人が自分の表示名・X ID を更新する（role / team_id は変更不可）。
+
+### 公開（トークン不要）
+- getPublicData — 順位表・移籍動向・参加者一覧をまとめて返す。**読み取り専用**。
+- getSignupInfo — 参加登録を受け付けているかどうか。**合言葉そのものは返さない**。
+- verifySignupCode — 合言葉の照合。照合は必ずサーバー側で行う。
+
+> 公開 action は `_route` の入口で token を使わずに処理する。
+> ここに書き込み系を追加してはいけない。
+>
+> 集計関数（getStandings など）は内部から `PUBLIC_ACCESS` という
+> **オブジェクトの合鍵**を渡すと認証を飛ばせる。JSON で来る token は必ず文字列なので、
+> 外部からこの合鍵を詐称することはできない。
+
+### 参加登録（Google ログインのみ。Users 未登録でも呼べる）
+- submitSignup — 参加申請。email はトークンから取り、payload の email は無視する。
+- getMySignup — 自分の申請状況（未申請 / 申請中 / 却下 / 登録済み）。
 
 ### チームオーナー向け
 - getEntryStatus — 自チームのエントリー状況＋選択可能な選手一覧（他チーム確保済みを除外）。
@@ -538,6 +585,9 @@ open = windowN_open_at。判定はすべて GAS の `now()` で行う。
 - advanceSeason — シーズン進行（status 遷移、§11）。
 - closeSeason — シーズン終了処理（順位賞金・得点王賞金・手数料10%控除・オークション選手離脱・継続スカッド引継ぎ生成）。
 - setConfig — Config 値更新。
+- listSignups — 参加申請の一覧（申請中が先頭）。
+- approveSignup — 承認。Users と Teams を同時に作る。同名チームがある場合は拒否。
+- rejectSignup — 却下。Users は作らない。却下後も本人は再申請できる。
 
 ### 読み取り（Sheets API 直叩き or GAS どちらでも）
 - getStandings — 順位表（承認済のみ）。
@@ -553,7 +603,10 @@ open = windowN_open_at。判定はすべて GAS の `now()` で行う。
 
 | 画面 | ロール | 内容 |
 |---|---|---|
-| ログイン | 全 | Google ログイン |
+| ログイン | 全 | Google ログイン。参加登録ページと公開ページへの導線を置く |
+| 公開ページ（public.html） | 誰でも | 順位表・移籍動向・参加者一覧。ログイン不要 |
+| 参加登録（register.html） | 誰でも | 合言葉 → Google ログイン → 申請フォーム |
+| 参加登録承認 | organizer | 合言葉の設定、受付のON/OFF、申請の承認・却下 |
 | ダッシュボード | team | 自チーム概要（予算・スカッド人数・申請中件数） |
 | エントリー提出 | team | 28名選出 / 引継ぎ確認 → 提出 |
 | 移籍申請 | team | 2段プルダウン（ポジション→選手）、method 選択、コストと予算残のリアルタイム表示 |
@@ -678,6 +731,8 @@ open = windowN_open_at。判定はすべて GAS の `now()` で行う。
 | discount_end | 23:00 | 最終日割引終了 |
 | free_protect_count | 2 | |
 | paid_protect_count | 3 | |
+| signup_code | （空） | 参加登録の合言葉。空のままだと登録を受け付けない |
+| signup_open | FALSE | 参加登録の受付中フラグ |
 
 > 賞金・スポンサー額が未定でもツールは動作する。仮値で実装し、確定後に Config を更新するだけ。
 

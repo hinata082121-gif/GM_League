@@ -6,7 +6,7 @@ J リーグ選手限定の eFootball 私設大会を運営するための集計�
 - **フロント**：GitHub Pages（HTML/CSS/Vanilla JS・ビルド不要）
 - **認証**：Google Identity Services
 - **バックエンド**：Google Apps Script Web App
-- **DB**：Google Sheets（1シート = 1テーブル・全17シート）
+- **DB**：Google Sheets（1シート = 1テーブル・全18シート）
 
 公開 URL：https://hinata082121-gif.github.io/GM_League/
 
@@ -34,13 +34,15 @@ J リーグ選手限定の eFootball 私設大会を運営するための集計�
 ├─ config.js         # 設定値一元管理（OAuthClientID / GAS URL / SpreadsheetID）
 ├─ auth.js           # Google Identity Services ログイン処理
 ├─ app.js            # GAS API 共通 fetch ラッパ（callApi）
+├─ public.html       # 公開ページ（ログイン不要・順位表/移籍動向/参加者一覧）
+├─ register.html     # 参加登録ページ（合言葉 → ログイン → 申請）
 ├─ style.css         # 共通スタイルシート
 ├─ gas/              # GAS ソースのミラー（正は GAS エディタ側）
 │   ├─ Code.gs         # doPost エントリポイント・action ルーティング
 │   ├─ auth.gs         # トークン検証・whoami
 │   ├─ config.gs       # Config シート読み取りヘルパ
 │   ├─ lib.gs          # Sheets 読み書きヘルパ・LockService ラッパ
-│   ├─ setupSheets.gs  # 全17シート作成・Config / Clubs 初期値投入（冪等）
+│   ├─ setupSheets.gs  # 全18シート作成・Config / Clubs 初期値投入（冪等）
 │   ├─ api_master.gs     # Phase 1: マスタ & 閲覧
 │   ├─ api_entry.gs      # Phase 2: エントリー提出・承認
 │   ├─ api_transfer.gs   # Phase 3: 移籍
@@ -49,6 +51,8 @@ J リーグ選手限定の eFootball 私設大会を運営するための集計�
 │   ├─ api_stats.gs      # Phase 6: 集計表示
 │   ├─ api_season.gs     # Phase 7: 経済周辺・シーズン進行・賞金支給
 │   ├─ api_division.gs   # ディビジョン割り当て・GMスーパーカップ
+│   ├─ api_signup.gs     # 参加登録（合言葉・申請・承認）
+│   ├─ api_public.gs     # 認証不要の公開データ
 │   └─ seed.gs         # テストデータ投入・削除（手動実行）
 ├─ SPEC.md           # 確定仕様（データモデル・経済ルール・API 一覧・画面一覧）
 ├─ OPERATION.md      # 主催者向け運用マニュアル
@@ -84,6 +88,8 @@ J リーグ選手限定の eFootball 私設大会を運営するための集計�
 | `setupSheets` | `gas/setupSheets.gs` |
 | `api_master` | `gas/api_master.gs` |
 | `api_division` | `gas/api_division.gs` |
+| `api_signup` | `gas/api_signup.gs` |
+| `api_public` | `gas/api_public.gs` |
 | `seed` | `gas/seed.gs` |
 
 > 貼り付け後、**行数がリポジトリ側と一致しているか必ず確認する。**
@@ -94,7 +100,7 @@ J リーグ選手限定の eFootball 私設大会を運営するための集計�
 1. エディタ上部の関数選択プルダウンで **`setupAll`** を選ぶ
 2. **▶ 実行** をクリック
 3. 初回のみ権限承認 → 「詳細」→「GMリーグ管理（安全ではないページ）に移動」→「許可」
-4. 「実行ログ」で 17 シート作成・Config の投入・Clubs 60 件の投入を確認
+4. 「実行ログ」で 18 シート作成・Config の投入・Clubs 60 件の投入を確認
 
 > `setupAll` は既存シートを削除しない（冪等）。ヘッダーを変えたい場合は
 > 対象シートを手動削除してから再実行する。

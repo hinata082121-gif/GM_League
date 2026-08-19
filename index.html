@@ -54,6 +54,11 @@
 
       <!-- エラーメッセージ（app.js の _showLoginError から書き込む） -->
       <p id="login-error" class="login-error" style="display:none;"></p>
+
+      <div class="login-links">
+        <a class="btn btn-secondary btn-sm" href="register.html">参加登録する（合言葉が必要）</a>
+        <a class="btn btn-secondary btn-sm" href="public.html">ログインせずに大会情報を見る</a>
+      </div>
     </section>
 
     <!-- ===== ローディング表示 ===== -->
@@ -99,6 +104,9 @@
         </button>
         <button class="tab-btn" id="tab-txapproval" data-tab="txapproval" style="display:none;">
           移籍承認
+        </button>
+        <button class="tab-btn" id="tab-signup" data-tab="signup" style="display:none;">
+          参加登録承認
         </button>
         <button class="tab-btn" id="tab-season" data-tab="season" style="display:none;">
           運営・進行
@@ -380,6 +388,41 @@
             </label>
           </div>
           <div id="st-body"></div>
+        </div>
+      </div>
+
+      <!-- ===== 参加登録承認（主催者限定） ===== -->
+      <div class="tab-panel" data-panel="signup" style="display:none;">
+        <div class="card">
+          <h2>参加登録の受付</h2>
+          <p class="muted">
+            合言葉を知っている人だけが申請できます。合言葉を変えると、
+            それまでの合言葉では申請できなくなります。
+          </p>
+          <div class="form-grid">
+            <label class="check-label">
+              <input type="checkbox" id="sg-open" />
+              参加登録を受け付ける
+            </label>
+            <label>
+              合言葉
+              <input type="text" id="sg-code" autocomplete="off" placeholder="例: gm-league-2026" />
+              <span class="unit-hint">大文字小文字と空白は区別されません。</span>
+            </label>
+            <div class="form-actions">
+              <button type="button" id="sg-save-config" class="btn btn-primary">保存する</button>
+              <span id="sg-config-result" class="form-msg"></span>
+            </div>
+          </div>
+          <div id="sg-link"></div>
+        </div>
+
+        <div class="card">
+          <h2>申請一覧</h2>
+          <p class="muted">
+            承認するとユーザーとチームが同時に作られ、その人がログインできるようになります。
+          </p>
+          <div id="sg-list"></div>
         </div>
       </div>
 

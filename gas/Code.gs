@@ -64,6 +64,34 @@ function _route(action, token, payload) {
     case "whoami":
       return whoami(token);
 
+    // ---- 公開（トークン不要）----
+    // ここに追加する action は必ず読み取り専用にすること。
+    case "getPublicData":
+      return getPublicData(payload);
+
+    case "getSignupInfo":
+      return getSignupInfo();
+
+    case "verifySignupCode":
+      return verifySignupCode(payload);
+
+    // ---- 参加登録（Google ログインのみ。Users 未登録でも可）----
+    case "submitSignup":
+      return submitSignup(token, payload);
+
+    case "getMySignup":
+      return getMySignup(token);
+
+    // ---- 参加登録の承認（主催者専用）----
+    case "listSignups":
+      return listSignups(token, payload);
+
+    case "approveSignup":
+      return approveSignup(token, payload);
+
+    case "rejectSignup":
+      return rejectSignup(token, payload);
+
     // ---- Phase 1: マスタ読み取り（ログイン済みなら誰でも） ----
     case "listPlayers":
       return listPlayers(token, payload);
@@ -107,6 +135,9 @@ function _route(action, token, payload) {
 
     case "setConfig":
       return setConfig(token, payload);
+
+    case "updateMyProfile":
+      return updateMyProfile(token, payload);
 
     // ---- Phase 2: エントリー ----
     case "getEntryStatus":

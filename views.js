@@ -91,7 +91,7 @@ async function initViews(user) {
 
   // 主催者だけマスタ管理・承認タブを表示
   const organizerOnly = user.role === 'organizer';
-  ['tab-master', 'tab-approval', 'tab-txapproval', 'tab-season'].forEach((id) => {
+  ['tab-master', 'tab-approval', 'tab-txapproval', 'tab-season', 'tab-signup'].forEach((id) => {
     const el = document.getElementById(id);
     if (el) el.style.display = organizerOnly ? 'inline-block' : 'none';
   });
@@ -135,6 +135,7 @@ function showTab(name) {
   if (name === 'match') renderMatch();
   if (name === 'stats') renderStats();
   if (name === 'season') renderSeasonAdmin();
+  if (name === 'signup') renderSignupAdmin();
   if (name === 'approval') renderApproval();
   if (name === 'txapproval') renderTxApproval();
   if (name === 'master') renderMaster();
@@ -187,6 +188,25 @@ function esc(s) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+/**
+ * X（旧Twitter）のプロフィールリンクを HTML で返す。
+ *
+ * 試合連絡と移籍交渉は X で行うため、相手のIDが分かる場所には
+ * 必ずこのリンクを出す。ID が未設定なら「—」を返す。
+ *
+ * target="_blank" には rel="noopener" を必ず付ける
+ * （開いた先のページから window.opener を触られないようにするため）。
+ *
+ * @param {string} xId
+ * @returns {string} HTML
+ */
+function xLinkHtml(xId) {
+  const id = String(xId || '').trim();
+  if (!id) return '<span class="muted">—</span>';
+  return '<a class="x-link" href="https://x.com/' + encodeURIComponent(id) +
+    '" target="_blank" rel="noopener noreferrer">@' + esc(id) + '</a>';
 }
 
 /**
@@ -353,7 +373,78 @@ async function renderDashboard() {
     ${renderBudgetTable(budget)}
     <h3 class="sub-head">スカッド</h3>
     ${renderSquadTable(squad.squad)}
+    ${renderProfileEditor()}
   `;
+
+  bindProfileEditor();
+}
+
+/**
+ * 自分の X ID を設定する欄を返す。
+ *
+ * 他チームから交渉の連絡が来る窓口になるので、
+ * 未設定の場合は目立つように注意書きを出す。
+ *
+ * @returns {string} HTML
+ */
+function renderProfileEditor() {
+  const xid = currentUser.x_id || '';
+
+  return `
+    <h3 class="sub-head">連絡先（X）</h3>
+    <p class="muted">
+      試合日程の連絡と移籍交渉は X で行います。
+      ここで設定した ID は参加者一覧と公開ページに表示されます。
+    </p>
+    ${xid
+      ? '<p>現在の設定: ' + xLinkHtml(xid) + '</p>'
+      : '<p class="form-msg msg-error">X ID が未設定です。相手から連絡が取れません。</p>'}
+    <div class="form-grid">
+      <label>
+        X の ID
+        <input type="text" id="pf-x" value="${esc(xid ? '@' + xid : '')}"
+               placeholder="例: @gm_league / https://x.com/gm_league" />
+        <span class="unit-hint">@ や URL のまま貼っても構いません。</span>
+      </label>
+      <div class="form-actions">
+        <button type="button" id="pf-save" class="btn btn-primary">保存する</button>
+        <span id="pf-result" class="form-msg"></span>
+      </div>
+    </div>`;
+}
+
+/**
+ * プロフィール編集のボタンを結線する。
+ * ダッシュボードは描画のたびに DOM を作り直すので毎回呼ぶ。
+ */
+function bindProfileEditor() {
+  const btn = document.getElementById('pf-save');
+  if (!btn) return;
+  btn.onclick = onSaveProfile;
+}
+
+/**
+ * 自分の X ID を保存する。
+ */
+async function onSaveProfile() {
+  const btn = document.getElementById('pf-save');
+  btn.disabled = true;
+  setResult('pf-result', true, '保存中...');
+
+  const res = await callApi('updateMyProfile', {
+    x_id: document.getElementById('pf-x').value.trim(),
+  });
+
+  btn.disabled = false;
+
+  if (!res.ok) {
+    setResult('pf-result', false, '保存できません: ' + res.error);
+    return;
+  }
+
+  currentUser.x_id = res.data.x_id;
+  setResult('pf-result', true, res.data.x_id ? '保存しました。' : 'X ID を消しました。');
+  await renderDashboard();
 }
 
 // ---------------------------------------------------------------------------
@@ -425,8 +516,17 @@ async function loadTeamDetail() {
   const budget = budgetRes.data;
   const c = squad.position_counts;
 
+  // 交渉相手にすぐ連絡できるよう、オーナーの X をここに出す
+  const team = (cache.teams || []).find((t) => t.team_id === teamId) || {};
+
   box.innerHTML = `
     <div class="stat-grid">
+      <div class="stat">
+        <span class="stat-label">オーナー</span>
+        <span class="stat-value stat-sm">
+          ${esc(team.owner_name || '—')}<br>${xLinkHtml(team.owner_x_id)}
+        </span>
+      </div>
       <div class="stat">
         <span class="stat-label">現保有予算</span>
         <span class="stat-value">${esc(formatMoney(budget.balance))}</span>
@@ -1593,6 +1693,19 @@ function renderTransferTable(rows, withRespond) {
     差戻: 'tag-ng',
   };
 
+  // 交渉相手のオーナーに X で連絡できるようにする
+  const teamById = {};
+  (cache.teams || []).forEach((t) => { teamById[t.team_id] = t; });
+
+  const counterparty = (t) => {
+    // 自分が買い手なら相手は売り手。逆も同じ。主催者にはどちらも「相手」ではない
+    const myTeam = currentUser.team_id;
+    const otherId = t.to_team === myTeam ? t.from_team : t.to_team;
+    const other = teamById[otherId];
+    if (!other) return '<span class="muted">—</span>';
+    return xLinkHtml(other.owner_x_id);
+  };
+
   const body = rows
     .map((t) => {
       let actions = '';
@@ -1610,6 +1723,7 @@ function renderTransferTable(rows, withRespond) {
         <td class="num">${esc(formatMoney(t.cost_to_buyer))}</td>
         <td class="num">${esc(formatMoney(t.payout_to_seller))}</td>
         <td><span class="${badge[t.status] || 'tag-none'}">${esc(t.status)}</span></td>
+        ${withRespond ? '<td>' + counterparty(t) + '</td>' : ''}
         ${withRespond ? '<td>' + actions + '</td>' : ''}
       </tr>`;
     })
@@ -1622,6 +1736,7 @@ function renderTransferTable(rows, withRespond) {
           <tr>
             <th>選手</th><th>移籍</th><th>形態</th>
             <th class="num">買い手支払</th><th class="num">売り手受取</th><th>状態</th>
+            ${withRespond ? '<th>相手のX</th>' : ''}
             ${withRespond ? '<th>操作</th>' : ''}
           </tr>
         </thead>
@@ -3681,4 +3796,217 @@ async function onSubmitCompensation() {
   } else {
     setResult('cp-result', false, '計上できません: ' + res.error);
   }
+}
+
+// ---------------------------------------------------------------------------
+// 画面: 参加登録承認（主催者のみ）
+// ---------------------------------------------------------------------------
+
+/**
+ * 合言葉の設定と申請一覧を描画する。
+ */
+async function renderSignupAdmin() {
+  if (currentUser.role !== 'organizer') return;
+
+  const btn = document.getElementById('sg-save-config');
+  if (!btn.dataset.bound) {
+    btn.onclick = onSaveSignupConfig;
+    btn.dataset.bound = '1';
+  }
+
+  await loadSignupConfig();
+  await loadSignups();
+}
+
+/**
+ * Config から合言葉と受付フラグを読み込む。
+ *
+ * 合言葉は主催者しか見られない（listConfig が主催者専用のため）。
+ */
+async function loadSignupConfig() {
+  const res = await callApi('listConfig');
+  if (!res.ok) {
+    setError('sg-list', '設定の取得に失敗しました: ' + res.error);
+    return;
+  }
+
+  const map = {};
+  res.data.forEach((r) => { map[r.key] = r.value; });
+
+  document.getElementById('sg-code').value = map.signup_code || '';
+  document.getElementById('sg-open').checked =
+    String(map.signup_open).toLowerCase() === 'true' || map.signup_open === true;
+
+  renderSignupLink();
+}
+
+/**
+ * 参加者に案内する URL を表示する。
+ *
+ * 現在開いているページと同じ場所の register.html を指すので、
+ * ローカル確認でも本番でもそのまま使える。
+ */
+function renderSignupLink() {
+  const url = location.href.replace(/[^/]*$/, '') + 'register.html';
+  const pub = location.href.replace(/[^/]*$/, '') + 'public.html';
+
+  document.getElementById('sg-link').innerHTML = `
+    <div class="hint-box">
+      <strong>案内用のURL</strong>
+      <ul class="detail-grid-list">
+        <li>参加登録: <a href="${esc(url)}" target="_blank" rel="noopener">${esc(url)}</a></li>
+        <li>公開ページ: <a href="${esc(pub)}" target="_blank" rel="noopener">${esc(pub)}</a></li>
+      </ul>
+      <p class="muted note-sm">
+        合言葉はこのURLとは別に伝えてください。URLだけでは登録できません。
+      </p>
+    </div>`;
+}
+
+/**
+ * 合言葉と受付フラグを保存する。
+ */
+async function onSaveSignupConfig() {
+  const code = document.getElementById('sg-code').value.trim();
+  const open = document.getElementById('sg-open').checked;
+
+  if (open && !code) {
+    setResult('sg-config-result', false, '受け付けるには合言葉を設定してください。');
+    return;
+  }
+
+  const btn = document.getElementById('sg-save-config');
+  btn.disabled = true;
+  setResult('sg-config-result', true, '保存中...');
+
+  const a = await callApi('setConfig', { key: 'signup_code', value: code });
+  const b = await callApi('setConfig', { key: 'signup_open', value: open });
+
+  btn.disabled = false;
+
+  if (!a.ok || !b.ok) {
+    setResult('sg-config-result', false, '保存できません: ' + (a.error || b.error));
+    return;
+  }
+
+  setResult(
+    'sg-config-result', true,
+    open ? '受付中にしました。' : '受付を停止しました。'
+  );
+}
+
+/**
+ * 申請一覧を読み込んで描画する。
+ */
+async function loadSignups() {
+  setLoading('sg-list');
+
+  const res = await callApi('listSignups', {});
+  if (!res.ok) {
+    setError('sg-list', '申請一覧の取得に失敗しました: ' + res.error);
+    return;
+  }
+
+  const box = document.getElementById('sg-list');
+
+  if (res.data.length === 0) {
+    box.innerHTML = '<p class="muted">まだ申請はありません。</p>';
+    return;
+  }
+
+  const rows = res.data
+    .map((r) => {
+      const pending = r.status === '申請中';
+      const tag =
+        r.status === '承認' ? '<span class="tag-ok">承認</span>'
+        : r.status === '却下' ? '<span class="tag-ng">却下</span>'
+        : '<span class="tag-wait">申請中</span>';
+
+      const actions = pending
+        ? `<button type="button" class="btn btn-primary btn-sm sg-approve" data-id="${esc(r.signup_id)}">承認</button>
+           <button type="button" class="btn btn-secondary btn-sm sg-reject" data-id="${esc(r.signup_id)}">却下</button>`
+        : '<span class="muted">—</span>';
+
+      return `
+        <tr>
+          <td class="muted">${esc(String(r.created_at).slice(0, 10))}</td>
+          <td>${esc(r.display_name)}</td>
+          <td>
+            ${pending
+              ? `<input type="text" class="sg-team-input" data-id="${esc(r.signup_id)}" value="${esc(r.team_name)}" />`
+              : esc(r.team_name)}
+          </td>
+          <td>${xLinkHtml(r.x_id)}</td>
+          <td class="muted">${esc(r.note)}</td>
+          <td>${tag}</td>
+          <td>${actions}</td>
+        </tr>`;
+    })
+    .join('');
+
+  box.innerHTML = `
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>申請日</th><th>表示名</th><th>チーム名</th><th>X</th>
+            <th>連絡事項</th><th>状態</th><th>操作</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <p class="muted note-sm">
+      チーム名は承認前なら主催者が直せます。同じ名前のチームが既にある場合は承認できません。
+    </p>`;
+
+  box.querySelectorAll('.sg-approve').forEach((b) => {
+    b.onclick = () => onApproveSignup(b.dataset.id);
+  });
+  box.querySelectorAll('.sg-reject').forEach((b) => {
+    b.onclick = () => onRejectSignup(b.dataset.id);
+  });
+}
+
+/**
+ * 申請を承認する。チーム名は画面の入力欄の値を使う。
+ *
+ * @param {string} signupId
+ */
+async function onApproveSignup(signupId) {
+  const input = document.querySelector('.sg-team-input[data-id="' + signupId + '"]');
+  const teamName = input ? input.value.trim() : '';
+
+  if (!confirm('この申請を承認します。\nチーム「' + teamName + '」とユーザーが作成されます。')) return;
+
+  const res = await callApi('approveSignup', { signup_id: signupId, team_name: teamName });
+
+  if (!res.ok) {
+    alert('承認できません: ' + res.error);
+    return;
+  }
+
+  // 新しいチームができたのでキャッシュを捨てる
+  cache.teams = null;
+  await loadTeams(true);
+  await loadSignups();
+}
+
+/**
+ * 申請を却下する。
+ *
+ * @param {string} signupId
+ */
+async function onRejectSignup(signupId) {
+  const note = prompt('却下の理由（任意・申請者には表示されません）', '');
+  if (note === null) return;
+
+  const res = await callApi('rejectSignup', { signup_id: signupId, note });
+
+  if (!res.ok) {
+    alert('却下できません: ' + res.error);
+    return;
+  }
+
+  await loadSignups();
 }

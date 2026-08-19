@@ -997,3 +997,64 @@ code {
 .hint-box .detail-grid-list {
   margin: 6px 0 0;
 }
+
+/* ===== 公開ページ / 参加登録ページ ===== */
+
+.public-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.public-bar-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.login-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid #e5e9f0;
+}
+
+/* ===== X（旧Twitter）リンク ===== */
+
+.x-link {
+  color: #1a1a1a;
+  text-decoration: none;
+  border-bottom: 1px solid #c9d2e0;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.x-link:hover {
+  color: #1d63d1;
+  border-bottom-color: #1d63d1;
+}
+
+.x-link::before {
+  content: "𝕏 ";
+  font-size: 0.85em;
+  opacity: 0.7;
+}
+
+/* 参加していないチームの行は薄く見せる */
+.row-inactive {
+  opacity: 0.55;
+}
+
+.tag-wait {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 0.78rem;
+  background: #fff4d6;
+  color: #8a6100;
+  border: 1px solid #f0dca8;
+}

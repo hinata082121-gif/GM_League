@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GM League — 参加登録</title>
+
+  <link rel="stylesheet" href="style.css" />
+  <script src="config.js"></script>
+  <script
+    src="https://accounts.google.com/gsi/client"
+    async
+    defer
+    onload="initRegisterAuth()"
+  ></script>
+</head>
+<body>
+
+  <header class="site-header">
+    <h1 class="site-title">⚽ GM League</h1>
+    <p class="site-subtitle">eFootball Jリーグ限定私設大会 — 参加登録</p>
+  </header>
+
+  <main class="main-content">
+
+    <div class="public-bar">
+      <span class="muted">主催者から受け取った合言葉が必要です。</span>
+      <span class="public-bar-actions">
+        <a class="btn btn-secondary btn-sm" href="public.html">大会情報を見る</a>
+        <a class="btn btn-secondary btn-sm" href="index.html">ログイン</a>
+      </span>
+    </div>
+
+    <!-- ===== ステップ1: 合言葉 ===== -->
+    <section id="rg-step-code" class="card">
+      <h2>1. 合言葉を入力</h2>
+      <p class="muted">
+        主催者から伝えられた合言葉を入力してください。
+        大文字小文字と空白は区別しません。
+      </p>
+      <div id="rg-closed" class="form-msg msg-error" style="display:none;"></div>
+      <div class="form-grid">
+        <label>
+          合言葉
+          <input type="text" id="rg-code" autocomplete="off" placeholder="例: gm-league-2026" />
+        </label>
+        <div class="form-actions">
+          <button type="button" id="rg-code-submit" class="btn btn-primary">次へ</button>
+          <span id="rg-code-result" class="form-msg"></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== ステップ2: Google ログイン ===== -->
+    <section id="rg-step-login" class="card" style="display:none;">
+      <h2>2. Google アカウントでログイン</h2>
+      <p class="muted">
+        大会で使うアカウントでログインしてください。
+        <strong>ここでログインしたアカウントが、そのままログイン用のアカウントになります。</strong>
+      </p>
+      <div id="g_signin_button"></div>
+      <p id="rg-login-error" class="form-msg msg-error" style="display:none;"></p>
+    </section>
+
+    <!-- ===== ステップ3: 申請フォーム ===== -->
+    <section id="rg-step-form" class="card" style="display:none;">
+      <h2>3. 参加情報を入力</h2>
+      <p class="muted" id="rg-account"></p>
+
+      <div class="form-grid">
+        <label>
+          表示名（あなたの名前・ハンドルネーム）
+          <input type="text" id="rg-name" maxlength="40" placeholder="例: ひなた" />
+        </label>
+        <label>
+          チーム名
+          <input type="text" id="rg-team" maxlength="40" placeholder="例: 赤羽ユナイテッド" />
+        </label>
+        <label>
+          X（旧Twitter）の ID
+          <input type="text" id="rg-x" placeholder="例: @gm_league / https://x.com/gm_league" />
+          <span class="unit-hint">
+            試合連絡・移籍交渉は X で行います。@ や URL のまま貼っても構いません。
+          </span>
+        </label>
+        <label>
+          主催者への連絡事項（任意）
+          <input type="text" id="rg-note" maxlength="200" placeholder="例: 友人の紹介で参加します" />
+        </label>
+        <div class="form-actions">
+          <button type="button" id="rg-submit" class="btn btn-primary">申請する</button>
+          <span id="rg-result" class="form-msg"></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== ステップ4: 申請状況 ===== -->
+    <section id="rg-step-done" class="card" style="display:none;">
+      <h2>申請状況</h2>
+      <div id="rg-status"></div>
+    </section>
+
+  </main>
+
+<script>
+/**
+ * register.html — 参加登録ページ
+ *
+ * 流れ:
+ *   1. 合言葉を GAS に照合してもらう（照合は必ずサーバー側）
+ *   2. Google ログインで email を確定させる
+ *   3. 表示名・チーム名・X ID を送って申請
+ *   4. 主催者が承認するとログインできるようになる
+ *
+ * ⚠️ 合言葉はこのファイルには書かない。フロントに置くとソースを見れば分かってしまう。
+ */
+
+/** ログイン後の ID トークン */
+let regToken = null;
+
+/** ステップ1を通過したかどうか */
+let codeVerified = false;
+
+/**
+ * HTML エスケープ。
+ *
+ * @param {*} v
+ * @returns {string}
+ */
+function esc(v) {
+  return String(v === null || v === undefined ? '' : v)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/**
+ * GAS を呼ぶ。トークンは持っていれば付ける。
+ *
+ * @param {string} action
+ * @param {Object} [payload]
+ * @returns {Promise<{ok: boolean, data?: any, error?: string}>}
+ */
+async function callGas(action, payload = {}) {
+  const body = JSON.stringify({ action, token: regToken || '', payload });
+
+  try {
+    const res = await fetch(GM_CONFIG.GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body,
+      redirect: 'follow',
+    });
+    if (!res.ok) return { ok: false, error: 'http_' + res.status };
+    return res.json();
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * 結果メッセージを出す。
+ *
+ * @param {string} id
+ * @param {boolean} ok
+ * @param {string} msg
+ */
+function setMsg(id, ok, msg) {
+  const el = document.getElementById(id);
+  el.className = 'form-msg ' + (ok ? 'msg-ok' : 'msg-error');
+  el.textContent = msg;
+}
+
+// ---------------------------------------------------------------------------
+// ステップ1: 合言葉
+// ---------------------------------------------------------------------------
+
+/**
+ * 受付中かどうかを確認して、閉じていれば入力欄を塞ぐ。
+ */
+async function checkSignupOpen() {
+  const res = await callGas('getSignupInfo');
+  if (res.ok && res.data.open) return;
+
+  const box = document.getElementById('rg-closed');
+  box.style.display = 'block';
+  box.textContent = '現在は参加登録を受け付けていません。主催者にお問い合わせください。';
+  document.getElementById('rg-code').disabled = true;
+  document.getElementById('rg-code-submit').disabled = true;
+}
+
+/**
+ * 合言葉を照合する。合っていればステップ2へ。
+ */
+async function onVerifyCode() {
+  const code = document.getElementById('rg-code').value.trim();
+  if (!code) {
+    setMsg('rg-code-result', false, '合言葉を入力してください。');
+    return;
+  }
+
+  const btn = document.getElementById('rg-code-submit');
+  btn.disabled = true;
+  setMsg('rg-code-result', true, '確認中...');
+
+  const res = await callGas('verifySignupCode', { code });
+  btn.disabled = false;
+
+  if (!res.ok) {
+    setMsg('rg-code-result', false, res.error || '照合に失敗しました。');
+    return;
+  }
+
+  codeVerified = true;
+  setMsg('rg-code-result', true, '確認できました。');
+  document.getElementById('rg-step-login').style.display = 'block';
+
+  // 既にログイン済みならフォームまで進める
+  if (regToken) loadMySignup();
+}
+
+// ---------------------------------------------------------------------------
+// ステップ2: Google ログイン
+// ---------------------------------------------------------------------------
+
+/**
+ * Google Identity Services を初期化する。SDK の onload から呼ばれる。
+ */
+function initRegisterAuth() {
+  google.accounts.id.initialize({
+    client_id: GM_CONFIG.OAUTH_CLIENT_ID,
+    callback: onRegisterCredential,
+    auto_select: false,
+    cancel_on_tap_outside: true,
+  });
+
+  google.accounts.id.renderButton(document.getElementById('g_signin_button'), {
+    theme: 'outline',
+    size: 'large',
+    text: 'signin_with',
+    locale: 'ja',
+  });
+}
+
+/**
+ * ログイン成功時のコールバック。
+ *
+ * @param {Object} response GIS のクレデンシャル
+ */
+function onRegisterCredential(response) {
+  regToken = response.credential;
+  loadMySignup();
+}
+
+// ---------------------------------------------------------------------------
+// ステップ3 / 4
+// ---------------------------------------------------------------------------
+
+/**
+ * 自分の申請状況を取り、画面をどこまで進めるか決める。
+ */
+async function loadMySignup() {
+  const res = await callGas('getMySignup');
+
+  if (!res.ok) {
+    const el = document.getElementById('rg-login-error');
+    el.style.display = 'block';
+    el.textContent = 'ログイン情報を確認できませんでした: ' + (res.error || '不明');
+    return;
+  }
+
+  const d = res.data;
+
+  // 既に参加者として登録済み
+  if (d.registered) {
+    showDone(
+      '<p class="form-msg msg-ok">このアカウントは既に登録されています。</p>' +
+      '<p><a class="btn btn-primary" href="index.html">ログインページへ</a></p>'
+    );
+    return;
+  }
+
+  // 申請済み
+  if (d.status === '申請中') {
+    showDone(
+      '<p class="form-msg msg-ok">申請を受け付けています。主催者の承認をお待ちください。</p>' +
+      '<ul class="detail-grid-list">' +
+      '<li>表示名: ' + esc(d.display_name) + '</li>' +
+      '<li>チーム名: ' + esc(d.team_name) + '</li>' +
+      '<li>X: ' + (d.x_id ? '@' + esc(d.x_id) : '未設定') + '</li>' +
+      '</ul>' +
+      '<p class="muted note-sm">内容を直したい場合は、下のフォームから出し直せます。' +
+      '承認されるまでは何度でも上書きできます。</p>'
+    );
+    showForm(d);
+    return;
+  }
+
+  if (d.status === '却下') {
+    showDone(
+      '<p class="form-msg msg-error">この申請は見送りとなりました。' +
+      '事情が変わった場合は、下のフォームから再度申請できます。</p>'
+    );
+    showForm(d);
+    return;
+  }
+
+  showForm(d);
+}
+
+/**
+ * 申請フォームを表示する。
+ *
+ * @param {Object} d getMySignup の結果
+ */
+function showForm(d) {
+  if (!codeVerified) return;
+
+  document.getElementById('rg-step-form').style.display = 'block';
+  document.getElementById('rg-account').textContent = 'ログイン中: ' + d.email;
+
+  if (d.display_name) document.getElementById('rg-name').value = d.display_name;
+  if (d.team_name) document.getElementById('rg-team').value = d.team_name;
+  if (d.x_id) document.getElementById('rg-x').value = '@' + d.x_id;
+}
+
+/**
+ * 完了メッセージを表示する。
+ *
+ * @param {string} html
+ */
+function showDone(html) {
+  const sec = document.getElementById('rg-step-done');
+  sec.style.display = 'block';
+  document.getElementById('rg-status').innerHTML = html;
+}
+
+/**
+ * 申請を送信する。
+ */
+async function onSubmitSignup() {
+  const name = document.getElementById('rg-name').value.trim();
+  const team = document.getElementById('rg-team').value.trim();
+
+  if (!name || !team) {
+    setMsg('rg-result', false, '表示名とチーム名は必須です。');
+    return;
+  }
+
+  const btn = document.getElementById('rg-submit');
+  btn.disabled = true;
+  setMsg('rg-result', true, '送信中...');
+
+  const res = await callGas('submitSignup', {
+    code: document.getElementById('rg-code').value.trim(),
+    display_name: name,
+    team_name: team,
+    x_id: document.getElementById('rg-x').value.trim(),
+    note: document.getElementById('rg-note').value.trim(),
+  });
+
+  btn.disabled = false;
+
+  if (!res.ok) {
+    setMsg('rg-result', false, res.error || '送信に失敗しました。');
+    return;
+  }
+
+  setMsg('rg-result', true, '申請しました。');
+  document.getElementById('rg-step-form').style.display = 'none';
+  showDone(
+    '<p class="form-msg msg-ok">申請を受け付けました。主催者が承認すると、' +
+    'ログインページから入れるようになります。</p>' +
+    '<p class="muted note-sm">承認の連絡は主催者から X で届きます。</p>' +
+    '<p><a class="btn btn-secondary" href="public.html">大会情報を見る</a></p>'
+  );
+}
+
+document.getElementById('rg-code-submit').onclick = onVerifyCode;
+document.getElementById('rg-code').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') onVerifyCode();
+});
+document.getElementById('rg-submit').onclick = onSubmitSignup;
+
+checkSignupOpen();
+</script>
+
+</body>
+</html>

@@ -179,11 +179,24 @@ function listTeams(token, payload) {
 
   var activeOnly = _toBool(payload.active_only);
 
+  // オーナーの表示名と X ID を添える。
+  // 試合連絡や移籍交渉の相手を画面から直接呼び出せるようにするため。
+  var owners = {};
+  getSheetData("Users").forEach(function (u) {
+    owners[_str(u.user_id)] = {
+      display_name: _str(u.display_name),
+      x_id:         _str(u.x_id),
+    };
+  });
+
   var rows = getSheetData("Teams").map(function (r) {
+    var owner = owners[_str(r.owner_user_id)] || null;
     return {
       team_id:       _str(r.team_id),
       name:          _str(r.name),
       owner_user_id: _str(r.owner_user_id),
+      owner_name:    owner ? owner.display_name : "",
+      owner_x_id:    owner ? owner.x_id : "",
       kind:          _str(r.kind),
       active:        _toBool(r.active),
     };
@@ -282,10 +295,100 @@ function listUsers(token) {
       display_name: _str(r.display_name),
       role:         _str(r.role),
       team_id:      _str(r.team_id),
+      x_id:         _str(r.x_id),
     };
   });
 
   return { ok: true, data: rows };
+}
+
+/**
+ * X（旧Twitter）の ID を正規化する。
+ *
+ * 参加者は「@name」「https://x.com/name」「twitter.com/name?s=20」など
+ * 好きな形で貼ってくるため、ID 部分だけを取り出して保存する。
+ * 表示側は常に https://x.com/<id> を組み立てればよくなる。
+ *
+ * @param {*} v
+ * @returns {string} 正規化した ID（不正なら空文字）
+ */
+function normalizeXId(v) {
+  var raw = _str(v).trim();
+  if (!raw) return "";
+
+  // URL 形式なら最後のパス要素を取り出す
+  raw = raw.replace(/^https?:\/\//i, "");
+  raw = raw.replace(/^(www\.)?(x|twitter)\.com\//i, "");
+
+  // クエリ・ハッシュ・末尾スラッシュを落とす
+  raw = raw.split("?")[0].split("#")[0].replace(/\/+$/, "");
+
+  // 先頭の @ を落とす
+  raw = raw.replace(/^@+/, "");
+
+  if (!raw) return "";
+
+  // X の ID は英数字とアンダースコアのみ・15文字以内
+  if (!/^[A-Za-z0-9_]{1,15}$/.test(raw)) return "";
+
+  return raw;
+}
+
+/**
+ * 本人が自分のプロフィール（表示名・X ID）を更新する。
+ *
+ * 主催者を経由せず参加者自身が直せるようにする。
+ * role や team_id はここでは変更できない（権限昇格を防ぐため）。
+ *
+ * payload: { display_name?, x_id? }
+ *
+ * @param {string} token
+ * @param {Object} payload
+ * @returns {{ ok: boolean, data?: Object, error?: string }}
+ */
+function updateMyProfile(token, payload) {
+  var auth = _requireUser(token);
+  if (!auth.ok) return auth;
+
+  var updates = {};
+
+  if (payload.display_name !== undefined) {
+    var name = _str(payload.display_name).trim();
+    if (!name) return { ok: false, error: "表示名を空にはできません。" };
+    if (name.length > 40) return { ok: false, error: "表示名は40文字以内で入力してください。" };
+    updates.display_name = name;
+  }
+
+  if (payload.x_id !== undefined) {
+    var raw = _str(payload.x_id).trim();
+    var xid = normalizeXId(raw);
+    if (raw && !xid) {
+      return {
+        ok: false,
+        error: "X の ID として認識できません。英数字とアンダースコア15文字以内で入力してください（@やURLのままでも構いません）。",
+      };
+    }
+    updates.x_id = xid;
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return { ok: false, error: "更新する項目がありません。" };
+  }
+
+  var user = auth.data;
+
+  return withLock(function () {
+    updateRow("Users", "user_id", _str(user.user_id), updates);
+    return {
+      ok: true,
+      data: {
+        user_id:      _str(user.user_id),
+        display_name: updates.display_name === undefined
+          ? _str(user.display_name) : updates.display_name,
+        x_id: updates.x_id === undefined ? _str(user.x_id) : updates.x_id,
+      },
+    };
+  });
 }
 
 /**
@@ -619,6 +722,7 @@ function upsertUser(token, payload) {
     display_name: _str(payload.display_name) || email,
     role:         role,
     team_id:      role === "organizer" ? "" : _str(payload.team_id),
+    x_id:         normalizeXId(payload.x_id),
   };
 
   return withLock(function () {
@@ -629,6 +733,7 @@ function upsertUser(token, payload) {
         display_name: row.display_name,
         role:         row.role,
         team_id:      row.team_id,
+        x_id:         row.x_id,
       });
       return { ok: true, data: { user_id: _str(existing.user_id), created: false } };
     }
