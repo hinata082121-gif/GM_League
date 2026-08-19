@@ -136,6 +136,10 @@ function esc(v) {
 /**
  * GAS を呼ぶ。トークンは持っていれば付ける。
  *
+ * GAS はデプロイ直後の伝播中に一時的な 404 や接続エラーを返すことがある。
+ * ここは大会の入口で、初めて来た人が「http_404」を見て諦めてしまうと
+ * 取り返しがつかないので、app.js より粘り強く（間隔を空けて3回まで）再試行する。
+ *
  * @param {string} action
  * @param {Object} [payload]
  * @returns {Promise<{ok: boolean, data?: any, error?: string}>}
@@ -143,18 +147,34 @@ function esc(v) {
 async function callGas(action, payload = {}) {
   const body = JSON.stringify({ action, token: regToken || '', payload });
 
-  try {
-    const res = await fetch(GM_CONFIG.GAS_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body,
-      redirect: 'follow',
-    });
-    if (!res.ok) return { ok: false, error: 'http_' + res.status };
-    return res.json();
-  } catch (e) {
-    return { ok: false, error: e.message };
+  let lastError = 'unknown';
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 1500));
+
+    try {
+      const res = await fetch(GM_CONFIG.GAS_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body,
+        redirect: 'follow',
+      });
+
+      if (res.ok) return res.json();
+
+      // 404 は伝播待ちの可能性が高いので粘る。それ以外はすぐ諦める
+      lastError = 'http_' + res.status;
+      if (res.status !== 404) return { ok: false, error: lastError };
+
+    } catch (e) {
+      lastError = e.message;
+    }
   }
+
+  return {
+    ok: false,
+    error: 'サーバーに接続できませんでした（' + lastError + '）。少し待ってからもう一度お試しください。',
+  };
 }
 
 /**

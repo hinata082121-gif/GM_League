@@ -124,15 +124,31 @@ async function fetchPublic(seasonId) {
     payload: seasonId ? { season_id: seasonId } : {},
   });
 
-  const res = await fetch(GM_CONFIG.GAS_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body,
-    redirect: 'follow',
-  });
+  let lastError = 'unknown';
 
-  if (!res.ok) throw new Error('http_' + res.status);
-  return res.json();
+  // GAS はデプロイ直後の伝播中に一時的な 404 を返す。間を空けて3回まで粘る
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 1500));
+
+    try {
+      const res = await fetch(GM_CONFIG.GAS_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body,
+        redirect: 'follow',
+      });
+
+      if (res.ok) return res.json();
+
+      lastError = 'http_' + res.status;
+      if (res.status !== 404) break;
+
+    } catch (e) {
+      lastError = e.message;
+    }
+  }
+
+  throw new Error('サーバーに接続できませんでした（' + lastError + '）');
 }
 
 /**
