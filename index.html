@@ -461,6 +461,35 @@
         </div>
 
         <div class="card">
+          <h2>現実移籍の反映</h2>
+          <p class="muted">
+            大会に参加していないクラブへ移籍した選手を、大会の対象外にします。
+            <strong>反映した時点で補填金を計上し、実際に離脱するのは翌シーズンからです。</strong>
+            今シーズンのスカッドと試合結果は変わりません。
+          </p>
+          <div class="filter-row">
+            <label>
+              選手を検索
+              <input type="text" id="rt-keyword" placeholder="選手名 または 実クラブ名" />
+            </label>
+            <label class="check-label">
+              <input type="checkbox" id="rt-owned" checked />
+              保有されている選手だけ表示
+            </label>
+            <button type="button" id="rt-search" class="btn btn-secondary btn-sm">検索</button>
+          </div>
+          <div id="rt-list"></div>
+          <div id="rt-summary"></div>
+          <div class="form-actions">
+            <button type="button" id="rt-apply" class="btn btn-danger" disabled>
+              選択した選手を対象外にする
+            </button>
+            <span id="rt-result" class="form-msg"></span>
+          </div>
+          <div id="rt-report"></div>
+        </div>
+
+        <div class="card">
           <h2>ディビジョン設定</h2>
           <p class="muted">
             参加チーム数が基準に達したシーズンだけ二部制にできます。

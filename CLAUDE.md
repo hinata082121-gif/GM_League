@@ -125,6 +125,7 @@ config.js
 │   ├─ api_division.gs # ディビジョン割り当て・GMスーパーカップ
 │   ├─ api_signup.gs   # 参加登録（合言葉・申請・承認）
 │   ├─ api_public.gs   # 認証不要の公開データ
+│   ├─ api_realtransfer.gs # 現実移籍の反映（eligible解除＋補填金）
 │   └─ seed.gs         # テストデータ投入/削除（手動実行）
 ├─ SPEC.md           # 確定仕様
 ├─ OPERATION.md      # 主催者向け運用マニュアル

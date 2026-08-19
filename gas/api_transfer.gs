@@ -468,6 +468,9 @@ function _collectTransferTargets(seasonId, myTeamId, windowNo, pending) {
     var pid = _str(p.player_id);
     if (!pid) return;
 
+    // 現実移籍で大会対象外になった選手は移籍させられない（SPEC.md §6.5）
+    if (!_toBool(p.eligible)) return;
+
     var owner = ownerOf[pid];
     var base = {
       player_id: pid,
@@ -688,6 +691,14 @@ function _createTransfer(args) {
 
   var player = findRow("Players", "player_id", playerId);
   if (!player) return { ok: false, error: "選手が見つかりません。" };
+
+  if (!_toBool(player.eligible)) {
+    return {
+      ok: false,
+      error: _str(player.name) +
+        " は大会対象外です（大会に参加していないクラブへ移籍済み）。移籍の対象にできません。",
+    };
+  }
 
   var buyer = findRow("Teams", "team_id", toTeam);
   if (!buyer) return { ok: false, error: "獲得チームが見つかりません。" };

@@ -444,6 +444,7 @@ function closeSeason(token, payload) {
     var report = {
       rank_prizes: [], cup_prizes: [], supercup_prizes: [], stream_fees: [],
       top_scorer_prizes: [], fees: [], expired: 0, carried: 0,
+      dropped_ineligible: [],
     };
 
     // --- 1. リーグ順位賞金（GM1 / GM2）---
@@ -493,7 +494,7 @@ function closeSeason(token, payload) {
 
     // --- 5. 次シーズンへ引継ぎ ---
     if (nextSeasonId) {
-      report.carried = _carryOverRosters(seasonId, nextSeasonId, at);
+      report.carried = _carryOverRosters(seasonId, nextSeasonId, at, report);
     }
 
     // --- 6. 終了 ---
@@ -518,14 +519,28 @@ function closeSeason(token, payload) {
  * expires_season は空にする（期限切れは既に離脱済み）。
  * 既に次シーズンに同じ選手の行がある場合はスキップする。
  *
+ * **eligible=false の選手は引き継がない**（SPEC.md §6.5）。
+ * 大会に参加していないクラブへ現実の移籍をした選手は、翌シーズンから使えない。
+ * 今シーズンの在籍と試合結果はそのまま残し、コピーの段階で落とす。
+ *
  * @param {string} seasonId
  * @param {string} nextSeasonId
  * @param {Date} at
+ * @param {Object} [report] dropped_ineligible に落とした選手を記録する
  * @returns {number} コピーした行数
  */
-function _carryOverRosters(seasonId, nextSeasonId, at) {
+function _carryOverRosters(seasonId, nextSeasonId, at, report) {
   var activeTeamIds = {};
   _activeTeams().forEach(function (t) { activeTeamIds[_str(t.team_id)] = true; });
+
+  // 大会対象外になった選手を引く
+  var ineligible = {};
+  var playerNames = {};
+  getSheetData("Players").forEach(function (p) {
+    var pid = _str(p.player_id);
+    playerNames[pid] = _str(p.name);
+    if (!_toBool(p.eligible)) ineligible[pid] = true;
+  });
 
   var existing = {};
   getSheetData("Rosters").forEach(function (r) {
@@ -542,6 +557,19 @@ function _carryOverRosters(seasonId, nextSeasonId, at) {
     var playerId = _str(r.player_id);
     if (!activeTeamIds[teamId]) return;
     if (existing[teamId + "|" + playerId]) return;
+
+    // 現実移籍で対象外になった選手はここで落とす
+    if (ineligible[playerId]) {
+      if (report) {
+        report.dropped_ineligible.push({
+          team_id: teamId,
+          player_id: playerId,
+          name: playerNames[playerId] || playerId,
+        });
+      }
+      return;
+    }
+
     existing[teamId + "|" + playerId] = true;
 
     rows.push({

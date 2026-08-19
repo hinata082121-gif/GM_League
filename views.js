@@ -3232,6 +3232,7 @@ async function loadSeasonAdmin() {
   await loadCompensationPlayers();
   await loadDivisions();
   await loadSuperCup();
+  await loadRealTransfers();
 }
 
 // ---------------------------------------------------------------------------
@@ -3606,9 +3607,13 @@ function renderCloseReport(report) {
       ${list('得点王賞金', report.top_scorer_prizes,
         (r) => (r.competition ? r.competition + ' ' : '') + nameOf(r.team_id) + ' ' + r.goals + '点 ' + formatMoney(r.amount))}
       ${list('終了手数料', report.fees, (r) => nameOf(r.team_id) + ' −' + formatMoney(r.fee))}
+      ${list('現実移籍で離脱', report.dropped_ineligible || [],
+        (r) => nameOf(r.team_id) + ' ' + r.name)}
     </div>
     <p class="muted note-sm">
-      期限切れで離脱: ${report.expired} 名 ／ 次シーズンへ引継ぎ: ${report.carried} 名
+      期限切れで離脱: ${report.expired} 名
+      ／ 現実移籍で離脱: ${(report.dropped_ineligible || []).length} 名
+      ／ 次シーズンへ引継ぎ: ${report.carried} 名
     </p>`;
 }
 
@@ -4043,4 +4048,280 @@ async function onRejectSignup(signupId) {
   }
 
   await loadSignups();
+}
+
+// ---------------------------------------------------------------------------
+// 現実移籍の反映（主催者のみ）
+// ---------------------------------------------------------------------------
+
+/** getRealTransferTargets の結果 */
+let realTransferData = null;
+
+/**
+ * 現実移籍の反映画面を読み込む。
+ * 運営タブの loadSeasonAdmin から呼ばれる。
+ */
+async function loadRealTransfers() {
+  const seasonId = document.getElementById('sp-season').value;
+  if (!seasonId) return;
+
+  const searchBtn = document.getElementById('rt-search');
+  if (!searchBtn.dataset.bound) {
+    searchBtn.onclick = loadRealTransfers;
+    document.getElementById('rt-owned').onchange = loadRealTransfers;
+    document.getElementById('rt-apply').onclick = onApplyRealTransfers;
+    document.getElementById('rt-keyword').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') loadRealTransfers();
+    });
+    searchBtn.dataset.bound = '1';
+  }
+
+  setLoading('rt-list');
+
+  const res = await callApi('getRealTransferTargets', {
+    season_id: seasonId,
+    keyword: document.getElementById('rt-keyword').value.trim(),
+    only_owned: document.getElementById('rt-owned').checked,
+  });
+
+  if (!res.ok) {
+    setError('rt-list', '選手一覧の取得に失敗しました: ' + res.error);
+    return;
+  }
+
+  realTransferData = res.data;
+  renderRealTransferList();
+}
+
+/**
+ * 選手一覧を描画する。
+ *
+ * 既に対象外の選手も表示する。誤って外した場合に気づけるようにするため。
+ */
+function renderRealTransferList() {
+  const d = realTransferData;
+  const box = document.getElementById('rt-list');
+
+  if (d.players.length === 0) {
+    box.innerHTML = '<p class="muted">該当する選手がいません。</p>';
+    document.getElementById('rt-summary').innerHTML = '';
+    document.getElementById('rt-apply').disabled = true;
+    return;
+  }
+
+  const rows = d.players
+    .map((p) => {
+      if (!p.eligible) {
+        return `
+        <tr class="row-ineligible">
+          <td><span class="muted">対象外</span></td>
+          <td><span class="pos pos-${esc(p.position)}">${esc(p.position)}</span> ${esc(p.name)}</td>
+          <td class="muted">${esc(p.real_club)}</td>
+          <td class="muted">${esc(p.team_name || '—')}</td>
+          <td class="num muted">—</td>
+          <td>
+            <button type="button" class="btn btn-secondary btn-sm rt-restore"
+                    data-id="${esc(p.player_id)}">戻す</button>
+          </td>
+        </tr>`;
+      }
+
+      const comp = p.compensable
+        ? formatMoney(p.compensation)
+        : '<span class="muted">なし</span>';
+
+      return `
+      <tr>
+        <td>
+          <input type="checkbox" class="rt-check" data-id="${esc(p.player_id)}"
+                 data-team="${esc(p.team_id)}" data-amount="${p.compensation}" />
+        </td>
+        <td><span class="pos pos-${esc(p.position)}">${esc(p.position)}</span> ${esc(p.name)}</td>
+        <td class="muted">${esc(p.real_club)}</td>
+        <td>${p.owned ? esc(p.team_name) : '<span class="muted">保有なし</span>'}</td>
+        <td class="num">${comp}</td>
+        <td class="muted">${esc(p.acquisition_type)}</td>
+      </tr>`;
+    })
+    .join('');
+
+  box.innerHTML = `
+    <div class="table-wrap scroll-list">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>選択</th><th>選手</th><th>実クラブ</th><th>保有チーム</th>
+            <th class="num">補填金</th><th>獲得方法</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <p class="muted note-sm">
+      補填金は獲得額 × ${Math.round(d.rate * 100)}%。
+      オークション獲得と獲得額0の選手は補填の対象外です。
+    </p>`;
+
+  box.querySelectorAll('.rt-check').forEach((c) => {
+    c.onchange = renderRealTransferSummary;
+  });
+  box.querySelectorAll('.rt-restore').forEach((b) => {
+    b.onclick = () => onRestorePlayer(b.dataset.id);
+  });
+
+  renderRealTransferSummary();
+}
+
+/**
+ * 選択内容から、補填の合計と各チームの残り人数を出す。
+ *
+ * 人数が squad_min を割るチームは警告する。
+ * 反映してから気づくと、参加者に説明が必要になるため。
+ */
+function renderRealTransferSummary() {
+  const d = realTransferData;
+  const checked = [...document.querySelectorAll('.rt-check:checked')];
+  const box = document.getElementById('rt-summary');
+
+  document.getElementById('rt-apply').disabled = checked.length === 0;
+
+  if (checked.length === 0) {
+    box.innerHTML = '';
+    return;
+  }
+
+  let total = 0;
+  const lossByTeam = {};
+
+  checked.forEach((c) => {
+    total += Number(c.dataset.amount) || 0;
+    const tid = c.dataset.team;
+    if (tid) lossByTeam[tid] = (lossByTeam[tid] || 0) + 1;
+  });
+
+  const affected = d.teams
+    .filter((t) => lossByTeam[t.team_id])
+    .map((t) => {
+      const after = t.squad - lossByTeam[t.team_id];
+      const short = after < d.squad_min;
+      return `
+        <li>
+          ${esc(t.team_name)}: ${t.squad} → <strong>${after}</strong> 名
+          ${short ? '<span class="tag-ng">下限' + d.squad_min + '名を下回る</span>' : ''}
+        </li>`;
+    })
+    .join('');
+
+  const anyShort = d.teams.some(
+    (t) => lossByTeam[t.team_id] && t.squad - lossByTeam[t.team_id] < d.squad_min
+  );
+
+  box.innerHTML = `
+    <div class="${anyShort ? 'warn-box' : 'hint-box'}">
+      <strong>${checked.length} 名を対象外にします。</strong>
+      補填金の合計 ${esc(formatMoney(total))}
+      <ul class="detail-grid-list">${affected || '<li class="muted">保有チームなし</li>'}</ul>
+      <p class="muted note-sm">
+        人数は翌シーズンの見込みです。今シーズンのスカッドは変わりません。
+        ${anyShort
+          ? '<strong>下限を割るチームがあります。</strong>移籍市場で補充が必要になることを伝えてください。'
+          : ''}
+      </p>
+    </div>`;
+}
+
+/**
+ * 選択した選手をまとめて対象外にする。
+ */
+async function onApplyRealTransfers() {
+  const checked = [...document.querySelectorAll('.rt-check:checked')];
+  if (checked.length === 0) return;
+
+  const ids = checked.map((c) => c.dataset.id);
+  const names = checked.map((c) => c.closest('tr').children[1].textContent.trim());
+
+  const msg =
+    ids.length + ' 名を大会の対象外にします。\n\n' +
+    names.slice(0, 10).join('\n') +
+    (names.length > 10 ? '\n...ほか ' + (names.length - 10) + ' 名' : '') +
+    '\n\n補填金がこの場で計上されます。よろしいですか？';
+
+  if (!confirm(msg)) return;
+
+  const btn = document.getElementById('rt-apply');
+  btn.disabled = true;
+  setResult('rt-result', true, '反映中...');
+
+  const res = await callApi('applyRealTransfers', {
+    season_id: document.getElementById('sp-season').value,
+    player_ids: ids,
+  });
+
+  btn.disabled = false;
+
+  if (!res.ok) {
+    setResult('rt-result', false, '反映できません: ' + res.error);
+    return;
+  }
+
+  setResult('rt-result', true, res.data.applied_count + ' 名を対象外にしました。');
+  renderRealTransferReport(res.data);
+
+  await loadRealTransfers();
+}
+
+/**
+ * 反映結果を表示する。
+ *
+ * @param {Object} d applyRealTransfers のレスポンス
+ */
+function renderRealTransferReport(d) {
+  const box = document.getElementById('rt-report');
+
+  const comp = d.compensations.length
+    ? '<ul class="detail-grid-list">' +
+      d.compensations
+        .map((c) =>
+          '<li>' + esc(c.team_name) + ' ← ' + esc(c.name) + ' ' +
+          esc(formatMoney(c.amount)) + '（獲得額 ' + esc(formatMoney(c.acquired_cost)) + '）</li>'
+        )
+        .join('') +
+      '</ul>'
+    : '<p class="muted">補填金の発生はありません。</p>';
+
+  const skipped = d.skipped.length
+    ? '<p class="muted note-sm">対象外にできなかった選手: ' +
+      d.skipped.map((s) => esc((s.name || s.player_id) + '（' + s.reason + '）')).join(' / ') +
+      '</p>'
+    : '';
+
+  box.innerHTML = `
+    <h3 class="sub-head">反映結果</h3>
+    <p>対象外にした選手: <strong>${d.applied_count} 名</strong>
+       ／ 補填金の合計: <strong>${esc(formatMoney(d.total_amount))}</strong></p>
+    ${comp}
+    ${skipped}
+    <p class="muted note-sm">
+      この選手たちはシーズン終了処理のときにスカッドから外れます。
+      今シーズンの試合には引き続き出場できます。
+    </p>`;
+}
+
+/**
+ * 誤って対象外にした選手を戻す。
+ *
+ * @param {string} playerId
+ */
+async function onRestorePlayer(playerId) {
+  if (!confirm('この選手を大会の対象に戻します。\n\n補填金は取り消されません。よろしいですか？')) return;
+
+  const res = await callApi('restorePlayerEligible', { player_id: playerId });
+
+  if (!res.ok) {
+    setResult('rt-result', false, '戻せません: ' + res.error);
+    return;
+  }
+
+  setResult('rt-result', true, res.data.name + ' を対象に戻しました。補填金は残っています。');
+  await loadRealTransfers();
 }

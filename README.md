@@ -53,6 +53,7 @@ J リーグ選手限定の eFootball 私設大会を運営するための集計�
 │   ├─ api_division.gs   # ディビジョン割り当て・GMスーパーカップ
 │   ├─ api_signup.gs     # 参加登録（合言葉・申請・承認）
 │   ├─ api_public.gs     # 認証不要の公開データ
+│   ├─ api_realtransfer.gs # 現実移籍の反映（eligible解除＋補填金）
 │   └─ seed.gs         # テストデータ投入・削除（手動実行）
 ├─ SPEC.md           # 確定仕様（データモデル・経済ルール・API 一覧・画面一覧）
 ├─ OPERATION.md      # 主催者向け運用マニュアル
@@ -90,6 +91,7 @@ J リーグ選手限定の eFootball 私設大会を運営するための集計�
 | `api_division` | `gas/api_division.gs` |
 | `api_signup` | `gas/api_signup.gs` |
 | `api_public` | `gas/api_public.gs` |
+| `api_realtransfer` | `gas/api_realtransfer.gs` |
 | `seed` | `gas/seed.gs` |
 
 > 貼り付け後、**行数がリポジトリ側と一致しているか必ず確認する。**
@@ -367,6 +369,9 @@ GAS エディタの関数プルダウンから選んで実行する。どちら�
 | `applySponsorIncome` | 主催者 | `season_id`, `entries:[{team_id,amount}]` | スポンサー収益の反映 |
 | `advanceSeason` | 主催者 | `season_id` | 状態を1つ進める |
 | `closeSeason` | 主催者 | `season_id`, `next_season_id?` | シーズン終了処理（**全賞金をここで支給**） |
+| `getRealTransferTargets` | 主催者 | `season_id`, `keyword?`, `only_owned?` | 現実移籍の反映対象と補填額 |
+| `applyRealTransfers` | 主催者 | `season_id`, `player_ids[]`, `note?` | 一括で eligible=false にして補填金を即時計上 |
+| `restorePlayerEligible` | 主催者 | `player_id` | 誤って外した選手を戻す |
 | `getSeasonDivisions` | 全員 | `season_id` | ディビジョン割り当ての現状 |
 | `setSeasonDivisions` | 主催者 | `season_id`, `assignments:[{team_id,division}]` | GM1 / GM2 の割り当て |
 | `getSuperCup` | 全員 | `season_id` | スーパーカップの設定と前季王者の候補 |
@@ -385,6 +390,10 @@ GAS エディタの関数プルダウンから選んで実行する。どちら�
 > `prize_gm1_2div_*`）。二部制になるのは参加チームが `two_division_min_teams` 以上のときだけ。
 >
 > 配信料は**試合結果と無関係**に、`SuperCup.streamed` が真なら出場2チームへ支給する。
+>
+> **現実移籍（§6.5）**: `eligible=false` の選手はエントリー・移籍・引継ぎの3か所で締め出す。
+> 反映と同時に補填金（獲得額×80%）を計上する。分けると計上漏れが起きるため。
+> 実際に離脱するのは `closeSeason` の引継ぎなので、**効くのは翌シーズンから**。
 >
 > 引継ぎ先シーズンは**主催者が先に作成**しておく。closeSeason は自動生成しない。
 > 引継ぎ時は `acquisition_type` と `acquired_cost` を保持する（補填金の母数になるため）。

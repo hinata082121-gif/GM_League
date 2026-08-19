@@ -1058,3 +1058,42 @@ code {
   color: #8a6100;
   border: 1px solid #f0dca8;
 }
+
+/* ===== 現実移籍の反映 ===== */
+
+.btn-danger {
+  background: #c0392b;
+  color: #fff;
+  border: 1px solid #a93226;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: #a93226;
+}
+
+.btn-danger:disabled {
+  background: #d8b4ae;
+  border-color: #d8b4ae;
+  cursor: not-allowed;
+}
+
+/* 対象外になっている選手の行 */
+.row-ineligible {
+  background: #fbeaea;
+}
+
+.scroll-list {
+  max-height: 340px;
+  overflow-y: auto;
+  border: 1px solid #e5e9f0;
+  border-radius: 6px;
+}
+
+.warn-box {
+  background: #fff7e6;
+  border: 1px solid #f0d9a8;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 10px 0;
+  font-size: 0.9rem;
+}

@@ -243,6 +243,16 @@ function _route(action, token, payload) {
     case "upsertSeason":
       return upsertSeason(token, payload);
 
+    // ---- 現実移籍の反映 ----
+    case "getRealTransferTargets":
+      return getRealTransferTargets(token, payload);
+
+    case "applyRealTransfers":
+      return applyRealTransfers(token, payload);
+
+    case "restorePlayerEligible":
+      return restorePlayerEligible(token, payload);
+
     // ---- ディビジョン & スーパーカップ ----
     case "getSeasonDivisions":
       return getSeasonDivisions(token, payload);
