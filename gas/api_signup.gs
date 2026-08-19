@@ -3,6 +3,7 @@
  *
  * 誰でも（Users 未登録でも）呼べる:
  *   getSignupInfo     — 受付中かどうかだけを返す。コードは返さない
+ *   getSignupClubs    — 選択できるクラブの一覧（カテゴリ別・使用済みフラグ付き）
  *   verifySignupCode  — 合言葉の照合
  *   submitSignup      — 参加申請の提出（Google ログイン必須）
  *   getMySignup       — 自分の申請状況
@@ -21,6 +22,9 @@
  *   - signup_open が false のときは受付を閉じる
  *   - 申請はその場では有効にならず、主催者が承認して初めてログインできる
  *   - email はトークンから取る。ペイロードの email は信用しない
+ *   - チーム名は自由記入ではなく **Clubs シートの実在クラブから選ぶ**
+ *     選べるカテゴリは Config の signup_club_categories（既定 J1,J2）
+ *     J3 は選択肢に出さないが、Clubs シートにはデータとして残す
  */
 
 // =============================================================================
@@ -61,6 +65,146 @@ function _isSignupOpen() {
   var code = _str(getConfig("signup_code", ""));
   if (!code) return false;
   return _toBool(getConfig("signup_open", false));
+}
+
+// =============================================================================
+// 選べるクラブ
+// =============================================================================
+
+/**
+ * 参加登録で選べるクラブの一覧を返す。トークン不要。
+ *
+ * チーム名は自由記入だと表記ゆれや重複が起きるため、実在の J クラブから選ばせる。
+ * 既に使われているクラブは taken=true を立てて、フロント側で選べなくする。
+ *
+ * payload: { } （ログイン済みなら token から自分の申請を除外する）
+ *
+ * @param {string} token
+ * @param {Object} payload
+ * @returns {{ ok: boolean, data?: Object, error?: string }}
+ */
+function getSignupClubs(token, payload) {
+  var selfEmail = token ? _verifyToken(token) : null;
+  var opts = _signupClubOptions(selfEmail);
+
+  return {
+    ok: true,
+    data: {
+      categories: opts.categories,
+      clubs:      opts.grouped,
+      available:  opts.availableCount,
+      total:      opts.total,
+    },
+  };
+}
+
+/**
+ * 選べるクラブを組み立てる。
+ *
+ * 使用済みの判定は2種類:
+ *   登録済み — 既に Teams にそのクラブ名がある
+ *   申請中   — 他の人が承認待ちで押さえている
+ *
+ * 申請中も塞ぐのは、2人が同じクラブで申請してしまうと
+ * 片方が承認時にはじかれて出し直しになるため。先に見せて避けてもらう。
+ *
+ * @param {string|null} selfEmail 自分の申請は「使用済み」にしない
+ * @returns {{categories: string[], grouped: Object, total: number, availableCount: number,
+ *            allowed: Object}}
+ */
+function _signupClubOptions(selfEmail) {
+  var allowedList = _str(getConfig("signup_club_categories", "J1,J2"))
+    .split(",")
+    .map(function (c) { return c.trim(); })
+    .filter(function (c) { return c; });
+
+  var allowedCategory = {};
+  allowedList.forEach(function (c) { allowedCategory[c] = true; });
+
+  // 使用済み: Teams に登録済み
+  var takenBy = {};
+  getSheetData("Teams").forEach(function (t) {
+    var name = _str(t.name);
+    if (name) takenBy[name] = "登録済み";
+  });
+
+  // 使用済み: 他の人が申請中
+  var self = String(selfEmail || "").toLowerCase();
+  try {
+    getSheetData("Signups").forEach(function (r) {
+      if (_str(r.status) !== SIGNUP_PENDING) return;
+      if (self && _str(r.email).toLowerCase() === self) return;
+      var name = _str(r.team_name);
+      if (name && !takenBy[name]) takenBy[name] = "申請中";
+    });
+  } catch (e) {
+    Logger.log("[_signupClubOptions] Signups 読み取りエラー: " + e.message);
+  }
+
+  var rows = getSheetData("Clubs")
+    .map(function (r) {
+      return {
+        category:   _str(r.category),
+        club_name:  _str(r.club_name),
+        sort_order: _num(r.sort_order),
+      };
+    })
+    .filter(function (r) { return r.club_name && allowedCategory[r.category]; });
+
+  rows.sort(function (a, b) { return a.sort_order - b.sort_order; });
+
+  var categories = [];
+  var grouped = {};
+  var available = 0;
+
+  rows.forEach(function (r) {
+    if (!grouped[r.category]) {
+      grouped[r.category] = [];
+      categories.push(r.category);
+    }
+    var taken = takenBy[r.club_name] || "";
+    if (!taken) available++;
+    grouped[r.category].push({ club_name: r.club_name, taken: !!taken, taken_reason: taken });
+  });
+
+  return {
+    categories: categories,
+    grouped: grouped,
+    total: rows.length,
+    availableCount: available,
+    allowed: allowedCategory,
+  };
+}
+
+/**
+ * チーム名が「選べるクラブ」かどうかを検証する。
+ *
+ * フロントのプルダウンだけに頼らず、ここでも必ず確認する（設計原則1）。
+ *
+ * @param {string} teamName
+ * @param {string|null} selfEmail
+ * @returns {string|null} 問題なければ null、あればエラーメッセージ
+ */
+function _validateSignupClub(teamName, selfEmail) {
+  var opts = _signupClubOptions(selfEmail);
+
+  var found = null;
+  opts.categories.forEach(function (cat) {
+    opts.grouped[cat].forEach(function (c) {
+      if (c.club_name === teamName) found = c;
+    });
+  });
+
+  if (!found) {
+    return "チームは一覧から選んでください（" +
+      Object.keys(opts.allowed).join(" / ") + " のクラブのみ）。";
+  }
+
+  if (found.taken) {
+    return teamName + " は既に " + found.taken_reason + " です。別のクラブを選んでください。";
+  }
+
+  return null;
 }
 
 /**
@@ -132,9 +276,12 @@ function submitSignup(token, payload) {
   var teamName = _str(payload.team_name).trim();
 
   if (!displayName) return { ok: false, error: "表示名を入力してください。" };
-  if (!teamName) return { ok: false, error: "チーム名を入力してください。" };
+  if (!teamName) return { ok: false, error: "チームを選んでください。" };
   if (displayName.length > 40) return { ok: false, error: "表示名は40文字以内で入力してください。" };
-  if (teamName.length > 40) return { ok: false, error: "チーム名は40文字以内で入力してください。" };
+
+  // 一覧にある空きクラブかどうかをサーバー側で必ず確認する
+  var clubError = _validateSignupClub(teamName, email);
+  if (clubError) return { ok: false, error: clubError };
 
   var rawX = _str(payload.x_id).trim();
   var xId = normalizeXId(rawX);
@@ -347,19 +494,12 @@ function approveSignup(token, payload) {
     }
 
     var teamName = _str(payload.team_name).trim() || _str(row.team_name);
-    if (!teamName) return { ok: false, error: "チーム名が空です。" };
+    if (!teamName) return { ok: false, error: "チームが選ばれていません。" };
 
-    // 同名チームがあると閲覧画面で見分けがつかなくなるため弾く
-    var dup = null;
-    getSheetData("Teams").forEach(function (t) {
-      if (_str(t.name) === teamName) dup = t;
-    });
-    if (dup) {
-      return {
-        ok: false,
-        error: "同じ名前のチームが既にあります: " + teamName + "。別の名前を指定してください。",
-      };
-    }
+    // 主催者が差し替えた場合も含めて、実在クラブかつ未使用かを確認する。
+    // 申請者自身の予約は「使用済み」に数えない
+    var clubError = _validateSignupClub(teamName, email);
+    if (clubError) return { ok: false, error: clubError };
 
     var userId = generateId("u_");
     var teamId = generateId("t_");

@@ -75,6 +75,9 @@ function _route(action, token, payload) {
     case "verifySignupCode":
       return verifySignupCode(payload);
 
+    case "getSignupClubs":
+      return getSignupClubs(token, payload);
+
     // ---- 参加登録（Google ログインのみ。Users 未登録でも可）----
     case "submitSignup":
       return submitSignup(token, payload);

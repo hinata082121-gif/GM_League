@@ -364,6 +364,7 @@ function _setupConfig() {
     // ── 賞金（未定のため仮値 0）─────────────────────────────────────────
     ["signup_code",                 "",          "参加登録の合言葉（空のままだと登録を受け付けない）"],
     ["signup_open",                 false,       "参加登録の受付中フラグ"],
+    ["signup_club_categories",      "J1,J2",     "参加登録で選べるクラブのカテゴリ（Clubs には J3 も残す）"],
 
     ["two_division_min_teams",      15,          "二部制にできる最小チーム数"],
 

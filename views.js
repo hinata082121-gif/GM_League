@@ -3922,6 +3922,35 @@ async function loadSignups() {
     return;
   }
 
+  // 承認時にクラブを差し替えられるよう、空きクラブの一覧を取っておく
+  const clubRes = await callApi('getSignupClubs', {});
+  const clubData = clubRes.ok ? clubRes.data : null;
+
+  const clubSelect = (signupId, current) => {
+    if (!clubData) {
+      // 一覧が取れないときは表示だけにする（自由記入に戻さない）
+      return esc(current);
+    }
+
+    const opts = clubData.categories
+      .map((cat) => {
+        const items = clubData.clubs[cat]
+          .map((c) => {
+            // 申請者本人が押さえているクラブは taken にならない
+            const label = c.taken ? c.club_name + '（' + c.taken_reason + '）' : c.club_name;
+            return '<option value="' + esc(c.club_name) + '"' +
+              (c.taken && c.club_name !== current ? ' disabled' : '') +
+              (c.club_name === current ? ' selected' : '') +
+              '>' + esc(label) + '</option>';
+          })
+          .join('');
+        return '<optgroup label="' + esc(cat) + '">' + items + '</optgroup>';
+      })
+      .join('');
+
+    return '<select class="sg-team-input" data-id="' + esc(signupId) + '">' + opts + '</select>';
+  };
+
   const rows = res.data
     .map((r) => {
       const pending = r.status === '申請中';
@@ -3939,11 +3968,7 @@ async function loadSignups() {
         <tr>
           <td class="muted">${esc(String(r.created_at).slice(0, 10))}</td>
           <td>${esc(r.display_name)}</td>
-          <td>
-            ${pending
-              ? `<input type="text" class="sg-team-input" data-id="${esc(r.signup_id)}" value="${esc(r.team_name)}" />`
-              : esc(r.team_name)}
-          </td>
+          <td>${pending ? clubSelect(r.signup_id, r.team_name) : esc(r.team_name)}</td>
           <td>${xLinkHtml(r.x_id)}</td>
           <td class="muted">${esc(r.note)}</td>
           <td>${tag}</td>
@@ -3965,7 +3990,8 @@ async function loadSignups() {
       </table>
     </div>
     <p class="muted note-sm">
-      チーム名は承認前なら主催者が直せます。同じ名前のチームが既にある場合は承認できません。
+      チームは承認前なら主催者が差し替えられます。既に使われているクラブは選べません。
+      選択肢に出るのは Config の <code>signup_club_categories</code> で許可したカテゴリだけです。
     </p>`;
 
   box.querySelectorAll('.sg-approve').forEach((b) => {

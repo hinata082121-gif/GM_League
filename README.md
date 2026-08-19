@@ -394,4 +394,29 @@ GAS エディタの関数プルダウンから選んで実行する。どちら�
 >
 > スポンサー収益は当面**主催者がアプリ上で入力**する（Google Form 連携は未実装）。
 
+### 参加登録 & 公開ページ
+
+| action | 権限 | payload | 内容 |
+|---|---|---|---|
+| `getPublicData` | 誰でも | `season_id?` | 順位表・移籍動向・参加者一覧（読み取り専用） |
+| `getSignupInfo` | 誰でも | — | 受付中かどうか。**合言葉は返さない** |
+| `getSignupClubs` | 誰でも | — | 選べるクラブ（カテゴリ別・使用済みフラグ付き） |
+| `verifySignupCode` | 誰でも | `code` | 合言葉の照合 |
+| `submitSignup` | ログインのみ | `code`, `display_name`, `team_name`, `x_id?`, `note?` | 参加申請 |
+| `getMySignup` | ログインのみ | — | 自分の申請状況 |
+| `listSignups` | 主催者 | `status?` | 申請一覧 |
+| `approveSignup` | 主催者 | `signup_id`, `team_name?` | 承認（Users + Teams を作る） |
+| `rejectSignup` | 主催者 | `signup_id`, `note?` | 却下 |
+
+> **公開 action には書き込みを置かない。** email などの個人情報も返さない。
+>
+> 集計関数を内部から認証なしで呼ぶための合鍵 `PUBLIC_ACCESS` は**オブジェクト**。
+> JSON で届く token は必ず文字列なので `===` にならず、外部から詐称できない。
+>
+> `submitSignup` の email は**必ずトークンから取る**。payload の email は無視する。
+>
+> チーム名は Clubs の実在クラブから選ぶ。許可カテゴリは Config の
+> `signup_club_categories`（既定 `J1,J2`）。J3 は選択肢に出さないがデータは残す。
+> 検証は `submitSignup` と `approveSignup` の両方で行う。
+
 未実装の action は `{ ok:false, error:"... は Phase N で実装します。" }` を返す。

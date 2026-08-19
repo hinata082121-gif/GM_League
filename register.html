@@ -73,8 +73,15 @@
           <input type="text" id="rg-name" maxlength="40" placeholder="例: ひなた" />
         </label>
         <label>
-          チーム名
-          <input type="text" id="rg-team" maxlength="40" placeholder="例: 赤羽ユナイテッド" />
+          カテゴリ
+          <select id="rg-category"></select>
+        </label>
+        <label>
+          チーム（Jリーグのクラブから選択）
+          <select id="rg-team"></select>
+          <span class="unit-hint" id="rg-team-hint">
+            他の人が使っているクラブは選べません。
+          </span>
         </label>
         <label>
           X（旧Twitter）の ID
@@ -120,6 +127,9 @@ let regToken = null;
 
 /** ステップ1を通過したかどうか */
 let codeVerified = false;
+
+/** getSignupClubs の結果（カテゴリ別のクラブ一覧） */
+let clubOptions = null;
 
 /**
  * HTML エスケープ。
@@ -311,7 +321,7 @@ async function loadMySignup() {
       '<p class="muted note-sm">内容を直したい場合は、下のフォームから出し直せます。' +
       '承認されるまでは何度でも上書きできます。</p>'
     );
-    showForm(d);
+    await showForm(d);
     return;
   }
 
@@ -320,7 +330,7 @@ async function loadMySignup() {
       '<p class="form-msg msg-error">この申請は見送りとなりました。' +
       '事情が変わった場合は、下のフォームから再度申請できます。</p>'
     );
-    showForm(d);
+    await showForm(d);
     return;
   }
 
@@ -332,15 +342,78 @@ async function loadMySignup() {
  *
  * @param {Object} d getMySignup の結果
  */
-function showForm(d) {
+async function showForm(d) {
   if (!codeVerified) return;
 
   document.getElementById('rg-step-form').style.display = 'block';
   document.getElementById('rg-account').textContent = 'ログイン中: ' + d.email;
 
   if (d.display_name) document.getElementById('rg-name').value = d.display_name;
-  if (d.team_name) document.getElementById('rg-team').value = d.team_name;
   if (d.x_id) document.getElementById('rg-x').value = '@' + d.x_id;
+
+  await loadClubs(d.team_name || '');
+}
+
+/**
+ * 選べるクラブを取得して、カテゴリ→クラブの2段プルダウンを組む。
+ *
+ * 使用済みのクラブは選択肢に出すが disabled にして理由を添える。
+ * 「無い」より「埋まっている」と分かるほうが納得しやすいため。
+ *
+ * @param {string} [selected] 既に申請済みのクラブ名
+ */
+async function loadClubs(selected) {
+  const res = await callGas('getSignupClubs', {});
+  if (!res.ok) {
+    setMsg('rg-result', false, 'クラブ一覧を取得できませんでした: ' + res.error);
+    return;
+  }
+
+  clubOptions = res.data;
+
+  const catSel = document.getElementById('rg-category');
+  catSel.innerHTML = clubOptions.categories
+    .map((c) => '<option value="' + esc(c) + '">' + esc(c) + '</option>')
+    .join('');
+
+  // 申請済みのクラブがあれば、そのカテゴリを初期表示にする
+  if (selected) {
+    const cat = clubOptions.categories.find((c) =>
+      clubOptions.clubs[c].some((x) => x.club_name === selected)
+    );
+    if (cat) catSel.value = cat;
+  }
+
+  catSel.onchange = () => renderClubSelect('');
+  renderClubSelect(selected);
+
+  document.getElementById('rg-team-hint').textContent =
+    '空きのあるクラブ: ' + clubOptions.available + ' / ' + clubOptions.total +
+    '（使用中のクラブは選べません）';
+}
+
+/**
+ * 選択中カテゴリのクラブでプルダウンを組み直す。
+ *
+ * @param {string} [selected]
+ */
+function renderClubSelect(selected) {
+  const cat = document.getElementById('rg-category').value;
+  const list = (clubOptions && clubOptions.clubs[cat]) || [];
+  const sel = document.getElementById('rg-team');
+
+  sel.innerHTML =
+    '<option value="">クラブを選択</option>' +
+    list
+      .map((c) => {
+        // 自分が既に申請しているクラブは taken にならないので選べる
+        const label = c.taken ? c.club_name + '（' + c.taken_reason + '）' : c.club_name;
+        return '<option value="' + esc(c.club_name) + '"' +
+          (c.taken ? ' disabled' : '') +
+          (c.club_name === selected ? ' selected' : '') +
+          '>' + esc(label) + '</option>';
+      })
+      .join('');
 }
 
 /**
@@ -361,8 +434,12 @@ async function onSubmitSignup() {
   const name = document.getElementById('rg-name').value.trim();
   const team = document.getElementById('rg-team').value.trim();
 
-  if (!name || !team) {
-    setMsg('rg-result', false, '表示名とチーム名は必須です。');
+  if (!name) {
+    setMsg('rg-result', false, '表示名を入力してください。');
+    return;
+  }
+  if (!team) {
+    setMsg('rg-result', false, 'チームを選んでください。');
     return;
   }
 
