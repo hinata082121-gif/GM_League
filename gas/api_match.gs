@@ -329,6 +329,10 @@ function _validateMatchPayload(p, selfId) {
   if (p.homeScore < 0 || p.awayScore < 0) return "スコアに負の数は入力できません。";
 
   // 同一カード重複チェック（順不同。差戻は再申請できる）
+  //
+  // ⚠️ leg も比較に含める。2レグ制のトーナメントでは
+  //    1stレグと2ndレグが「同じ節・同じ対戦（home/away 反転）」になるため、
+  //    leg を見ないと 2ndレグが重複と誤判定されて登録できなくなる。
   var dup = null;
   getSheetData("Matches").forEach(function (m) {
     if (dup) return;
@@ -336,6 +340,7 @@ function _validateMatchPayload(p, selfId) {
     if (_str(m.season_id) !== p.seasonId) return;
     if (_str(m.stage) !== p.stage) return;
     if (_str(m.round) !== p.round) return;
+    if (_normalizeLeg(m.leg) !== _normalizeLeg(p.leg)) return;
     if (_str(m.status) === MATCH_REJECTED) return;
 
     var h = _str(m.home_team);
@@ -349,7 +354,8 @@ function _validateMatchPayload(p, selfId) {
   if (dup) {
     return (
       "同じ節・同じ対戦の試合が既に登録されています（状態: " +
-      _str(dup.status) + "）。差し戻されたものは再申請できます。"
+      _str(dup.status) + "）。差し戻されたものは再申請できます。" +
+      (p.stage === STAGE_TOURNAMENT ? "2レグ制の場合はレグ（1st / 2nd）を指定してください。" : "")
     );
   }
 
@@ -426,6 +432,18 @@ function _validateMatchPayload(p, selfId) {
   }
 
   return null;
+}
+
+/**
+ * leg の表記ゆれを吸収する。
+ * 空文字・"-"・未入力はすべて「レグ指定なし」として同一に扱う。
+ *
+ * @param {*} v
+ * @returns {string}
+ */
+function _normalizeLeg(v) {
+  var s = _str(v);
+  return s === "-" ? "" : s;
 }
 
 /**

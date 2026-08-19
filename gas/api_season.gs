@@ -585,3 +585,185 @@ function _carryOverRosters(seasonId, nextSeasonId, at) {
 
   return rows.length;
 }
+
+// =============================================================================
+// シーズンの作成・更新（Phase 8）
+// =============================================================================
+
+/**
+ * シーズンを作成または更新する。主催者専用。
+ *
+ * closeSeason の引継ぎ先を用意するには、先に次シーズンを作っておく必要がある。
+ * シートを直接編集しなくても済むように用意した。
+ *
+ * payload: {
+ *   season_id?, name, status?, leg_enabled?,
+ *   window1_open_at?, window2_open_at?
+ * }
+ *
+ * 日時は "2026-09-01T12:00" 形式の文字列、または空文字で受け取る。
+ *
+ * @param {string} token
+ * @param {Object} payload
+ * @returns {{ ok: boolean, data?: Object, error?: string }}
+ */
+function upsertSeason(token, payload) {
+  var auth = _requireOrganizer(token);
+  if (!auth.ok) return auth;
+
+  var name = _str(payload.name);
+  if (!name) return { ok: false, error: "シーズン名は必須です。" };
+
+  var status = _str(payload.status) || "準備中";
+  try {
+    _assertEnum("status", status, SEASON_STATUSES);
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+
+  var w1 = _parseDateInput(payload.window1_open_at);
+  var w2 = _parseDateInput(payload.window2_open_at);
+
+  if (payload.window1_open_at && !w1) {
+    return { ok: false, error: "第1次移籍市場の日時が読み取れません。" };
+  }
+  if (payload.window2_open_at && !w2) {
+    return { ok: false, error: "第2次移籍市場の日時が読み取れません。" };
+  }
+  if (w1 && w2 && w2 <= w1) {
+    return { ok: false, error: "第2次移籍市場は第1次より後の日時にしてください。" };
+  }
+
+  var seasonId = _str(payload.season_id);
+
+  return withLock(function () {
+    if (seasonId && findRow("Seasons", "season_id", seasonId)) {
+      updateRow("Seasons", "season_id", seasonId, {
+        name:            name,
+        status:          status,
+        leg_enabled:     _toBool(payload.leg_enabled),
+        window1_open_at: w1 || "",
+        window2_open_at: w2 || "",
+      });
+      return { ok: true, data: { season_id: seasonId, created: false } };
+    }
+
+    if (!seasonId) seasonId = generateId("s_");
+
+    appendRow("Seasons", {
+      season_id:       seasonId,
+      name:            name,
+      status:          status,
+      leg_enabled:     _toBool(payload.leg_enabled),
+      window1_open_at: w1 || "",
+      window2_open_at: w2 || "",
+      created_at:      now(),
+    });
+
+    return { ok: true, data: { season_id: seasonId, created: true } };
+  });
+}
+
+/**
+ * 画面から来た日時文字列を Date に変換する。
+ * 空・不正な場合は null。
+ *
+ * @param {*} v
+ * @returns {Date|null}
+ */
+function _parseDateInput(v) {
+  if (v instanceof Date) return v;
+  var s = _str(v);
+  if (!s) return null;
+
+  // "2026-09-01T12:00" / "2026-09-01 12:00" / "2026/09/01 12:00" に対応
+  var m = s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})(?:[T ](\d{1,2}):(\d{2}))?/);
+  if (!m) return null;
+
+  var d = new Date(
+    parseInt(m[1], 10),
+    parseInt(m[2], 10) - 1,
+    parseInt(m[3], 10),
+    m[4] ? parseInt(m[4], 10) : 0,
+    m[5] ? parseInt(m[5], 10) : 0,
+    0
+  );
+  return isNaN(d.getTime()) ? null : d;
+}
+
+// =============================================================================
+// 過去大会記録（Phase 8）
+// =============================================================================
+
+/**
+ * 過去シーズンの記録を返す。
+ *
+ * 各シーズンについて、最終順位・優勝チーム・得点王・試合数をまとめる。
+ * 終了していないシーズンも現時点の集計として返す。
+ *
+ * payload: { include_ongoing?: boolean }
+ *
+ * @param {string} token
+ * @param {Object} payload
+ * @returns {{ ok: boolean, data?: Object[], error?: string }}
+ */
+function getHistory(token, payload) {
+  var auth = _requireUser(token);
+  if (!auth.ok) return auth;
+
+  var includeOngoing = _toBool(payload.include_ongoing);
+
+  var seasons = getSheetData("Seasons").map(function (s) {
+    return {
+      season_id: _str(s.season_id),
+      name:      _str(s.name),
+      status:    _str(s.status),
+      created_at: _iso(s.created_at),
+    };
+  });
+
+  var result = [];
+
+  seasons.forEach(function (s) {
+    if (!includeOngoing && s.status !== "終了") return;
+
+    var standings = getStandings(token, { season_id: s.season_id });
+    var rankings = getRankings(token, { season_id: s.season_id });
+    var tournament = getTournament(token, { season_id: s.season_id });
+
+    var table = standings.ok ? standings.data.table : [];
+    var champions = table.filter(function (r) { return r.rank === 1 && r.played > 0; });
+
+    var topScorers = [];
+    if (rankings.ok && rankings.data.goals.length > 0) {
+      topScorers = rankings.data.goals.filter(function (g) { return g.rank === 1; });
+    }
+
+    // トーナメントの優勝は「最後のタイの勝者」とみなす
+    var tournamentWinner = null;
+    if (tournament.ok && tournament.data.ties.length > 0) {
+      var last = tournament.data.ties[tournament.data.ties.length - 1];
+      if (last.winner) {
+        tournamentWinner = { team_id: last.winner, team_name: last.winner_name, round: last.round };
+      }
+    }
+
+    result.push({
+      season_id:   s.season_id,
+      name:        s.name,
+      status:      s.status,
+      match_count: standings.ok ? standings.data.match_count : 0,
+      league_champions: champions.map(function (c) {
+        return { team_id: c.team_id, team_name: c.team_name, points: c.points, gd: c.gd };
+      }),
+      top_scorers: topScorers.map(function (g) {
+        return { player_id: g.player_id, name: g.name, team_name: g.team_name, goals: g.goals };
+      }),
+      tournament_winner: tournamentWinner,
+      table: table,
+    });
+  });
+
+  result.reverse();
+  return { ok: true, data: result };
+}
