@@ -99,6 +99,7 @@
         <button class="tab-btn" data-tab="protect">プロテクト</button>
         <button class="tab-btn" data-tab="match">試合</button>
         <button class="tab-btn" data-tab="stats">順位・記録</button>
+        <button class="tab-btn" id="tab-claims" data-tab="claims">補填の選択</button>
         <button class="tab-btn" id="tab-approval" data-tab="approval" style="display:none;">
           エントリー承認
         </button>
@@ -391,6 +392,30 @@
         </div>
       </div>
 
+      <!-- ===== 補填の選択（参加者） ===== -->
+      <div class="tab-panel" data-panel="claims" style="display:none;">
+        <div class="card">
+          <h2>補填の選択</h2>
+          <p class="muted">
+            現実の移籍や、他チームの辞退で使えなくなった選手がいる場合、
+            <strong>払い戻し</strong>か<strong>自クラブの選手との入れ替え</strong>を選べます。
+            入金・入れ替えは選択期限の翌日にまとめて行われます。
+          </p>
+          <div class="filter-row">
+            <label>
+              シーズン
+              <select id="cl-season"></select>
+            </label>
+            <label id="cl-team-wrap" style="display:none;">
+              チーム（主催者は代理で選べます）
+              <select id="cl-team"></select>
+            </label>
+          </div>
+          <div id="cl-status"></div>
+          <div id="cl-list"></div>
+        </div>
+      </div>
+
       <!-- ===== 参加登録承認（主催者限定） ===== -->
       <div class="tab-panel" data-panel="signup" style="display:none;">
         <div class="card">
@@ -458,6 +483,62 @@
             </div>
           </div>
           <div id="sp-report"></div>
+        </div>
+
+        <div class="card">
+          <h2>補填の請求と精算</h2>
+          <p class="muted">
+            現実移籍・辞退・チーム変更で立った請求の一覧です。
+            <strong>選択期限を過ぎてから精算</strong>すると、払い戻しの入金と入れ替えの受け渡しが行われます。
+          </p>
+          <div class="form-grid">
+            <label>
+              選択期限
+              <input type="datetime-local" id="cs-deadline" />
+              <span class="unit-hint">この日時までに参加者が選びます。翌日に精算してください。</span>
+            </label>
+            <div class="form-actions">
+              <button type="button" id="cs-save-deadline" class="btn btn-secondary">期限を保存</button>
+              <span id="cs-deadline-result" class="form-msg"></span>
+            </div>
+          </div>
+          <div id="cs-summary"></div>
+          <div id="cs-list"></div>
+          <div class="form-actions">
+            <button type="button" id="cs-settle" class="btn btn-danger">期限後の精算を実行</button>
+            <span id="cs-result" class="form-msg"></span>
+          </div>
+          <div id="cs-report"></div>
+        </div>
+
+        <div class="card">
+          <h2>辞退・チーム変更</h2>
+          <p class="muted">
+            参加者が抜けたり使用クラブを変えたりすると、<strong>そのクラブの選手は全員が大会の対象外</strong>になります。
+            その選手を保有している他チームには自動で補填の請求が立ちます。
+          </p>
+          <div class="form-grid">
+            <label>
+              対象チーム
+              <select id="wd-team"></select>
+            </label>
+            <label>
+              種別
+              <select id="wd-kind">
+                <option value="辞退">辞退（大会から抜ける）</option>
+                <option value="チーム変更">チーム変更（別クラブで続ける）</option>
+              </select>
+            </label>
+            <label id="wd-club-wrap" style="display:none;">
+              変更後のクラブ
+              <select id="wd-club"></select>
+            </label>
+            <div class="form-actions">
+              <button type="button" id="wd-submit" class="btn btn-danger">実行する</button>
+              <span id="wd-result" class="form-msg"></span>
+            </div>
+          </div>
+          <div id="wd-report"></div>
         </div>
 
         <div class="card">

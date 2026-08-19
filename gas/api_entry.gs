@@ -98,12 +98,19 @@ function getEntryStatus(token, payload) {
   var myIds = {};
   mine.forEach(function (m) { myIds[m.player_id] = true; });
 
-  // 選択可能な選手 = eligible かつ（他チーム未確保 or 自チーム保持中）
+  // 選択可能な選手 = 自クラブの実在選手 かつ eligible かつ（他チーム未確保 or 自チーム保持中）
+  //
+  // チーム名は実在の J クラブ名そのもの。エントリーは自分のクラブの選手からだけ選ぶ。
+  // 大会の選手プールが「参加クラブの選手の集合」になるので、
+  // クラブが大会から抜けたときの扱いを現実移籍と同じ理屈で書ける（SPEC.md §6.5）。
+  var myClub = _str(team.name);
+
   var available = [];
   getSheetData("Players").forEach(function (p) {
     var pid = _str(p.player_id);
     if (!pid) return;
     if (!_toBool(p.eligible)) return;
+    if (_str(p.real_club) !== myClub) return;
 
     var owner = claimed[pid];
     if (owner && owner !== teamId) return;
@@ -123,6 +130,12 @@ function getEntryStatus(token, payload) {
 
   var required = _requiredCount(kind, mine.length);
 
+  // 自クラブの選手が足りないと 28 名を選べない。先に気づけるようにする
+  var clubShortage = kind === "新規" && available.length < required
+    ? myClub + " の選択可能な選手が " + available.length + " 名しかいません（必要 " +
+      required + " 名）。主催者に選手マスタの確認を依頼してください。"
+    : "";
+
   return {
     ok: true,
     data: {
@@ -140,6 +153,8 @@ function getEntryStatus(token, payload) {
       selected_count: mine.length,
       available:      available,
       available_count: available.length,
+      my_club:        myClub,
+      club_shortage:  clubShortage,
     },
   };
 }
@@ -406,6 +421,24 @@ function _submitNewTeam(seasonId, teamId, playerIds, entry) {
     return {
       ok: false,
       error: "エントリー対象外（eligible=false）の選手が含まれています: " + notEligible.join(", "),
+    };
+  }
+
+  // 自クラブの選手だけを選べる。画面のプルダウンに頼らずここでも確認する
+  var myTeam = findRow("Teams", "team_id", teamId);
+  var myClub = myTeam ? _str(myTeam.name) : "";
+  var otherClub = [];
+  ids.forEach(function (pid) {
+    var p = playerMap[pid];
+    if (p && _str(p.real_club) !== myClub) {
+      otherClub.push(_str(p.name) + "（" + _str(p.real_club) + "）");
+    }
+  });
+
+  if (otherClub.length > 0) {
+    return {
+      ok: false,
+      error: "エントリーは " + myClub + " の選手からのみ選べます。対象外: " + otherClub.join(", "),
     };
   }
 

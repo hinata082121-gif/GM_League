@@ -1097,3 +1097,32 @@ code {
   margin: 10px 0;
   font-size: 0.9rem;
 }
+
+/* ===== 補填の選択 ===== */
+
+.claim-card {
+  margin: 10px 0;
+  padding: 12px 14px;
+}
+
+.claim-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.claim-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #eef1f6;
+}
+
+.claim-actions select {
+  min-width: 200px;
+}

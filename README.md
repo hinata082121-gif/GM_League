@@ -6,7 +6,7 @@ J リーグ選手限定の eFootball 私設大会を運営するための集計�
 - **フロント**：GitHub Pages（HTML/CSS/Vanilla JS・ビルド不要）
 - **認証**：Google Identity Services
 - **バックエンド**：Google Apps Script Web App
-- **DB**：Google Sheets（1シート = 1テーブル・全18シート）
+- **DB**：Google Sheets（1シート = 1テーブル・全19シート）
 
 公開 URL：https://hinata082121-gif.github.io/GM_League/
 
@@ -42,7 +42,7 @@ J リーグ選手限定の eFootball 私設大会を運営するための集計�
 │   ├─ auth.gs         # トークン検証・whoami
 │   ├─ config.gs       # Config シート読み取りヘルパ
 │   ├─ lib.gs          # Sheets 読み書きヘルパ・LockService ラッパ
-│   ├─ setupSheets.gs  # 全18シート作成・Config / Clubs 初期値投入（冪等）
+│   ├─ setupSheets.gs  # 全19シート作成・Config / Clubs 初期値投入（冪等）
 │   ├─ api_master.gs     # Phase 1: マスタ & 閲覧
 │   ├─ api_entry.gs      # Phase 2: エントリー提出・承認
 │   ├─ api_transfer.gs   # Phase 3: 移籍
@@ -53,7 +53,8 @@ J リーグ選手限定の eFootball 私設大会を運営するための集計�
 │   ├─ api_division.gs   # ディビジョン割り当て・GMスーパーカップ
 │   ├─ api_signup.gs     # 参加登録（合言葉・申請・承認）
 │   ├─ api_public.gs     # 認証不要の公開データ
-│   ├─ api_realtransfer.gs # 現実移籍の反映（eligible解除＋補填金）
+│   ├─ api_realtransfer.gs # 現実移籍・辞退・チーム変更の反映
+│   ├─ api_claims.gs     # 補填の請求（払い戻し / 入れ替え）と精算
 │   └─ seed.gs         # テストデータ投入・削除（手動実行）
 ├─ SPEC.md           # 確定仕様（データモデル・経済ルール・API 一覧・画面一覧）
 ├─ OPERATION.md      # 主催者向け運用マニュアル
@@ -92,6 +93,7 @@ J リーグ選手限定の eFootball 私設大会を運営するための集計�
 | `api_signup` | `gas/api_signup.gs` |
 | `api_public` | `gas/api_public.gs` |
 | `api_realtransfer` | `gas/api_realtransfer.gs` |
+| `api_claims` | `gas/api_claims.gs` |
 | `seed` | `gas/seed.gs` |
 
 > 貼り付け後、**行数がリポジトリ側と一致しているか必ず確認する。**
@@ -102,7 +104,7 @@ J リーグ選手限定の eFootball 私設大会を運営するための集計�
 1. エディタ上部の関数選択プルダウンで **`setupAll`** を選ぶ
 2. **▶ 実行** をクリック
 3. 初回のみ権限承認 → 「詳細」→「GMリーグ管理（安全ではないページ）に移動」→「許可」
-4. 「実行ログ」で 18 シート作成・Config の投入・Clubs 60 件の投入を確認
+4. 「実行ログ」で 19 シート作成・Config の投入・Clubs 60 件の投入を確認
 
 > `setupAll` は既存シートを削除しない（冪等）。ヘッダーを変えたい場合は
 > 対象シートを手動削除してから再実行する。
@@ -372,6 +374,13 @@ GAS エディタの関数プルダウンから選んで実行する。どちら�
 | `getRealTransferTargets` | 主催者 | `season_id`, `keyword?`, `only_owned?` | 現実移籍の反映対象と補填額 |
 | `applyRealTransfers` | 主催者 | `season_id`, `player_ids[]`, `note?` | 一括で eligible=false にして補填金を即時計上 |
 | `restorePlayerEligible` | 主催者 | `player_id` | 誤って外した選手を戻す |
+| `withdrawTeam` | 主催者 | `season_id`, `team_id`, `kind`, `new_club?` | 辞退 / チーム変更 |
+| `getMyClaims` | team | `season_id`, `team_id?` | 自分の補填請求と入れ替え候補 |
+| `chooseClaim` | team | `claim_id`, `choice`, `replacement_player_id?` | 払い戻し / 入れ替えを選ぶ |
+| `listClaims` | 主催者 | `season_id`, `status?` | 請求一覧 |
+| `overrideClaim` | 主催者 | `claim_id`, `choice`, `replacement_player_id?` | 代行入力（期限後も可） |
+| `voidClaim` | 主催者 | `claim_id` | 請求の無効化 |
+| `settleClaims` | 主催者 | `season_id`, `force?` | 期限後の一括精算 |
 | `getSeasonDivisions` | 全員 | `season_id` | ディビジョン割り当ての現状 |
 | `setSeasonDivisions` | 主催者 | `season_id`, `assignments:[{team_id,division}]` | GM1 / GM2 の割り当て |
 | `getSuperCup` | 全員 | `season_id` | スーパーカップの設定と前季王者の候補 |
@@ -391,9 +400,15 @@ GAS エディタの関数プルダウンから選んで実行する。どちら�
 >
 > 配信料は**試合結果と無関係**に、`SuperCup.streamed` が真なら出場2チームへ支給する。
 >
-> **現実移籍（§6.5）**: `eligible=false` の選手はエントリー・移籍・引継ぎの3か所で締め出す。
-> 反映と同時に補填金（獲得額×80%）を計上する。分けると計上漏れが起きるため。
-> 実際に離脱するのは `closeSeason` の引継ぎなので、**効くのは翌シーズンから**。
+> **選手プール（§6.5）**: エントリーは**自クラブの実在選手からのみ**。
+> 大会の選手プールは「参加クラブの選手の集合」になる。
+>
+> 参加クラブでなくなったクラブの選手は `eligible=false` になり、
+> エントリー・移籍・引継ぎの3か所で締め出される。**効くのは翌シーズンから**。
+>
+> **補填はその場で入金しない。** 請求（Claims）を立て、参加者が
+> 払い戻しか入れ替えかを選び、**選択期限を過ぎてから** `settleClaims` で精算する。
+> 先に入金すると、使い切ってから入れ替えを選ばれて二重取りになるため。
 >
 > 引継ぎ先シーズンは**主催者が先に作成**しておく。closeSeason は自動生成しない。
 > 引継ぎ時は `acquisition_type` と `acquired_cost` を保持する（補填金の母数になるため）。

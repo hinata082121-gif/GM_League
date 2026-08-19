@@ -607,7 +607,7 @@ function _carryOverRosters(seasonId, nextSeasonId, at, report) {
  *
  * payload: {
  *   season_id?, name, status?, leg_enabled?,
- *   window1_open_at?, window2_open_at?
+ *   window1_open_at?, window2_open_at?, claim_deadline_at?
  * }
  *
  * 日時は "2026-09-01T12:00" 形式の文字列、または空文字で受け取る。
@@ -643,6 +643,11 @@ function upsertSeason(token, payload) {
     return { ok: false, error: "第2次移籍市場は第1次より後の日時にしてください。" };
   }
 
+  var cd = _parseDateInput(payload.claim_deadline_at);
+  if (payload.claim_deadline_at && !cd) {
+    return { ok: false, error: "補填の選択期限の日時が読み取れません。" };
+  }
+
   var seasonId = _str(payload.season_id);
 
   return withLock(function () {
@@ -653,6 +658,7 @@ function upsertSeason(token, payload) {
         leg_enabled:     _toBool(payload.leg_enabled),
         window1_open_at: w1 || "",
         window2_open_at: w2 || "",
+        claim_deadline_at: cd || "",
       });
       return { ok: true, data: { season_id: seasonId, created: false } };
     }
@@ -666,6 +672,7 @@ function upsertSeason(token, payload) {
       leg_enabled:     _toBool(payload.leg_enabled),
       window1_open_at: w1 || "",
       window2_open_at: w2 || "",
+      claim_deadline_at: cd || "",
       created_at:      now(),
     });
 

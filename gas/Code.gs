@@ -253,6 +253,28 @@ function _route(action, token, payload) {
     case "restorePlayerEligible":
       return restorePlayerEligible(token, payload);
 
+    case "withdrawTeam":
+      return withdrawTeam(token, payload);
+
+    // ---- 補填の請求（払い戻し / 入れ替え）----
+    case "getMyClaims":
+      return getMyClaims(token, payload);
+
+    case "chooseClaim":
+      return chooseClaim(token, payload);
+
+    case "listClaims":
+      return listClaims(token, payload);
+
+    case "overrideClaim":
+      return overrideClaim(token, payload);
+
+    case "voidClaim":
+      return voidClaim(token, payload);
+
+    case "settleClaims":
+      return settleClaims(token, payload);
+
     // ---- ディビジョン & スーパーカップ ----
     case "getSeasonDivisions":
       return getSeasonDivisions(token, payload);

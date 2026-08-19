@@ -227,6 +227,7 @@ function listSeasons(token) {
       leg_enabled:     _toBool(r.leg_enabled),
       window1_open_at: _iso(r.window1_open_at),
       window2_open_at: _iso(r.window2_open_at),
+      claim_deadline_at: _iso(r.claim_deadline_at),
       created_at:      _iso(r.created_at),
     };
   });

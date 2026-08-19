@@ -11,10 +11,12 @@
  *   その反映を1件ずつ手作業でやると計上漏れが起きるため、まとめて行う。
  *
  * ▶ 確定仕様
- *   - eligible=false にした**その場で**補填金を計上する
+ *   - eligible=false にした時点で**補填の請求（Claims）を立てる**
+ *   - 参加者は「払い戻し」か「自クラブの空き選手との入れ替え」を選ぶ
+ *   - **入金は選択期限の翌日**。主催者が settleClaims でまとめて精算する
  *   - 離脱は**翌シーズンから**。今シーズンのスカッドと試合結果には手を触れない
- *   - 補填金は Rosters.acquired_cost × compensation_rate_transfer（既定80%）
- *   - オークション獲得の選手は補填金の対象外（シーズン終了で自動離脱するため）
+ *   - 補填の母数は Rosters.acquired_cost、率は claim_rate_real_transfer（既定80%）
+ *   - オークション獲得の選手は補填の対象外（シーズン終了で自動離脱するため）
  *
  * ⚠️ 設計原則
  *   1. 書き込みは必ず GAS 経由
@@ -50,7 +52,7 @@ function getRealTransferTargets(token, payload) {
   var onlyOwned = _toBool(payload.only_owned);
 
   var teamNames = _teamNameMap();
-  var rate = Number(getConfig("compensation_rate_transfer", 0.8));
+  var rate = Number(getConfig("claim_rate_real_transfer", 0.8));
 
   // このシーズンで在籍中の行を player_id で引けるようにする
   var rosterOf = {};
@@ -148,7 +150,11 @@ function _squadSizeByTeam(seasonId) {
 // =============================================================================
 
 /**
- * 選手をまとめて大会対象外にし、補填金をその場で計上する。
+ * 選手をまとめて大会対象外にし、補填の請求を立てる。
+ *
+ * **入金はここでは行わない。** 参加者が払い戻しか入れ替えかを選び、
+ * 期限の翌日に settleClaims でまとめて精算する。
+ * 先に入金してしまうと、使い切ってから入れ替えを選ばれて二重取りになるため。
  *
  * 今シーズンのスカッドと試合結果は変えない。
  * eligible=false になった選手は closeSeason の引継ぎで離脱するため、
@@ -187,7 +193,7 @@ function applyRealTransfers(token, payload) {
   var note = _str(payload.note);
 
   return withLock(function () {
-    var rate = Number(getConfig("compensation_rate_transfer", 0.8));
+    var rate = Number(getConfig("claim_rate_real_transfer", 0.8));
     var at = now();
 
     // このシーズンの在籍行
@@ -243,17 +249,23 @@ function applyRealTransfers(token, payload) {
         } else if (cost <= 0) {
           entry.reason = "獲得額が0のため補填なし";
         } else {
-          var amount = Math.round(cost * rate);
-          _addBudgetTx(
-            seasonId, teamId, amount, REASON_COMP_TRANSFER,
-            pid + (note ? " " + note : ""), at
+          // ここでは入金しない。参加者が払い戻しか入れ替えかを選ぶための請求を立てる
+          var claim = _createClaim(
+            seasonId, teamId, pid, CLAIM_REASON_TRANSFER, cost, rate, at
           );
-          entry.amount = amount;
-          entry.acquired_cost = cost;
-          compensations.push({
-            team_id: teamId, player_id: pid, name: entry.name,
-            acquired_cost: cost, amount: amount,
-          });
+
+          if (claim) {
+            entry.amount = claim.refund_amount;
+            entry.acquired_cost = cost;
+            entry.claim_id = claim.claim_id;
+            compensations.push({
+              team_id: teamId, player_id: pid, name: entry.name,
+              acquired_cost: cost, amount: claim.refund_amount,
+              claim_id: claim.claim_id,
+            });
+          } else {
+            entry.reason = "既に補填の請求が立っています";
+          }
         }
       } else {
         entry.reason = "どのチームも保有していないため補填なし";
@@ -282,6 +294,7 @@ function applyRealTransfers(token, payload) {
         applied_count:  applied.length,
         compensations:  compensations,
         total_amount:   total,
+        note:           "補填はまだ入金されていません。参加者の選択後、期限の翌日に精算してください。",
         skipped:        skipped,
         rate:           rate,
       },
@@ -292,8 +305,8 @@ function applyRealTransfers(token, payload) {
 /**
  * 誤って対象外にした選手を戻す。
  *
- * **補填金は自動では取り消さない。** 予算の増減は履歴として残す方針のため、
- * 打ち消すなら主催者が罰金で相殺する（何が起きたか BudgetTx に残る）。
+ * **補填の請求は自動では消さない。** 不要になった請求は voidClaim で無効にする。
+ * 既に精算まで済んでいる場合は、罰金で相殺する（何が起きたか BudgetTx に残る）。
  *
  * payload: { player_id }
  *
@@ -323,8 +336,178 @@ function restorePlayerEligible(token, payload) {
       data: {
         player_id: pid,
         name: _str(player.name),
-        note: "補填金は取り消していません。必要なら罰金で相殺してください。",
+        note: "補填の請求は残っています。不要なら請求一覧から無効にしてください。",
       },
     };
   });
+}
+
+// =============================================================================
+// 辞退・チーム変更
+// =============================================================================
+
+/**
+ * 大会から抜けるクラブを処理する。
+ *
+ * 選手プールは「参加クラブの選手の集合」なので、クラブが抜けると
+ * **そのクラブの選手は全員使えなくなる**。現実移籍と同じ扱い。
+ *
+ * 辞退       — チームを active=false にし、スカッドを離脱させる
+ * チーム変更 — チーム名を新しいクラブに変え、旧クラブの選手を手放す
+ *
+ * どちらの場合も、**旧クラブの選手を保有している他チーム**に補填の請求が立つ。
+ * 抜ける本人には請求を立てない（自分の意思で抜けるため）。
+ *
+ * payload: { season_id, team_id, kind: '辞退' | 'チーム変更', new_club?, note? }
+ *
+ * @param {string} token
+ * @param {Object} payload
+ * @returns {{ ok: boolean, data?: Object, error?: string }}
+ */
+function withdrawTeam(token, payload) {
+  var auth = _requireOrganizer(token);
+  if (!auth.ok) return auth;
+
+  var seasonId = _str(payload.season_id);
+  var teamId = _str(payload.team_id);
+  var kind = _str(payload.kind);
+
+  if (!seasonId) return { ok: false, error: "season_id は必須です。" };
+  if (!teamId) return { ok: false, error: "team_id は必須です。" };
+
+  try {
+    _assertEnum("kind", kind, [CLAIM_REASON_WITHDRAW, CLAIM_REASON_CLUB_CHANGE]);
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+
+  var newClub = _str(payload.new_club);
+  if (kind === CLAIM_REASON_CLUB_CHANGE && !newClub) {
+    return { ok: false, error: "変更後のクラブを選んでください。" };
+  }
+
+  return withLock(function () {
+    var team = findRow("Teams", "team_id", teamId);
+    if (!team) return { ok: false, error: "チームが見つかりません。" };
+
+    var oldClub = _str(team.name);
+    if (!oldClub) return { ok: false, error: "チーム名が空です。" };
+
+    if (kind === CLAIM_REASON_CLUB_CHANGE) {
+      if (newClub === oldClub) {
+        return { ok: false, error: "同じクラブへは変更できません。" };
+      }
+
+      var clubError = _validateSignupClub(newClub, null);
+      if (clubError) return { ok: false, error: clubError };
+    }
+
+    var rate = Number(getConfig("claim_rate_withdrawal", 0.9));
+    var at = now();
+
+    // 1. 旧クラブの選手を大会対象外にする
+    var affectedPlayers = [];
+    getSheetData("Players").forEach(function (p) {
+      if (_str(p.real_club) !== oldClub) return;
+      if (!_toBool(p.eligible)) return;
+      affectedPlayers.push(_str(p.player_id));
+      updateRow("Players", "player_id", _str(p.player_id), { eligible: false });
+    });
+
+    // 2. 他チームが保有している分に請求を立てる
+    var claims = [];
+    var teamNames = _teamNameMap();
+
+    getSheetData("Rosters").forEach(function (r) {
+      if (_str(r.season_id) !== seasonId) return;
+      if (_str(r.status) !== ROSTER_ACTIVE) return;
+
+      var holder = _str(r.team_id);
+      if (holder === teamId) return;               // 抜ける本人には立てない
+
+      var pid = _str(r.player_id);
+      if (affectedPlayers.indexOf(pid) === -1) return;
+
+      if (_str(r.acquisition_type) === METHOD_AUCTION) return;
+
+      var cost = _num(r.acquired_cost);
+      if (cost <= 0) return;
+
+      var claim = _createClaim(seasonId, holder, pid, kind, cost, rate, at);
+      if (claim) {
+        claims.push({
+          claim_id: claim.claim_id,
+          team_id: holder,
+          team_name: teamNames[holder] || holder,
+          player_id: pid,
+          amount: claim.refund_amount,
+        });
+      }
+    });
+
+    // 3. チーム自体の処理
+    var released = 0;
+
+    if (kind === CLAIM_REASON_WITHDRAW) {
+      updateRow("Teams", "team_id", teamId, { active: false });
+      released = _releaseTeamRosters(seasonId, teamId);
+    } else {
+      updateRow("Teams", "team_id", teamId, { name: newClub, kind: "新規" });
+      // 旧クラブの選手だけ手放す。移籍で獲得した他クラブの選手は残す
+      released = _releaseTeamRosters(seasonId, teamId, affectedPlayers);
+    }
+
+    var total = 0;
+    claims.forEach(function (c) { total += c.amount; });
+
+    return {
+      ok: true,
+      data: {
+        team_id:        teamId,
+        kind:           kind,
+        old_club:       oldClub,
+        new_club:       kind === CLAIM_REASON_CLUB_CHANGE ? newClub : "",
+        ineligible:     affectedPlayers.length,
+        released:       released,
+        claims:         claims,
+        claim_total:    total,
+        note:           "補填はまだ入金されていません。参加者の選択後、期限の翌日に精算してください。",
+      },
+    };
+  });
+}
+
+/**
+ * チームの在籍行を離脱にする。
+ *
+ * @param {string} seasonId
+ * @param {string} teamId
+ * @param {string[]} [onlyPlayerIds] 指定するとその選手だけ離脱させる
+ * @returns {number} 離脱させた行数
+ */
+function _releaseTeamRosters(seasonId, teamId, onlyPlayerIds) {
+  var sheet = getSheet("Rosters");
+  var values = sheet.getDataRange().getValues();
+  if (values.length < 2) return 0;
+
+  var headers = values[0];
+  var iSeason = headers.indexOf("season_id");
+  var iTeam = headers.indexOf("team_id");
+  var iPlayer = headers.indexOf("player_id");
+  var iStatus = headers.indexOf("status");
+
+  var count = 0;
+
+  for (var i = 1; i < values.length; i++) {
+    if (String(values[i][iSeason]) !== seasonId) continue;
+    if (String(values[i][iTeam]) !== teamId) continue;
+    if (String(values[i][iStatus]) !== ROSTER_ACTIVE) continue;
+
+    if (onlyPlayerIds && onlyPlayerIds.indexOf(String(values[i][iPlayer])) === -1) continue;
+
+    sheet.getRange(i + 1, iStatus + 1).setValue(ROSTER_LEFT);
+    count++;
+  }
+
+  return count;
 }

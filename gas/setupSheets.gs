@@ -75,7 +75,7 @@ function setupAll() {
 // =============================================================================
 
 /**
- * 全18シートの名前・ヘッダー配列・SPEC参照を返す。
+ * 全19シートの名前・ヘッダー配列・SPEC参照を返す。
  *
  * カラム名は SPEC.md §4 の表の「カラム」列と完全一致させる。
  * ここを変更した場合は lib.gs の getSheetData / appendRow も影響を受ける。
@@ -108,6 +108,7 @@ function _getSheetDefinitions() {
         "leg_enabled",      // bool      トーナメント2ndレグ制を使うか
         "window1_open_at",  // datetime  第1次移籍市場 開幕日時
         "window2_open_at",  // datetime  第2次移籍市場 開幕日時
+        "claim_deadline_at",// datetime  補填の選択期限。翌日に精算する
         "created_at",       // datetime
       ],
     },
@@ -305,6 +306,28 @@ function _getSheetDefinitions() {
       ],
     },
     {
+      // §4.19 Claims ─ 補填の請求（払い戻し / 入れ替え）
+      name: "Claims",
+      spec: "SPEC.md §4.19",
+      headers: [
+        "claim_id",       // string  主キー
+        "season_id",      // string  この請求が属するシーズン
+        "team_id",        // string  補填を受けるチーム
+        "player_id",      // string  使えなくなった選手
+        "reason",         // enum    大会外移籍 / 辞退 / チーム変更
+        "base_cost",      // number  補填の母数（Rosters.acquired_cost）
+        "rate",           // number  補填率（0.8 / 0.9）
+        "refund_amount",  // number  払い戻しを選んだ場合の金額
+        "choice",         // enum    未選択 / 払い戻し / 入れ替え
+        "replacement_id", // string  入れ替えで受け取る選手
+        "status",         // enum    選択待ち / 確定 / 精算済 / 無効
+        "created_at",     // datetime
+        "chosen_at",      // datetime  参加者が選んだ日時
+        "chosen_by",      // string    選んだ user_id（主催者代行もありうる）
+        "settled_at",     // datetime  精算した日時
+      ],
+    },
+    {
       // §4.18 Signups ─ 参加登録の申請
       name: "Signups",
       spec: "SPEC.md §4.18",
@@ -365,6 +388,9 @@ function _setupConfig() {
     ["signup_code",                 "",          "参加登録の合言葉（空のままだと登録を受け付けない）"],
     ["signup_open",                 false,       "参加登録の受付中フラグ"],
     ["signup_club_categories",      "J1,J2",     "参加登録で選べるクラブのカテゴリ（Clubs には J3 も残す）"],
+    ["claim_rate_real_transfer",    0.80,        "補填率（現実移籍）獲得額×80%"],
+    ["claim_rate_withdrawal",       0.90,        "補填率（辞退・チーム変更）獲得額×90%"],
+    ["claim_default_choice",        "払い戻し",  "期限までに選ばれなかった請求の既定"],
 
     ["two_division_min_teams",      15,          "二部制にできる最小チーム数"],
 

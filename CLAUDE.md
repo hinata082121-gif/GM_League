@@ -114,7 +114,7 @@ config.js
 │   ├─ auth.gs         # トークン検証・whoami
 │   ├─ config.gs       # Config シート読み取りヘルパ
 │   ├─ lib.gs          # Sheets 読み書きヘルパ・LockService ラッパ
-│   ├─ setupSheets.gs  # 全18シート作成・Config / Clubs 初期値投入（冪等）
+│   ├─ setupSheets.gs  # 全19シート作成・Config / Clubs 初期値投入（冪等）
 │   ├─ api_master.gs   # Phase 1: マスタ & 閲覧
 │   ├─ api_entry.gs    # Phase 2: エントリー提出・承認
 │   ├─ api_transfer.gs # Phase 3: 移籍（コスト算出・承認・オークション）
@@ -125,7 +125,8 @@ config.js
 │   ├─ api_division.gs # ディビジョン割り当て・GMスーパーカップ
 │   ├─ api_signup.gs   # 参加登録（合言葉・申請・承認）
 │   ├─ api_public.gs   # 認証不要の公開データ
-│   ├─ api_realtransfer.gs # 現実移籍の反映（eligible解除＋補填金）
+│   ├─ api_realtransfer.gs # 現実移籍・辞退・チーム変更の反映
+│   ├─ api_claims.gs   # 補填の請求（払い戻し / 入れ替え）と精算
 │   └─ seed.gs         # テストデータ投入/削除（手動実行）
 ├─ SPEC.md           # 確定仕様
 ├─ OPERATION.md      # 主催者向け運用マニュアル

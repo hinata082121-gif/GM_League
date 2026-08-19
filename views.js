@@ -136,6 +136,7 @@ function showTab(name) {
   if (name === 'stats') renderStats();
   if (name === 'season') renderSeasonAdmin();
   if (name === 'signup') renderSignupAdmin();
+  if (name === 'claims') renderClaims();
   if (name === 'approval') renderApproval();
   if (name === 'txapproval') renderTxApproval();
   if (name === 'master') renderMaster();
@@ -3233,6 +3234,8 @@ async function loadSeasonAdmin() {
   await loadDivisions();
   await loadSuperCup();
   await loadRealTransfers();
+  await loadClaimAdmin();
+  await loadWithdraw();
 }
 
 // ---------------------------------------------------------------------------
@@ -4324,4 +4327,534 @@ async function onRestorePlayer(playerId) {
 
   setResult('rt-result', true, res.data.name + ' を対象に戻しました。補填金は残っています。');
   await loadRealTransfers();
+}
+
+// ---------------------------------------------------------------------------
+// 画面: 補填の選択（参加者）
+// ---------------------------------------------------------------------------
+
+/** getMyClaims の結果 */
+let myClaimData = null;
+
+/**
+ * 補填の選択画面を初期化する。
+ */
+async function renderClaims() {
+  const seasons = await loadSeasons();
+  fillSelect('cl-season', seasons, 'season_id', 'name');
+
+  const sel = document.getElementById('cl-season');
+
+  // 主催者は代理で他チームの選択を入力できる
+  const teamWrap = document.getElementById('cl-team-wrap');
+  if (currentUser.role === 'organizer') {
+    teamWrap.style.display = '';
+    fillSelect('cl-team', (await loadTeams()).filter((t) => t.active), 'team_id', 'name');
+  } else {
+    teamWrap.style.display = 'none';
+  }
+
+  if (!sel.dataset.bound) {
+    sel.onchange = loadMyClaims;
+    document.getElementById('cl-team').onchange = loadMyClaims;
+    sel.dataset.bound = '1';
+  }
+
+  await loadMyClaims();
+}
+
+/**
+ * 自分（または選択したチーム）の請求を読み込む。
+ */
+async function loadMyClaims() {
+  const seasonId = document.getElementById('cl-season').value;
+  if (!seasonId) return;
+
+  setLoading('cl-list');
+
+  const payload = { season_id: seasonId };
+  if (currentUser.role === 'organizer') {
+    payload.team_id = document.getElementById('cl-team').value;
+  }
+
+  const res = await callApi('getMyClaims', payload);
+  if (!res.ok) {
+    setError('cl-list', '補填の情報を取得できませんでした: ' + res.error);
+    return;
+  }
+
+  myClaimData = res.data;
+  renderClaimStatus();
+  renderClaimList();
+}
+
+/**
+ * 期限と残件数を上部に出す。
+ */
+function renderClaimStatus() {
+  const d = myClaimData;
+  const box = document.getElementById('cl-status');
+
+  if (d.claims.length === 0) {
+    box.innerHTML = '';
+    return;
+  }
+
+  const deadline = d.deadline
+    ? new Date(d.deadline).toLocaleString('ja-JP')
+    : '未設定';
+
+  box.innerHTML = `
+    <div class="${d.window_open ? 'hint-box' : 'warn-box'}">
+      <strong>${esc(d.team_name)}</strong>
+      ／ 選択期限: ${esc(deadline)}
+      ／ 未選択 ${d.pending_count} 件
+      <p class="muted note-sm">
+        ${d.window_open
+          ? '期限までに選んでください。選ばなかった場合は「' + esc(d.default_choice) + '」として扱われます。'
+          : '<strong>選択期限を過ぎています。</strong>変更したい場合は主催者に連絡してください。'}
+      </p>
+    </div>`;
+}
+
+/**
+ * 請求を1件ずつカードで出す。
+ *
+ * 選択肢が2つしかないので、ラジオではなくボタン2つにして
+ * 「押したら決まる」ことが分かるようにする。
+ */
+function renderClaimList() {
+  const d = myClaimData;
+  const box = document.getElementById('cl-list');
+
+  if (d.claims.length === 0) {
+    box.innerHTML = '<p class="muted">補填の対象はありません。</p>';
+    return;
+  }
+
+  const canEdit = (c) =>
+    c.status !== '精算済' && c.status !== '無効' &&
+    (d.window_open || currentUser.role === 'organizer');
+
+  const options = d.candidates
+    .map((c) => '<option value="' + esc(c.player_id) + '">' +
+      esc(c.position + ' ' + c.name) + '</option>')
+    .join('');
+
+  box.innerHTML = d.claims
+    .map((c) => {
+      const settled = c.status === '精算済';
+      const chosen = c.choice !== '未選択';
+
+      const state = settled
+        ? '<span class="tag-ok">精算済（' + esc(c.choice) + '）</span>'
+        : chosen
+          ? '<span class="tag-ok">' + esc(c.choice) + ' で確定</span>'
+          : '<span class="tag-wait">未選択</span>';
+
+      const swapArea = canEdit(c)
+        ? `
+          <div class="claim-actions">
+            <button type="button" class="btn btn-primary btn-sm cl-refund" data-id="${esc(c.claim_id)}">
+              払い戻し ${esc(formatMoney(c.refund_amount))}
+            </button>
+            <span class="muted">または</span>
+            <select class="cl-swap-select" data-id="${esc(c.claim_id)}">
+              <option value="">入れ替える選手を選択</option>
+              ${options}
+            </select>
+            <button type="button" class="btn btn-secondary btn-sm cl-swap" data-id="${esc(c.claim_id)}">
+              入れ替える
+            </button>
+          </div>`
+        : '';
+
+      return `
+        <div class="card claim-card">
+          <div class="claim-head">
+            <strong><span class="pos pos-${esc(c.position)}">${esc(c.position)}</span>
+              ${esc(c.player_name)}</strong>
+            ${state}
+          </div>
+          <p class="muted note-sm">
+            理由: ${esc(c.reason)}
+            ／ 獲得額 ${esc(formatMoney(c.base_cost))} × ${Math.round(c.rate * 100)}%
+            ＝ 払い戻し ${esc(formatMoney(c.refund_amount))}
+            ${c.replacement_name ? '／ 入れ替え先: <strong>' + esc(c.replacement_name) + '</strong>' : ''}
+          </p>
+          ${swapArea}
+        </div>`;
+    })
+    .join('');
+
+  // 既に選んだ入れ替え先を選択状態にしておく
+  d.claims.forEach((c) => {
+    if (!c.replacement_id) return;
+    const sel = box.querySelector('.cl-swap-select[data-id="' + c.claim_id + '"]');
+    if (!sel) return;
+    if (![...sel.options].some((o) => o.value === c.replacement_id)) {
+      const opt = document.createElement('option');
+      opt.value = c.replacement_id;
+      opt.textContent = c.replacement_name;
+      sel.appendChild(opt);
+    }
+    sel.value = c.replacement_id;
+  });
+
+  box.querySelectorAll('.cl-refund').forEach((b) => {
+    b.onclick = () => onChooseClaim(b.dataset.id, '払い戻し');
+  });
+  box.querySelectorAll('.cl-swap').forEach((b) => {
+    b.onclick = () => {
+      const sel = box.querySelector('.cl-swap-select[data-id="' + b.dataset.id + '"]');
+      onChooseClaim(b.dataset.id, '入れ替え', sel.value);
+    };
+  });
+}
+
+/**
+ * 払い戻しか入れ替えかを送る。
+ *
+ * @param {string} claimId
+ * @param {string} choice
+ * @param {string} [replacementId]
+ */
+async function onChooseClaim(claimId, choice, replacementId) {
+  if (choice === '入れ替え' && !replacementId) {
+    alert('入れ替える選手を選んでください。');
+    return;
+  }
+
+  // 主催者が代理で入力する場合は override を使う（期限後でも通る）
+  const action = currentUser.role === 'organizer' ? 'overrideClaim' : 'chooseClaim';
+
+  const res = await callApi(action, {
+    claim_id: claimId,
+    choice,
+    replacement_player_id: replacementId || '',
+  });
+
+  if (!res.ok) {
+    alert('選択できません: ' + res.error);
+    return;
+  }
+
+  await loadMyClaims();
+}
+
+// ---------------------------------------------------------------------------
+// 補填の請求と精算（主催者）
+// ---------------------------------------------------------------------------
+
+/**
+ * 請求一覧と精算の画面を読み込む。
+ */
+async function loadClaimAdmin() {
+  const seasonId = document.getElementById('sp-season').value;
+  if (!seasonId) return;
+
+  const btn = document.getElementById('cs-settle');
+  if (!btn.dataset.bound) {
+    btn.onclick = onSettleClaims;
+    document.getElementById('cs-save-deadline').onclick = onSaveClaimDeadline;
+    btn.dataset.bound = '1';
+  }
+
+  setLoading('cs-list');
+
+  const res = await callApi('listClaims', { season_id: seasonId });
+  if (!res.ok) {
+    setError('cs-list', '請求一覧を取得できませんでした: ' + res.error);
+    return;
+  }
+
+  const d = res.data;
+
+  document.getElementById('cs-deadline').value = d.deadline
+    ? d.deadline.slice(0, 16)
+    : '';
+
+  document.getElementById('cs-summary').innerHTML = `
+    <div class="${d.window_open ? 'hint-box' : 'warn-box'}">
+      未選択 <strong>${d.waiting}</strong> 件
+      ／ 選択済み <strong>${d.fixed}</strong> 件
+      ／ 精算済み <strong>${d.settled}</strong> 件
+      <p class="muted note-sm">
+        ${d.window_open
+          ? '選択期限内です。期限を過ぎるまで精算はできません。'
+          : '期限を過ぎています。精算を実行できます。'}
+        未選択のまま精算すると「${esc(d.default_choice)}」として処理されます。
+      </p>
+    </div>`;
+
+  document.getElementById('cs-settle').disabled = d.window_open || (d.waiting + d.fixed) === 0;
+
+  const box = document.getElementById('cs-list');
+
+  if (d.claims.length === 0) {
+    box.innerHTML = '<p class="muted">補填の請求はありません。</p>';
+    return;
+  }
+
+  const rows = d.claims
+    .map((c) => `
+      <tr>
+        <td>${esc(c.team_name)}</td>
+        <td>${esc(c.player_name)}</td>
+        <td class="muted">${esc(c.reason)}</td>
+        <td class="num">${esc(formatMoney(c.refund_amount))}</td>
+        <td>${c.choice === '未選択'
+          ? '<span class="tag-wait">未選択</span>'
+          : esc(c.choice) + (c.replacement_name ? '（' + esc(c.replacement_name) + '）' : '')}</td>
+        <td>${esc(c.status)}</td>
+        <td>${c.status === '精算済'
+          ? '<span class="muted">—</span>'
+          : '<button type="button" class="btn btn-secondary btn-sm cs-void" data-id="' +
+            esc(c.claim_id) + '">無効化</button>'}</td>
+      </tr>`)
+    .join('');
+
+  box.innerHTML = `
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>チーム</th><th>選手</th><th>理由</th>
+            <th class="num">払い戻し額</th><th>選択</th><th>状態</th><th>操作</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <p class="muted note-sm">
+      参加者の代わりに選ぶ場合は「補填の選択」タブでチームを切り替えてください。期限後でも入力できます。
+    </p>`;
+
+  box.querySelectorAll('.cs-void').forEach((b) => {
+    b.onclick = () => onVoidClaim(b.dataset.id);
+  });
+}
+
+/**
+ * 選択期限を保存する。
+ */
+async function onSaveClaimDeadline() {
+  const seasonId = document.getElementById('sp-season').value;
+  const seasons = await loadSeasons();
+  const season = seasons.find((s) => s.season_id === seasonId);
+  if (!season) return;
+
+  const btn = document.getElementById('cs-save-deadline');
+  btn.disabled = true;
+  setResult('cs-deadline-result', true, '保存中...');
+
+  // upsertSeason は全項目を受け取るので、既存値を維持したまま期限だけ差し替える
+  const res = await callApi('upsertSeason', {
+    season_id: seasonId,
+    name: season.name,
+    status: season.status,
+    leg_enabled: season.leg_enabled,
+    window1_open_at: season.window1_open_at,
+    window2_open_at: season.window2_open_at,
+    claim_deadline_at: document.getElementById('cs-deadline').value,
+  });
+
+  btn.disabled = false;
+
+  if (!res.ok) {
+    setResult('cs-deadline-result', false, '保存できません: ' + res.error);
+    return;
+  }
+
+  setResult('cs-deadline-result', true, '期限を保存しました。');
+  cache.seasons = null;
+  await loadSeasons(true);
+  await loadClaimAdmin();
+}
+
+/**
+ * 期限後の一括精算。
+ */
+async function onSettleClaims() {
+  if (!confirm(
+    '補填をまとめて精算します。\n\n' +
+    '払い戻しは予算に入金され、入れ替えは選手がスカッドに加わります。\n' +
+    '未選択の請求は既定の扱いになります。よろしいですか？'
+  )) return;
+
+  const btn = document.getElementById('cs-settle');
+  btn.disabled = true;
+  setResult('cs-result', true, '精算中...');
+
+  const res = await callApi('settleClaims', {
+    season_id: document.getElementById('sp-season').value,
+  });
+
+  btn.disabled = false;
+
+  if (!res.ok) {
+    setResult('cs-result', false, '精算できません: ' + res.error);
+    return;
+  }
+
+  setResult('cs-result', true, res.data.settled_count + ' 件を精算しました。');
+  renderSettleReport(res.data);
+  await loadClaimAdmin();
+}
+
+/**
+ * 精算結果を表示する。
+ *
+ * @param {Object} d settleClaims のレスポンス
+ */
+function renderSettleReport(d) {
+  const box = document.getElementById('cs-report');
+
+  const list = (title, rows, fmt) =>
+    rows.length
+      ? '<div><h4 class="rank-title">' + esc(title) + '</h4><ul class="detail-grid-list">' +
+        rows.map((r) => '<li>' + esc(fmt(r)) + '</li>').join('') + '</ul></div>'
+      : '';
+
+  box.innerHTML = `
+    <h3 class="sub-head">精算の結果</h3>
+    <p>払い戻しの合計: <strong>${esc(formatMoney(d.refund_total))}</strong></p>
+    <div class="detail-grid">
+      ${list('払い戻し', d.refunds, (r) => r.team_name + ' ' + r.player_name + ' ' + formatMoney(r.amount))}
+      ${list('入れ替え', d.swaps, (r) => r.team_name + ' ' + r.lost_player + ' → ' + r.got_player)}
+      ${list('払い戻しに変更', d.failed, (r) => r.team_name + ' ' + r.reason)}
+    </div>`;
+}
+
+/**
+ * 請求を無効にする。
+ *
+ * @param {string} claimId
+ */
+async function onVoidClaim(claimId) {
+  if (!confirm('この請求を無効にします。補填は行われません。よろしいですか？')) return;
+
+  const res = await callApi('voidClaim', { claim_id: claimId });
+
+  if (!res.ok) {
+    setResult('cs-result', false, '無効にできません: ' + res.error);
+    return;
+  }
+
+  await loadClaimAdmin();
+}
+
+// ---------------------------------------------------------------------------
+// 辞退・チーム変更（主催者）
+// ---------------------------------------------------------------------------
+
+/**
+ * 辞退・チーム変更の画面を用意する。
+ */
+async function loadWithdraw() {
+  const teams = (await loadTeams()).filter((t) => t.active);
+  fillSelect('wd-team', teams, 'team_id', 'name', 'チームを選択');
+
+  const kindSel = document.getElementById('wd-kind');
+  if (!kindSel.dataset.bound) {
+    kindSel.onchange = onWithdrawKindChange;
+    document.getElementById('wd-submit').onclick = onSubmitWithdraw;
+    kindSel.dataset.bound = '1';
+  }
+
+  await onWithdrawKindChange();
+}
+
+/**
+ * 種別に応じて「変更後のクラブ」を出し入れする。
+ */
+async function onWithdrawKindChange() {
+  const isChange = document.getElementById('wd-kind').value === 'チーム変更';
+  document.getElementById('wd-club-wrap').style.display = isChange ? '' : 'none';
+
+  if (!isChange) return;
+
+  const res = await callApi('getSignupClubs', {});
+  if (!res.ok) return;
+
+  const opts = res.data.categories
+    .map((cat) => {
+      const items = res.data.clubs[cat]
+        .map((c) => '<option value="' + esc(c.club_name) + '"' + (c.taken ? ' disabled' : '') + '>' +
+          esc(c.taken ? c.club_name + '（' + c.taken_reason + '）' : c.club_name) + '</option>')
+        .join('');
+      return '<optgroup label="' + esc(cat) + '">' + items + '</optgroup>';
+    })
+    .join('');
+
+  document.getElementById('wd-club').innerHTML =
+    '<option value="">クラブを選択</option>' + opts;
+}
+
+/**
+ * 辞退・チーム変更を実行する。
+ */
+async function onSubmitWithdraw() {
+  const teamId = document.getElementById('wd-team').value;
+  const kind = document.getElementById('wd-kind').value;
+  const newClub = document.getElementById('wd-club').value;
+
+  if (!teamId) {
+    setResult('wd-result', false, 'チームを選んでください。');
+    return;
+  }
+  if (kind === 'チーム変更' && !newClub) {
+    setResult('wd-result', false, '変更後のクラブを選んでください。');
+    return;
+  }
+
+  const teamName = document.getElementById('wd-team')
+    .selectedOptions[0].textContent;
+
+  const msg = kind === '辞退'
+    ? teamName + ' を大会から外します。\n\n' +
+      'このクラブの選手は全員が大会の対象外になり、\n' +
+      '保有している他チームには補填の請求が立ちます。\n\n取り消せません。よろしいですか？'
+    : teamName + ' を ' + newClub + ' に変更します。\n\n' +
+      '変更前のクラブの選手は全員が大会の対象外になります。\n' +
+      '移籍で獲得した他クラブの選手は残ります。\n\n取り消せません。よろしいですか？';
+
+  if (!confirm(msg)) return;
+
+  const btn = document.getElementById('wd-submit');
+  btn.disabled = true;
+  setResult('wd-result', true, '実行中...');
+
+  const res = await callApi('withdrawTeam', {
+    season_id: document.getElementById('sp-season').value,
+    team_id: teamId,
+    kind,
+    new_club: newClub,
+  });
+
+  btn.disabled = false;
+
+  if (!res.ok) {
+    setResult('wd-result', false, '実行できません: ' + res.error);
+    return;
+  }
+
+  const d = res.data;
+  setResult('wd-result', true, d.kind + ' を反映しました。');
+
+  document.getElementById('wd-report').innerHTML = `
+    <div class="hint-box">
+      <strong>${esc(d.old_club)}</strong> が大会から外れました
+      ${d.new_club ? '（新しいクラブ: <strong>' + esc(d.new_club) + '</strong>）' : ''}
+      <ul class="detail-grid-list">
+        <li>対象外になった選手: ${d.ineligible} 名</li>
+        <li>スカッドから外れた選手: ${d.released} 名</li>
+        <li>立った請求: ${d.claims.length} 件（払い戻しなら合計 ${esc(formatMoney(d.claim_total))}）</li>
+      </ul>
+      <p class="muted note-sm">${esc(d.note)}</p>
+    </div>`;
+
+  cache.teams = null;
+  await loadTeams(true);
+  await loadSeasonAdmin();
 }
