@@ -209,6 +209,19 @@ function _route(action, token, payload) {
     case "upsertSeason":
       return upsertSeason(token, payload);
 
+    // ---- ディビジョン & スーパーカップ ----
+    case "getSeasonDivisions":
+      return getSeasonDivisions(token, payload);
+
+    case "setSeasonDivisions":
+      return setSeasonDivisions(token, payload);
+
+    case "getSuperCup":
+      return getSuperCup(token, payload);
+
+    case "setSuperCup":
+      return setSuperCup(token, payload);
+
     // ---- Phase 6: 集計表示 ----
     case "getStandings":
       return getStandings(token, payload);

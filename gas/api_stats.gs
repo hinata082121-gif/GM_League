@@ -90,7 +90,19 @@ function getStandings(token, payload) {
   var drawPts = getConfigNum("draw_points", 1);
 
   var teamNames = _teamNameMap();
-  var matches = _approvedMatches(seasonId, STAGE_LEAGUE);
+  var d = _divisionsOf(seasonId);
+
+  // division を指定するとそのリーグだけを集計する。
+  // 一部制のシーズンでは全チームが GM1 なので、指定しなくても結果は同じ。
+  var division = _str(payload.division);
+  var inDivision = function (teamId) {
+    if (!division) return true;
+    return _divisionOf(d.map, teamId) === division;
+  };
+
+  var matches = _approvedMatches(seasonId, STAGE_LEAGUE).filter(function (m) {
+    return inDivision(_str(m.home_team)) && inDivision(_str(m.away_team));
+  });
 
   // 参加チーム（active なチームは0試合でも表に出す）
   var rows = {};
@@ -107,7 +119,8 @@ function getStandings(token, payload) {
   };
 
   getSheetData("Teams").forEach(function (t) {
-    if (_toBool(t.active)) ensure(_str(t.team_id));
+    var tid = _str(t.team_id);
+    if (_toBool(t.active) && inDivision(tid)) ensure(tid);
   });
 
   matches.forEach(function (m) {
@@ -148,6 +161,9 @@ function getStandings(token, payload) {
     ok: true,
     data: {
       season_id: seasonId,
+      division: division || (d.twoDivision ? "" : DIVISION_GM1),
+      two_division: d.twoDivision,
+      format: d.twoDivision ? "二部制" : "一部制",
       match_count: matches.length,
       win_points: winPts,
       draw_points: drawPts,
@@ -316,7 +332,11 @@ function getTournament(token, payload) {
   if (!seasonId) return { ok: false, error: "season_id は必須です。" };
 
   var teamNames = _teamNameMap();
-  var matches = _approvedMatches(seasonId, STAGE_TOURNAMENT);
+
+  // stage を指定できるようにする。既定は GMリーグ杯（tournament）。
+  // スーパーカップは1試合なので stage=supercup で別に取得する。
+  var stage = _str(payload.stage) || STAGE_TOURNAMENT;
+  var matches = _approvedMatches(seasonId, stage);
 
   var ties = {};
   var order = [];
@@ -414,8 +434,36 @@ function getTournament(token, payload) {
 
   return {
     ok: true,
-    data: { season_id: seasonId, match_count: matches.length, ties: result },
+    data: { season_id: seasonId, stage: stage, match_count: matches.length, ties: result },
   };
+}
+
+
+/**
+ * 大会（competition）で承認済み試合を絞り込む。
+ *
+ * competition を省略するとシーズンの全試合を返す。
+ * リーグ戦は出場チームのディビジョンで GM1 / GM2 を判定する。
+ *
+ * @param {string} seasonId
+ * @param {string} [competition] COMP_GM1 / COMP_GM2 / COMP_CUP / COMP_SUPERCUP
+ * @returns {Object[]}
+ */
+function _matchesOfCompetition(seasonId, competition) {
+  if (!competition) return _approvedMatches(seasonId);
+
+  if (competition === COMP_CUP) return _approvedMatches(seasonId, STAGE_TOURNAMENT);
+  if (competition === COMP_SUPERCUP) return _approvedMatches(seasonId, STAGE_SUPERCUP);
+
+  var wantDivision = competition === COMP_GM2 ? DIVISION_GM2 : DIVISION_GM1;
+  var d = _divisionsOf(seasonId);
+
+  return _approvedMatches(seasonId, STAGE_LEAGUE).filter(function (m) {
+    return (
+      _divisionOf(d.map, _str(m.home_team)) === wantDivision &&
+      _divisionOf(d.map, _str(m.away_team)) === wantDivision
+    );
+  });
 }
 
 // =============================================================================
@@ -438,7 +486,12 @@ function getRankings(token, payload) {
   var seasonId = _str(payload.season_id);
   if (!seasonId) return { ok: false, error: "season_id は必須です。" };
 
-  var matches = _approvedMatches(seasonId);
+  // competition を指定すると、その大会の試合だけを集計する。
+  // 得点王賞金が大会別（GM1リーグ / GM2リーグ / GMリーグ杯）なので、
+  // 大会ごとの得点1位を出せるようにしている。
+  var competition = _str(payload.competition);
+  var matches = _matchesOfCompetition(seasonId, competition);
+
   var approvedIds = {};
   var matchById = {};
   matches.forEach(function (m) {
@@ -567,6 +620,7 @@ function getRankings(token, payload) {
     ok: true,
     data: {
       season_id:   seasonId,
+      competition: competition || "",
       match_count: matches.length,
       min_matches_for_save_rate: minMatches,
       goals:       goalRank,

@@ -36,7 +36,8 @@ var MATCH_REJECTED = "差戻";
 /** stage */
 var STAGE_LEAGUE = "league";
 var STAGE_TOURNAMENT = "tournament";
-var MATCH_STAGES = [STAGE_LEAGUE, STAGE_TOURNAMENT];
+var STAGE_SUPERCUP = "supercup";
+var MATCH_STAGES = [STAGE_LEAGUE, STAGE_TOURNAMENT, STAGE_SUPERCUP];
 
 /**
  * オウンゴールを表す scorer_id の番兵値。
@@ -317,7 +318,7 @@ function getMatchDetail(token, payload) {
  */
 function _validateMatchPayload(p, selfId) {
   if (MATCH_STAGES.indexOf(p.stage) === -1) {
-    return "stage が不正です: " + p.stage + "（許可: league / tournament）";
+    return "stage が不正です: " + p.stage + "（許可: league / tournament / supercup）";
   }
   if (!p.round) return "節（round）を入力してください。";
   if (!p.homeTeam || !p.awayTeam) return "対戦チームを選んでください。";

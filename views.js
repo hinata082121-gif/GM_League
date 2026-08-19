@@ -2191,12 +2191,26 @@ async function renderMatch() {
 }
 
 /**
- * 種別の切り替え。トーナメントのときだけ tie_id / レグ / PK を出す。
+ * 試合種別の短縮表示。
+ *
+ * @param {string} stage
+ * @returns {string}
+ */
+function _stageLabel(stage) {
+  if (stage === 'tournament') return '杯';
+  if (stage === 'supercup') return 'SC';
+  return 'L';
+}
+
+/**
+ * 種別の切り替え。ノックアウトのときだけ tie_id / レグ / PK を出す。
  */
 function onMatchStageChange() {
-  const isTournament = document.getElementById('mt-stage').value === 'tournament';
-  document.getElementById('mt-tie-row').style.display = isTournament ? 'flex' : 'none';
-  document.getElementById('mt-pk-row').style.display = isTournament ? 'flex' : 'none';
+  // スーパーカップも1試合のノックアウトなので tie_id / PK を使う
+  const stage = document.getElementById('mt-stage').value;
+  const isKnockout = stage === 'tournament' || stage === 'supercup';
+  document.getElementById('mt-tie-row').style.display = isKnockout ? 'flex' : 'none';
+  document.getElementById('mt-pk-row').style.display = isKnockout ? 'flex' : 'none';
 }
 
 /**
@@ -2455,7 +2469,7 @@ function collectMatchPayload() {
     gk_stats: gkStats,
   };
 
-  if (stage === 'tournament') {
+  if (stage === 'tournament' || stage === 'supercup') {
     payload.tie_id = document.getElementById('mt-tie').value.trim();
     payload.leg = document.getElementById('mt-leg').value;
     payload.home_pk = document.getElementById('mt-home-pk').value;
@@ -2634,7 +2648,7 @@ async function loadMatchList() {
 
       return `
       <tr>
-        <td class="muted">${esc(m.stage === 'tournament' ? 'T' : 'L')} ${esc(m.round)}</td>
+        <td class="muted">${esc(_stageLabel(m.stage))} ${esc(m.round)}</td>
         <td>${esc(m.home_name)} <strong>${m.home_score} - ${m.away_score}</strong> ${esc(m.away_name)}${pk}</td>
         <td><span class="${badge[m.status] || 'tag-none'}">${esc(m.status)}</span></td>
         <td>${actions}</td>
@@ -2756,6 +2770,7 @@ async function renderStats() {
   if (!seasonSel.dataset.bound) {
     seasonSel.onchange = loadStatsView;
     document.getElementById('st-view').onchange = loadStatsView;
+    document.getElementById('st-division').onchange = loadStatsView;
     seasonSel.dataset.bound = '1';
   }
 
@@ -2777,9 +2792,38 @@ async function loadStatsView() {
 
   setLoading('st-body');
 
-  if (view === 'standings') return renderStandings(seasonId);
-  if (view === 'tournament') return renderTournament(seasonId);
-  return renderRankings(seasonId);
+  // 絞り込み欄は表示種別によって選択肢が変わる。
+  // 順位表はディビジョン（GM1/GM2）、個人ランキングは大会単位。
+  const divWrap = document.getElementById('st-division-wrap');
+  const divSel = document.getElementById('st-division');
+  const showFilter = view === 'standings' || view === 'rankings';
+  divWrap.style.display = showFilter ? '' : 'none';
+
+  if (showFilter) {
+    const opts =
+      view === 'standings'
+        ? [['GM1', 'GM1リーグ'], ['GM2', 'GM2リーグ']]
+        : [['', '全大会'], ['GM1リーグ', 'GM1リーグ'], ['GM2リーグ', 'GM2リーグ'],
+           ['GMリーグ杯', 'GMリーグ杯'], ['GMスーパーカップ', 'GMスーパーカップ']];
+
+    const signature = view + ':' + opts.length;
+    if (divSel.dataset.signature !== signature) {
+      const keep = divSel.value;
+      divSel.innerHTML = opts
+        .map((o) => '<option value="' + esc(o[0]) + '">' + esc(o[1]) + '</option>')
+        .join('');
+      divSel.dataset.signature = signature;
+      // 種別を切り替えても同じ値があれば維持する
+      if (opts.some((o) => o[0] === keep)) divSel.value = keep;
+    }
+  }
+
+  const filter = divSel.value;
+
+  if (view === 'standings') return renderStandings(seasonId, filter);
+  if (view === 'tournament') return renderTournament(seasonId, 'tournament');
+  if (view === 'supercup') return renderTournament(seasonId, 'supercup');
+  return renderRankings(seasonId, filter);
 }
 
 /**
@@ -2787,8 +2831,8 @@ async function loadStatsView() {
  *
  * @param {string} seasonId
  */
-async function renderStandings(seasonId) {
-  const res = await callApi('getStandings', { season_id: seasonId });
+async function renderStandings(seasonId, division) {
+  const res = await callApi('getStandings', { season_id: seasonId, division: division || '' });
   if (!res.ok) {
     setError('st-body', '順位表の取得に失敗しました: ' + res.error);
     return;
@@ -2797,10 +2841,16 @@ async function renderStandings(seasonId) {
   const d = res.data;
   const box = document.getElementById('st-body');
 
+  const leagueName = d.two_division
+    ? (division === 'GM2' ? 'GM2リーグ' : 'GM1リーグ')
+    : 'GM1リーグ（一部制）';
+
   if (d.match_count === 0) {
     box.innerHTML =
-      '<h3 class="sub-head">リーグ順位表</h3>' +
-      '<p class="muted">承認済みのリーグ戦がまだありません。</p>';
+      '<h3 class="sub-head">' + esc(leagueName) + ' 順位表</h3>' +
+      '<p class="muted">承認済みのリーグ戦がまだありません。' +
+      (d.two_division ? '' : '<br>このシーズンは一部制のため、GM2リーグは開催されません。') +
+      '</p>';
     return;
   }
 
@@ -2831,7 +2881,7 @@ async function renderStandings(seasonId) {
     .join('');
 
   box.innerHTML = `
-    <h3 class="sub-head">リーグ順位表</h3>
+    <h3 class="sub-head">${esc(leagueName)} 順位表</h3>
     <div class="table-wrap">
       <table class="data-table">
         <thead>
@@ -2857,10 +2907,13 @@ async function renderStandings(seasonId) {
  *
  * @param {string} seasonId
  */
-async function renderTournament(seasonId) {
-  const res = await callApi('getTournament', { season_id: seasonId });
+async function renderTournament(seasonId, stage) {
+  const isCup = stage !== 'supercup';
+  const title = isCup ? 'GMリーグ杯' : 'GMスーパーカップ';
+
+  const res = await callApi('getTournament', { season_id: seasonId, stage: stage || 'tournament' });
   if (!res.ok) {
-    setError('st-body', 'トーナメントの取得に失敗しました: ' + res.error);
+    setError('st-body', title + 'の取得に失敗しました: ' + res.error);
     return;
   }
 
@@ -2869,8 +2922,10 @@ async function renderTournament(seasonId) {
 
   if (d.ties.length === 0) {
     box.innerHTML =
-      '<h3 class="sub-head">トーナメント</h3>' +
-      '<p class="muted">承認済みのトーナメント戦がまだありません。</p>';
+      '<h3 class="sub-head">' + esc(title) + '</h3>' +
+      '<p class="muted">承認済みの試合がまだありません。' +
+      (isCup ? '' : '<br>スーパーカップの出場チームは「運営・進行」タブで設定します。') +
+      '</p>';
     return;
   }
 
@@ -2932,8 +2987,11 @@ async function renderTournament(seasonId) {
  *
  * @param {string} seasonId
  */
-async function renderRankings(seasonId) {
-  const res = await callApi('getRankings', { season_id: seasonId });
+async function renderRankings(seasonId, competition) {
+  const res = await callApi('getRankings', {
+    season_id: seasonId,
+    competition: competition || '',
+  });
   if (!res.ok) {
     setError('st-body', 'ランキングの取得に失敗しました: ' + res.error);
     return;
@@ -2942,9 +3000,11 @@ async function renderRankings(seasonId) {
   const d = res.data;
   const box = document.getElementById('st-body');
 
+  const rkTitle = '個人ランキング' + (competition ? '（' + competition + '）' : '（全大会）');
+
   if (d.match_count === 0) {
     box.innerHTML =
-      '<h3 class="sub-head">個人ランキング</h3>' +
+      '<h3 class="sub-head">' + esc(rkTitle) + '</h3>' +
       '<p class="muted">承認済みの試合がまだありません。</p>';
     return;
   }
@@ -2978,7 +3038,7 @@ async function renderRankings(seasonId) {
   };
 
   box.innerHTML = `
-    <h3 class="sub-head">個人ランキング</h3>
+    <h3 class="sub-head">${esc(rkTitle)}</h3>
     <div class="rank-grid">
       ${table('得点', d.goals, 'goals', ' 点')}
       ${table('アシスト', d.assists, 'assists', ' 回')}
@@ -3021,6 +3081,9 @@ async function renderSeasonAdmin() {
     document.getElementById('pn-submit').onclick = onSubmitPenalty;
     document.getElementById('cp-submit').onclick = onSubmitCompensation;
     document.getElementById('cp-team').onchange = loadCompensationPlayers;
+    document.getElementById('dv-save').onclick = onSaveDivisions;
+    document.getElementById('dv-all-gm1').onclick = onAllGm1;
+    document.getElementById('sc-save').onclick = onSaveSuperCup;
     bindMoneyEcho('pn-amount', 'pn-amount-echo');
     sel.dataset.bound = '1';
   }
@@ -3052,6 +3115,237 @@ async function loadSeasonAdmin() {
 
   renderSponsorInputs(await loadTeams());
   await loadCompensationPlayers();
+  await loadDivisions();
+  await loadSuperCup();
+}
+
+// ---------------------------------------------------------------------------
+// ディビジョン設定
+// ---------------------------------------------------------------------------
+
+/** getSeasonDivisions の結果を保持する（保存時の再取得を避けるため） */
+let divisionData = null;
+
+/**
+ * ディビジョン割り当ての現状を読み込んで描画する。
+ */
+async function loadDivisions() {
+  const seasonId = document.getElementById('sp-season').value;
+  if (!seasonId) return;
+
+  setLoading('dv-list');
+
+  const res = await callApi('getSeasonDivisions', { season_id: seasonId });
+  if (!res.ok) {
+    setError('dv-list', 'ディビジョンの取得に失敗しました: ' + res.error);
+    return;
+  }
+
+  divisionData = res.data;
+  renderDivisionBox();
+}
+
+/**
+ * ディビジョンの状態表示とチーム別セレクトを描画する。
+ */
+function renderDivisionBox() {
+  const d = divisionData;
+
+  document.getElementById('dv-status').innerHTML = `
+    <div class="status-line">
+      <span class="tag-${d.two_division ? 'ok' : 'none'}">${esc(d.format)}</span>
+      <span class="muted">
+        参加 ${d.team_count} チーム（GM1 ${d.counts.GM1} / GM2 ${d.counts.GM2}）
+        ／ 二部制の要件: ${d.min_teams} チーム以上
+      </span>
+    </div>
+    ${d.can_two_division
+      ? ''
+      : '<p class="muted note-sm">現在は ' + d.min_teams +
+        ' チームに達していないため、GM2 を選ぶと保存時に拒否されます。</p>'}`;
+
+  const rows = d.teams
+    .map(
+      (t) => `
+      <label class="division-row">
+        <span>${esc(t.team_name)}</span>
+        <select class="division-input" data-team="${esc(t.team_id)}"${d.can_two_division ? '' : ' disabled'}>
+          <option value="GM1"${t.division === 'GM1' ? ' selected' : ''}>GM1リーグ</option>
+          <option value="GM2"${t.division === 'GM2' ? ' selected' : ''}>GM2リーグ</option>
+        </select>
+      </label>`
+    )
+    .join('');
+
+  document.getElementById('dv-list').innerHTML = '<div class="form-grid">' + rows + '</div>';
+  document.getElementById('dv-save').disabled = !d.can_two_division;
+  document.getElementById('dv-all-gm1').disabled = !d.can_two_division;
+}
+
+/**
+ * 全チームを GM1 に戻す（画面上のみ。保存は「割り当てを保存」）。
+ */
+function onAllGm1() {
+  document.querySelectorAll('.division-input').forEach((sel) => {
+    sel.value = 'GM1';
+  });
+  setResult('dv-result', true, '全て GM1 にしました。保存を押すと確定します。');
+}
+
+/**
+ * ディビジョン割り当てを保存する。
+ */
+async function onSaveDivisions() {
+  const assignments = [...document.querySelectorAll('.division-input')].map((sel) => ({
+    team_id: sel.dataset.team,
+    division: sel.value,
+  }));
+
+  if (assignments.length === 0) {
+    setResult('dv-result', false, '対象チームがありません。');
+    return;
+  }
+
+  const btn = document.getElementById('dv-save');
+  btn.disabled = true;
+  setResult('dv-result', true, '保存中...');
+
+  const res = await callApi('setSeasonDivisions', {
+    season_id: document.getElementById('sp-season').value,
+    assignments: assignments,
+  });
+
+  btn.disabled = false;
+
+  if (!res.ok) {
+    setResult('dv-result', false, '保存できません: ' + res.error);
+    return;
+  }
+
+  setResult(
+    'dv-result', true,
+    res.data.format + 'として保存しました（GM1 ' + res.data.counts.GM1 +
+    ' / GM2 ' + res.data.counts.GM2 + '）。'
+  );
+  await loadDivisions();
+}
+
+// ---------------------------------------------------------------------------
+// GMスーパーカップ
+// ---------------------------------------------------------------------------
+
+/**
+ * スーパーカップの設定を読み込んでフォームに反映する。
+ */
+async function loadSuperCup() {
+  const seasonId = document.getElementById('sp-season').value;
+  if (!seasonId) return;
+
+  const teams = (await loadTeams()).filter((t) => t.active);
+  fillSelect('sc-team-a', teams, 'team_id', 'name', 'チームを選択');
+  fillSelect('sc-team-b', teams, 'team_id', 'name', 'チームを選択');
+
+  const res = await callApi('getSuperCup', { season_id: seasonId });
+  if (!res.ok) {
+    setError('sc-info', 'スーパーカップの取得に失敗しました: ' + res.error);
+    return;
+  }
+
+  const d = res.data;
+
+  document.getElementById('sc-team-a').value = d.team_a || '';
+  document.getElementById('sc-team-b').value = d.team_b || '';
+  document.getElementById('sc-streamed').checked = !!d.streamed;
+  document.getElementById('sc-note').value = d.note || '';
+
+  renderSuperCupSuggestion(d);
+
+  document.getElementById('sc-info').innerHTML = `
+    <p class="muted note-sm">
+      配信料 各 ${formatMoney(d.stream_fee)}
+      ／ 優勝 ${formatMoney(d.prize_1)}
+      ／ 準優勝 ${formatMoney(d.prize_2)}
+      <br>
+      ${d.configured
+        ? '設定済み。' + (d.streamed
+            ? '配信ありのため、シーズン終了時に両チームへ配信料が入ります。'
+            : '配信なしのため、配信料は発生しません。')
+        : '未設定です。'}
+      優勝・準優勝の賞金は「スーパーカップ」の試合が承認されている場合のみ支給されます。
+    </p>`;
+}
+
+/**
+ * 前シーズン王者の候補を表示する。参考情報であり自動では入力しない。
+ *
+ * @param {Object} d getSuperCup のレスポンス
+ */
+function renderSuperCupSuggestion(d) {
+  const box = document.getElementById('sc-suggestion');
+  const sg = d.suggestion;
+
+  if (!sg) {
+    box.innerHTML = '<p class="muted note-sm">前シーズンがないため、候補は表示できません。</p>';
+    return;
+  }
+
+  const line = (label, champ) =>
+    '<li>' + esc(label) + ': ' +
+    (champ ? '<strong>' + esc(champ.team_name) + '</strong>' : '<span class="muted">未確定</span>') +
+    '</li>';
+
+  box.innerHTML = `
+    <div class="hint-box">
+      <strong>${esc(sg.prev_season_name)} の王者（候補）</strong>
+      <ul class="detail-grid-list">
+        ${line('GM1リーグ', sg.league_champion)}
+        ${line('GMリーグ杯', sg.cup_champion)}
+      </ul>
+      ${sg.same_team
+        ? '<p class="muted note-sm">両方が同じチームです。もう1枠は主催者の判断で選んでください。</p>'
+        : ''}
+    </div>`;
+}
+
+/**
+ * スーパーカップの出場チーム・配信有無を保存する。
+ */
+async function onSaveSuperCup() {
+  const teamA = document.getElementById('sc-team-a').value;
+  const teamB = document.getElementById('sc-team-b').value;
+
+  if (!teamA || !teamB) {
+    setResult('sc-result', false, '出場チームを2つとも選んでください。');
+    return;
+  }
+
+  const btn = document.getElementById('sc-save');
+  btn.disabled = true;
+  setResult('sc-result', true, '保存中...');
+
+  const res = await callApi('setSuperCup', {
+    season_id: document.getElementById('sp-season').value,
+    team_a: teamA,
+    team_b: teamB,
+    streamed: document.getElementById('sc-streamed').checked,
+    note: document.getElementById('sc-note').value,
+  });
+
+  btn.disabled = false;
+
+  if (!res.ok) {
+    setResult('sc-result', false, '保存できません: ' + res.error);
+    return;
+  }
+
+  setResult(
+    'sc-result', true,
+    res.data.streamed
+      ? '保存しました。配信料 各 ' + formatMoney(res.data.stream_fee_each) +
+        ' をシーズン終了時に計上します。'
+      : '保存しました。配信なしのため配信料はありません。'
+  );
+  await loadSuperCup();
 }
 
 /**
@@ -3184,10 +3478,18 @@ function renderCloseReport(report) {
       : '';
 
   box.innerHTML = `
-    <h3 class="sub-head">終了処理の結果</h3>
+    <h3 class="sub-head">終了処理の結果（${esc(report.format || '')}）</h3>
     <div class="detail-grid">
-      ${list('順位賞金', report.rank_prizes, (r) => nameOf(r.team_id) + ' ' + r.rank + '位 ' + formatMoney(r.amount))}
-      ${list('得点王賞金', report.top_scorer_prizes, (r) => nameOf(r.team_id) + ' ' + r.goals + '点 ' + formatMoney(r.amount))}
+      ${list('リーグ順位賞金', report.rank_prizes,
+        (r) => (r.competition ? r.competition + ' ' : '') + nameOf(r.team_id) + ' ' + r.rank + '位 ' + formatMoney(r.amount))}
+      ${list('GMリーグ杯', report.cup_prizes || [],
+        (r) => nameOf(r.team_id) + ' ' + r.label + ' ' + formatMoney(r.amount))}
+      ${list('GMスーパーカップ', report.supercup_prizes || [],
+        (r) => nameOf(r.team_id) + ' ' + r.label + ' ' + formatMoney(r.amount))}
+      ${list('配信料', report.stream_fees || [],
+        (r) => nameOf(r.team_id) + ' ' + formatMoney(r.amount))}
+      ${list('得点王賞金', report.top_scorer_prizes,
+        (r) => (r.competition ? r.competition + ' ' : '') + nameOf(r.team_id) + ' ' + r.goals + '点 ' + formatMoney(r.amount))}
       ${list('終了手数料', report.fees, (r) => nameOf(r.team_id) + ' −' + formatMoney(r.fee))}
     </div>
     <p class="muted note-sm">

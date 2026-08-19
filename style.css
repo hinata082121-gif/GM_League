@@ -958,3 +958,42 @@ code {
   font-size: 0.85em;
   font-family: 'Courier New', monospace;
 }
+
+
+/* ===== ディビジョン設定 / スーパーカップ（運営タブ） ===== */
+
+.division-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.division-row > span {
+  font-size: 0.9rem;
+}
+
+.division-row select {
+  max-width: 140px;
+}
+
+.status-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.hint-box {
+  background: #f6f8fb;
+  border: 1px solid #dfe5ee;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  font-size: 0.9rem;
+}
+
+.hint-box .detail-grid-list {
+  margin: 6px 0 0;
+}

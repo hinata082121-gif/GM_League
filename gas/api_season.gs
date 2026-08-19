@@ -35,6 +35,9 @@ var REASON_COMP_TRANSFER = "補填金_大会外移籍";
 var REASON_COMP_WITHDRAW = "補填金_辞退";
 var REASON_PENALTY = "罰金";
 var REASON_SEASON_FEE = "シーズン終了手数料";
+var REASON_CUP_PRIZE = "リーグ杯賞金";
+var REASON_SUPERCUP_PRIZE = "スーパーカップ賞金";
+var REASON_STREAM_FEE = "配信料";
 
 /** 補填金の種別 */
 var COMPENSATION_KINDS = ["大会外移籍", "辞退"];
@@ -340,19 +343,8 @@ function advanceSeason(token, payload) {
     var at = now();
     var effects = [];
 
-    // シーズン開始時にシーズン賞金を配る
-    if (next === "エントリー受付" && !_hasBudgetReason(seasonId, REASON_SEASON_PRIZE)) {
-      var prize = getConfigNum("season_prize", 0);
-      if (prize > 0) {
-        var teams = _activeTeams();
-        teams.forEach(function (t) {
-          _addBudgetTx(seasonId, _str(t.team_id), prize, REASON_SEASON_PRIZE, "", at);
-        });
-        effects.push("シーズン賞金 " + prize + " を " + teams.length + " チームに計上");
-      } else {
-        effects.push("シーズン賞金は Config が 0 のため計上なし");
-      }
-    }
+    // 賞金はすべてシーズン終了時（closeSeason）にまとめて計上する。
+    // 途中で配ると「終了手数料の母数」がぶれるため、進行時は状態を進めるだけにしている。
 
     // シーズン1が終わったら半期期限付きを離脱させる
     if (status === HALF_TERM_EXIT_FROM) {
@@ -449,40 +441,29 @@ function closeSeason(token, payload) {
     }
 
     var at = now();
-    var report = { rank_prizes: [], top_scorer_prizes: [], fees: [], expired: 0, carried: 0 };
+    var report = {
+      rank_prizes: [], cup_prizes: [], supercup_prizes: [], stream_fees: [],
+      top_scorer_prizes: [], fees: [], expired: 0, carried: 0,
+    };
 
-    // --- 1. 順位賞金 ---
-    var standings = getStandings(token, { season_id: seasonId });
-    if (standings.ok) {
-      standings.data.table.forEach(function (row) {
-        var amount = getConfigNum("rank_prize_" + row.rank, 0);
-        if (amount > 0) {
-          _addBudgetTx(seasonId, row.team_id, amount, REASON_RANK_PRIZE, String(row.rank) + "位", at);
-          report.rank_prizes.push({ team_id: row.team_id, rank: row.rank, amount: amount });
-        }
-      });
+    // --- 1. リーグ順位賞金（GM1 / GM2）---
+    var d = _divisionsOf(seasonId);
+    report.two_division = d.twoDivision;
+    report.format = d.twoDivision ? "二部制" : "一部制";
+
+    _payLeaguePrizes(token, seasonId, DIVISION_GM1, d.twoDivision, at, report);
+    if (d.twoDivision) {
+      _payLeaguePrizes(token, seasonId, DIVISION_GM2, d.twoDivision, at, report);
     }
 
-    // --- 2. 得点王賞金 ---
-    var topPrize = getConfigNum("top_scorer_prize", 0);
-    if (topPrize > 0) {
-      var rankings = getRankings(token, { season_id: seasonId });
-      if (rankings.ok && rankings.data.goals.length > 0) {
-        var tops = rankings.data.goals.filter(function (g) { return g.rank === 1; });
+    // --- 2. GMリーグ杯 ---
+    _payCupPrizes(token, seasonId, at, report);
 
-        // 終了時点の所属チームを引く。移籍している場合は現在の在籍先
-        var paid = {};
-        tops.forEach(function (g) {
-          var teamId = _currentTeamOf(seasonId, g.player_id) || g.team_id;
-          if (!teamId || paid[teamId]) return;
-          paid[teamId] = true;
-          _addBudgetTx(seasonId, teamId, topPrize, REASON_TOP_SCORER, g.player_id, at);
-          report.top_scorer_prizes.push({
-            team_id: teamId, player_id: g.player_id, goals: g.goals, amount: topPrize,
-          });
-        });
-      }
-    }
+    // --- 2b. GMスーパーカップ（賞金と配信料）---
+    _paySuperCup(token, seasonId, at, report);
+
+    // --- 2c. 得点王賞金（大会別）---
+    _payTopScorers(token, seasonId, d.twoDivision, at, report);
 
     // --- 3. シーズン終了手数料（賞金計上後の残高が母数） ---
     var feeRate = Number(getConfig("season_end_fee_rate", 0.1));
@@ -766,4 +747,196 @@ function getHistory(token, payload) {
 
   result.reverse();
   return { ok: true, data: result };
+}
+
+// =============================================================================
+// 賞金の支給（closeSeason から呼ばれる）
+// =============================================================================
+
+/**
+ * リーグ順位賞金を支給する。
+ *
+ * 一部制と二部制で GM1 の金額が変わるため、Config キーを切り替えて引く。
+ * 同順位は該当チーム全てに満額（按分しない・SPEC.md §5.6）。
+ *
+ * @param {string} token
+ * @param {string} seasonId
+ * @param {string} division    DIVISION_GM1 / DIVISION_GM2
+ * @param {boolean} twoDivision
+ * @param {Date} at
+ * @param {Object} report
+ */
+function _payLeaguePrizes(token, seasonId, division, twoDivision, at, report) {
+  var st = getStandings(token, { season_id: seasonId, division: division });
+  if (!st.ok) return;
+
+  var prefix;
+  if (division === DIVISION_GM2) {
+    prefix = "prize_gm2_";
+  } else {
+    prefix = twoDivision ? "prize_gm1_2div_" : "prize_gm1_1div_";
+  }
+
+  var competition = division === DIVISION_GM2 ? COMP_GM2 : COMP_GM1;
+
+  st.data.table.forEach(function (row) {
+    // 1試合も消化していないチームは賞金対象にしない
+    if (row.played <= 0) return;
+
+    var amount = getConfigNum(prefix + row.rank, 0);
+    if (amount <= 0) return;
+
+    _addBudgetTx(seasonId, row.team_id, amount, REASON_RANK_PRIZE,
+      competition + " " + row.rank + "位", at);
+
+    report.rank_prizes.push({
+      competition: competition, team_id: row.team_id,
+      rank: row.rank, amount: amount,
+    });
+  });
+}
+
+/**
+ * GMリーグ杯の賞金を支給する。
+ *
+ * 優勝・準優勝は決勝のタイから、ベスト4は準決勝（決勝の1つ前のラウンド）の
+ * 敗者から決める。ベスト4は該当2チームそれぞれに満額。
+ *
+ * @param {string} token
+ * @param {string} seasonId
+ * @param {Date} at
+ * @param {Object} report
+ */
+function _payCupPrizes(token, seasonId, at, report) {
+  var tr = getTournament(token, { season_id: seasonId, stage: STAGE_TOURNAMENT });
+  if (!tr.ok || tr.data.ties.length === 0) return;
+
+  var ties = tr.data.ties;
+  var final = ties[ties.length - 1];
+  if (!final.winner) return;
+
+  var pay = function (teamId, amount, label) {
+    if (!teamId || amount <= 0) return;
+    _addBudgetTx(seasonId, teamId, amount, REASON_CUP_PRIZE, label, at);
+    report.cup_prizes.push({ team_id: teamId, label: label, amount: amount });
+  };
+
+  pay(final.winner, getConfigNum("prize_cup_1", 0), "優勝");
+
+  var runnerUp = final.winner === final.team_a ? final.team_b : final.team_a;
+  pay(runnerUp, getConfigNum("prize_cup_2", 0), "準優勝");
+
+  // 準決勝＝決勝の1つ前のラウンド。そのラウンドの敗者がベスト4
+  var finalRound = final.round;
+  var semiRound = "";
+  for (var i = ties.length - 1; i >= 0; i--) {
+    if (ties[i].round !== finalRound) { semiRound = ties[i].round; break; }
+  }
+  if (!semiRound) return;
+
+  var semiPrize = getConfigNum("prize_cup_semi", 0);
+  ties.forEach(function (t) {
+    if (t.round !== semiRound) return;
+    if (!t.winner) return;
+    var loser = t.winner === t.team_a ? t.team_b : t.team_a;
+    pay(loser, semiPrize, "ベスト4");
+  });
+}
+
+/**
+ * GMスーパーカップの賞金と配信料を支給する。
+ *
+ * 出場チームは SuperCup シートに主催者が設定したもの。
+ * 勝敗は stage=supercup の試合から判定する（1試合のみ）。
+ * 配信料は streamed にチェックがある場合だけ、出場2チームそれぞれに満額支給する。
+ *
+ * @param {string} token
+ * @param {string} seasonId
+ * @param {Date} at
+ * @param {Object} report
+ */
+function _paySuperCup(token, seasonId, at, report) {
+  var row = _superCupRow(seasonId);
+  if (!row) return;
+
+  var teamA = _str(row.team_a);
+  var teamB = _str(row.team_b);
+  if (!teamA || !teamB) return;
+
+  // 配信料は試合結果に関係なく、配信を行っていれば両チームに支給する
+  if (_toBool(row.streamed)) {
+    var fee = getConfigNum("supercup_stream_fee", 0);
+    if (fee > 0) {
+      [teamA, teamB].forEach(function (tid) {
+        _addBudgetTx(seasonId, tid, fee, REASON_STREAM_FEE, "スーパーカップ配信", at);
+        report.stream_fees.push({ team_id: tid, amount: fee });
+      });
+    }
+  }
+
+  // 勝敗は承認済みの supercup 試合から判定する
+  var tr = getTournament(token, { season_id: seasonId, stage: STAGE_SUPERCUP });
+  if (!tr.ok || tr.data.ties.length === 0) return;
+
+  var tie = tr.data.ties[tr.data.ties.length - 1];
+  if (!tie.winner) return;
+
+  var loser = tie.winner === tie.team_a ? tie.team_b : tie.team_a;
+
+  var pay = function (teamId, amount, label) {
+    if (!teamId || amount <= 0) return;
+    _addBudgetTx(seasonId, teamId, amount, REASON_SUPERCUP_PRIZE, label, at);
+    report.supercup_prizes.push({ team_id: teamId, label: label, amount: amount });
+  };
+
+  pay(tie.winner, getConfigNum("prize_supercup_1", 0), "優勝");
+  pay(loser, getConfigNum("prize_supercup_2", 0), "準優勝");
+}
+
+/**
+ * 大会別の得点王賞金を支給する。
+ *
+ * GM1リーグ / GM2リーグ / GMリーグ杯 の3つ。スーパーカップは対象外。
+ * 得点1位の選手がシーズン終了時点で所属するチームへ支給し、
+ * 同点なら該当チーム全てに満額（按分しない）。
+ *
+ * @param {string} token
+ * @param {string} seasonId
+ * @param {boolean} twoDivision
+ * @param {Date} at
+ * @param {Object} report
+ */
+function _payTopScorers(token, seasonId, twoDivision, at, report) {
+  var targets = [
+    { competition: COMP_GM1, key: "top_scorer_gm1" },
+    { competition: COMP_CUP, key: "top_scorer_cup" },
+  ];
+  if (twoDivision) {
+    targets.splice(1, 0, { competition: COMP_GM2, key: "top_scorer_gm2" });
+  }
+
+  targets.forEach(function (t) {
+    var amount = getConfigNum(t.key, 0);
+    if (amount <= 0) return;
+
+    var rk = getRankings(token, { season_id: seasonId, competition: t.competition });
+    if (!rk.ok || rk.data.goals.length === 0) return;
+
+    var tops = rk.data.goals.filter(function (g) { return g.rank === 1; });
+    var paid = {};
+
+    tops.forEach(function (g) {
+      var teamId = _currentTeamOf(seasonId, g.player_id) || g.team_id;
+      if (!teamId || paid[teamId]) return;
+      paid[teamId] = true;
+
+      _addBudgetTx(seasonId, teamId, amount, REASON_TOP_SCORER,
+        t.competition + " " + g.player_id, at);
+
+      report.top_scorer_prizes.push({
+        competition: t.competition, team_id: teamId,
+        player_id: g.player_id, goals: g.goals, amount: amount,
+      });
+    });
+  });
 }

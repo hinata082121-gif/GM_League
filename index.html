@@ -276,7 +276,8 @@
               種別
               <select id="mt-stage">
                 <option value="league">リーグ戦</option>
-                <option value="tournament">トーナメント</option>
+                <option value="tournament">GMリーグ杯</option>
+                <option value="supercup">GMスーパーカップ</option>
               </select>
             </label>
             <label>
@@ -365,8 +366,16 @@
               表示
               <select id="st-view">
                 <option value="standings">リーグ順位表</option>
-                <option value="tournament">トーナメント</option>
+                <option value="tournament">GMリーグ杯</option>
+                <option value="supercup">GMスーパーカップ</option>
                 <option value="rankings">個人ランキング</option>
+              </select>
+            </label>
+            <label id="st-division-wrap" style="display:none;">
+              リーグ
+              <select id="st-division">
+                <option value="GM1">GM1リーグ</option>
+                <option value="GM2">GM2リーグ</option>
               </select>
             </label>
           </div>
@@ -406,6 +415,54 @@
             </div>
           </div>
           <div id="sp-report"></div>
+        </div>
+
+        <div class="card">
+          <h2>ディビジョン設定</h2>
+          <p class="muted">
+            参加チーム数が基準に達したシーズンだけ二部制にできます。
+            一部制のときは全チームを GM1 にしてください。
+          </p>
+          <div id="dv-status"></div>
+          <div id="dv-list"></div>
+          <div class="form-actions">
+            <button type="button" id="dv-save" class="btn btn-primary">割り当てを保存</button>
+            <button type="button" id="dv-all-gm1" class="btn btn-secondary btn-sm">全て GM1 にする</button>
+            <span id="dv-result" class="form-msg"></span>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>GMスーパーカップ</h2>
+          <p class="muted">
+            前シーズンの GM1リーグ王者と GMリーグ杯王者による1試合の特別大会です。
+            出場チームを指定し、他サイトで配信を行った場合はチェックを入れてください。
+            <strong>賞金と配信料はシーズン終了処理でまとめて計上されます。</strong>
+          </p>
+          <div id="sc-suggestion"></div>
+          <div class="form-grid">
+            <label>
+              出場チーム1
+              <select id="sc-team-a"></select>
+            </label>
+            <label>
+              出場チーム2
+              <select id="sc-team-b"></select>
+            </label>
+            <label class="check-label">
+              <input type="checkbox" id="sc-streamed" />
+              他サイトで配信を行った（配信料を支給）
+            </label>
+            <label>
+              備考（配信先など）
+              <input type="text" id="sc-note" placeholder="例: ミラティブ / TikTokライブ" />
+            </label>
+            <div class="form-actions">
+              <button type="button" id="sc-save" class="btn btn-primary">保存する</button>
+              <span id="sc-result" class="form-msg"></span>
+            </div>
+          </div>
+          <div id="sc-info"></div>
         </div>
 
         <div class="card">

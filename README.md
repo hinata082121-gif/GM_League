@@ -6,7 +6,7 @@ J リーグ選手限定の eFootball 私設大会を運営するための集計�
 - **フロント**：GitHub Pages（HTML/CSS/Vanilla JS・ビルド不要）
 - **認証**：Google Identity Services
 - **バックエンド**：Google Apps Script Web App
-- **DB**：Google Sheets（1シート = 1テーブル・全15シート）
+- **DB**：Google Sheets（1シート = 1テーブル・全17シート）
 
 公開 URL：https://hinata082121-gif.github.io/GM_League/
 
@@ -40,14 +40,15 @@ J リーグ選手限定の eFootball 私設大会を運営するための集計�
 │   ├─ auth.gs         # トークン検証・whoami
 │   ├─ config.gs       # Config シート読み取りヘルパ
 │   ├─ lib.gs          # Sheets 読み書きヘルパ・LockService ラッパ
-│   ├─ setupSheets.gs  # 全15シート作成・Config / Clubs 初期値投入（冪等）
+│   ├─ setupSheets.gs  # 全17シート作成・Config / Clubs 初期値投入（冪等）
 │   ├─ api_master.gs     # Phase 1: マスタ & 閲覧
 │   ├─ api_entry.gs      # Phase 2: エントリー提出・承認
 │   ├─ api_transfer.gs   # Phase 3: 移籍
 │   ├─ api_protection.gs # Phase 4: プロテクト
 │   ├─ api_match.gs      # Phase 5: 試合集計
 │   ├─ api_stats.gs      # Phase 6: 集計表示
-│   ├─ api_season.gs     # Phase 7: 経済周辺・シーズン進行
+│   ├─ api_season.gs     # Phase 7: 経済周辺・シーズン進行・賞金支給
+│   ├─ api_division.gs   # ディビジョン割り当て・GMスーパーカップ
 │   └─ seed.gs         # テストデータ投入・削除（手動実行）
 ├─ SPEC.md           # 確定仕様（データモデル・経済ルール・API 一覧・画面一覧）
 ├─ OPERATION.md      # 主催者向け運用マニュアル
@@ -82,6 +83,7 @@ J リーグ選手限定の eFootball 私設大会を運営するための集計�
 | `lib` | `gas/lib.gs` |
 | `setupSheets` | `gas/setupSheets.gs` |
 | `api_master` | `gas/api_master.gs` |
+| `api_division` | `gas/api_division.gs` |
 | `seed` | `gas/seed.gs` |
 
 > 貼り付け後、**行数がリポジトリ側と一致しているか必ず確認する。**
@@ -92,7 +94,7 @@ J リーグ選手限定の eFootball 私設大会を運営するための集計�
 1. エディタ上部の関数選択プルダウンで **`setupAll`** を選ぶ
 2. **▶ 実行** をクリック
 3. 初回のみ権限承認 → 「詳細」→「GMリーグ管理（安全ではないページ）に移動」→「許可」
-4. 「実行ログ」で 15 シート作成・Config 25 件・Clubs 60 件の投入を確認
+4. 「実行ログ」で 17 シート作成・Config の投入・Clubs 60 件の投入を確認
 
 > `setupAll` は既存シートを削除しない（冪等）。ヘッダーを変えたい場合は
 > 対象シートを手動削除してから再実行する。
@@ -332,9 +334,9 @@ GAS エディタの関数プルダウンから選んで実行する。どちら�
 
 | action | payload | 内容 |
 |---|---|---|
-| `getStandings` | `season_id` | リーグ順位表（シーズン1・2合算） |
-| `getTournament` | `season_id` | トーナメント表（tie_id で束ね、合計スコアと各レグ） |
-| `getRankings` | `season_id` | 得点 / アシスト / セーブ数 / シュートセーブ率 |
+| `getStandings` | `season_id`, `division?` | リーグ順位表（シーズン1・2合算）。`division` は `GM1` / `GM2` |
+| `getTournament` | `season_id`, `stage?` | トーナメント表（tie_id で束ね、合計スコアと各レグ）。`stage` 既定は `tournament` |
+| `getRankings` | `season_id`, `competition?` | 得点 / アシスト / セーブ数 / シュートセーブ率 |
 
 > **集計対象は `status=承認` の試合のみ。** 結果はシートに保存せず毎回導出する（設計原則5）。
 >
@@ -342,6 +344,9 @@ GAS エディタの関数プルダウンから選んで実行する。どちら�
 > すべて並ぶ場合は**同順位**として返す（`tied: true`）。判断根拠として `h2h` も各行に含める。
 >
 > トーナメントは**1stレグのホーム側を基準に**合計スコアと PK を正規化して返す。
+>
+> `competition` は `GM1リーグ` / `GM2リーグ` / `GMリーグ杯` / `GMスーパーカップ`。
+> 省略すると全大会の合算になる。リーグは**両チームが同じディビジョンの試合**だけを拾う。
 >
 > シュートセーブ率の分母は「出場試合における相手チームの `shots_on_target` 合計」。
 > `min_matches_for_save_rate`（既定2）未満の GK は除外する。
@@ -355,12 +360,25 @@ GAS エディタの関数プルダウンから選んで実行する。どちら�
 | `addCompensation` | 主催者 | `season_id`, `team_id`, `player_id`, `kind` | 補填金（80% / 90%） |
 | `applySponsorIncome` | 主催者 | `season_id`, `entries:[{team_id,amount}]` | スポンサー収益の反映 |
 | `advanceSeason` | 主催者 | `season_id` | 状態を1つ進める |
-| `closeSeason` | 主催者 | `season_id`, `next_season_id?` | シーズン終了処理 |
+| `closeSeason` | 主催者 | `season_id`, `next_season_id?` | シーズン終了処理（**全賞金をここで支給**） |
+| `getSeasonDivisions` | 全員 | `season_id` | ディビジョン割り当ての現状 |
+| `setSeasonDivisions` | 主催者 | `season_id`, `assignments:[{team_id,division}]` | GM1 / GM2 の割り当て |
+| `getSuperCup` | 全員 | `season_id` | スーパーカップの設定と前季王者の候補 |
+| `setSuperCup` | 主催者 | `season_id`, `team_a`, `team_b`, `streamed`, `note?` | 出場チームと配信有無 |
 
 > **`closeSeason` は取り消せない。** 二重実行は「シーズン終了手数料」の有無で判定して拒否する。
 >
 > 賞金は**同順位・同点なら該当チーム全てに満額**支給する（按分しない）。
 > 手数料の母数は賞金計上**後**の残高。
+>
+> **賞金はすべて `closeSeason` で支給する。** リーグ順位賞金・GMリーグ杯・
+> GMスーパーカップ・配信料・大会別得点王をこの順に計上してから手数料を引く。
+> シーズン途中で配ると、手数料の母数がチームごとにずれるため。
+>
+> リーグ順位賞金は**一部制と二部制で金額表が違う**（Config の `prize_gm1_1div_*` /
+> `prize_gm1_2div_*`）。二部制になるのは参加チームが `two_division_min_teams` 以上のときだけ。
+>
+> 配信料は**試合結果と無関係**に、`SuperCup.streamed` が真なら出場2チームへ支給する。
 >
 > 引継ぎ先シーズンは**主催者が先に作成**しておく。closeSeason は自動生成しない。
 > 引継ぎ時は `acquisition_type` と `acquired_cost` を保持する（補填金の母数になるため）。

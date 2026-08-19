@@ -102,14 +102,15 @@ config.js
 │   ├─ auth.gs         # トークン検証・whoami
 │   ├─ config.gs       # Config シート読み取りヘルパ
 │   ├─ lib.gs          # Sheets 読み書きヘルパ・LockService ラッパ
-│   ├─ setupSheets.gs  # 全15シート作成・Config / Clubs 初期値投入（冪等）
+│   ├─ setupSheets.gs  # 全17シート作成・Config / Clubs 初期値投入（冪等）
 │   ├─ api_master.gs   # Phase 1: マスタ & 閲覧
 │   ├─ api_entry.gs    # Phase 2: エントリー提出・承認
 │   ├─ api_transfer.gs # Phase 3: 移籍（コスト算出・承認・オークション）
 │   ├─ api_protection.gs # Phase 4: プロテクト（期限ゲート・枠管理）
 │   ├─ api_match.gs    # Phase 5: 試合集計（申請・承認・訂正）
 │   ├─ api_stats.gs    # Phase 6: 順位表・トーナメント・ランキング
-│   ├─ api_season.gs   # Phase 7: 経済周辺・シーズン進行
+│   ├─ api_season.gs   # Phase 7: 経済周辺・シーズン進行・賞金支給
+│   ├─ api_division.gs # ディビジョン割り当て・GMスーパーカップ
 │   └─ seed.gs         # テストデータ投入/削除（手動実行）
 ├─ SPEC.md           # 確定仕様
 ├─ OPERATION.md      # 主催者向け運用マニュアル
