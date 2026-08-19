@@ -383,3 +383,143 @@ function _deleteRowsWhere(sheetName, column, predicate) {
 
   return removed;
 }
+
+// =============================================================================
+// 本番投入前のリセット
+// =============================================================================
+
+/**
+ * resetAllTournamentData を実行してよいかどうかのフラグ。
+ *
+ * GAS エディタの「実行」プルダウンには全関数が並ぶため、
+ * 取り消せない削除を誤って走らせないよう二重の鍵にしている。
+ * 実行するときだけ true にして、終わったら false に戻すこと。
+ */
+var RESET_CONFIRMED = false;
+
+/**
+ * リセット対象のシート。
+ *
+ * Players / Clubs / Config / Users は残す。
+ * 選手マスタとクラブ一覧、設定、主催者アカウントは作り直す必要がないため。
+ */
+var RESET_SHEETS = [
+  "Seasons", "Teams", "Rosters", "EntryLists", "Transfers", "Protections",
+  "BudgetTx", "Matches", "MatchGoals", "MatchTeamStats", "MatchGKStats",
+  "SeasonTeams", "SuperCup", "Signups",
+];
+
+/**
+ * 何が消えるかをログに出すだけ。**削除はしない。**
+ *
+ * resetAllTournamentData を走らせる前に必ずこれで確認する。
+ */
+function previewReset() {
+  Logger.log("=== previewReset（削除はしません）===");
+
+  var total = 0;
+  RESET_SHEETS.forEach(function (name) {
+    var count = _dataRowCount(name);
+    total += count;
+    Logger.log("  " + name + ": " + count + " 行");
+  });
+
+  Logger.log("--- 削除される合計: " + total + " 行 ---");
+
+  var keepUsers = [];
+  var dropUsers = [];
+  getSheetData("Users").forEach(function (u) {
+    if (_str(u.role) === "organizer") keepUsers.push(_str(u.email));
+    else dropUsers.push(_str(u.email) + "（" + _str(u.team_id) + "）");
+  });
+
+  Logger.log("残す主催者: " + (keepUsers.join(", ") || "なし"));
+  Logger.log("消す参加者: " + (dropUsers.join(", ") || "なし"));
+
+  Logger.log("残すもの: Players " + _dataRowCount("Players") +
+    " 行 / Clubs " + _dataRowCount("Clubs") +
+    " 行 / Config " + _dataRowCount("Config") + " 行");
+
+  if (keepUsers.length === 0) {
+    Logger.log("⚠ 主催者が1人もいません。このまま実行すると誰もログインできなくなります。");
+  }
+
+  Logger.log("=== 実行するには RESET_CONFIRMED を true にして resetAllTournamentData を走らせる ===");
+}
+
+/**
+ * 大会データを全消しして、本番シーズンを始められる状態に戻す。
+ *
+ * 消すもの: シーズン・チーム・スカッド・移籍・プロテクト・予算・試合・参加申請、
+ *           および role=team のユーザー
+ * 残すもの: 選手マスタ・クラブ一覧・Config・主催者ユーザー
+ *
+ * ⚠️ **取り消せない。** 先に previewReset で内容を確認すること。
+ * ⚠️ 主催者が1人もいない状態では実行しない（誰もログインできなくなるため）。
+ */
+function resetAllTournamentData() {
+  if (!RESET_CONFIRMED) {
+    Logger.log("RESET_CONFIRMED が false のため中止しました。");
+    Logger.log("previewReset で内容を確認してから、seed.gs の RESET_CONFIRMED を true にしてください。");
+    return;
+  }
+
+  var organizers = getSheetData("Users").filter(function (u) {
+    return _str(u.role) === "organizer";
+  });
+
+  if (organizers.length === 0) {
+    Logger.log("中止: 主催者が1人もいません。先に Users へ主催者を登録してください。");
+    return;
+  }
+
+  Logger.log("=== resetAllTournamentData 開始 ===");
+
+  RESET_SHEETS.forEach(function (name) {
+    var removed = _clearSheetRows(name);
+    Logger.log("  " + name + ": " + removed + " 行削除");
+  });
+
+  // 参加者ユーザーだけ消す。主催者は残す
+  var dropped = _deleteRowsWhere("Users", "role", function (v) {
+    return v !== "organizer";
+  });
+  Logger.log("  Users（参加者）: " + dropped + " 行削除");
+
+  Logger.log("残った主催者: " + organizers.map(function (u) {
+    return _str(u.email);
+  }).join(", "));
+
+  Logger.log("=== 完了。RESET_CONFIRMED を false に戻してください ===");
+}
+
+/**
+ * ヘッダー行を残して、データ行をすべて消す。
+ *
+ * @param {string} sheetName
+ * @returns {number} 削除した行数
+ */
+function _clearSheetRows(sheetName) {
+  var sheet = getSheet(sheetName);
+  var last = sheet.getLastRow();
+  if (last < 2) return 0;
+
+  var count = last - 1;
+  sheet.deleteRows(2, count);
+  return count;
+}
+
+/**
+ * ヘッダーを除いたデータ行数を返す。
+ *
+ * @param {string} sheetName
+ * @returns {number}
+ */
+function _dataRowCount(sheetName) {
+  try {
+    var last = getSheet(sheetName).getLastRow();
+    return last < 2 ? 0 : last - 1;
+  } catch (e) {
+    return 0;
+  }
+}
