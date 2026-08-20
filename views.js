@@ -4816,8 +4816,12 @@ async function onSubmitWithdraw() {
       'このクラブの選手は全員が大会の対象外になり、\n' +
       '保有している他チームには補填の請求が立ちます。\n\n取り消せません。よろしいですか？'
     : teamName + ' を ' + newClub + ' に変更します。\n\n' +
-      '変更前のクラブの選手は全員が大会の対象外になります。\n' +
-      '移籍で獲得した他クラブの選手は残ります。\n\n取り消せません。よろしいですか？';
+      '【完全リセット】新規参加者と同じ状態から始まります。\n' +
+      '  ・スカッドは全員解散（移籍で獲得した選手も含む）\n' +
+      '  ・予算は初期値に戻る\n' +
+      '  ・プロテクト、エントリー、進行中の移籍申請は無効\n\n' +
+      '変更前のクラブの選手は大会の対象外になり、\n' +
+      '保有している他チームには補填の請求が立ちます。\n\n取り消せません。よろしいですか？';
 
   if (!confirm(msg)) return;
 
@@ -4842,6 +4846,21 @@ async function onSubmitWithdraw() {
   const d = res.data;
   setResult('wd-result', true, d.kind + ' を反映しました。');
 
+  const reset = d.reset
+    ? `
+      <p><strong>リセットの内容</strong></p>
+      <ul class="detail-grid-list">
+        <li>予算: ${esc(formatMoney(d.reset.budget_before))} → <strong>${esc(formatMoney(d.reset.budget_after))}</strong></li>
+        <li>解除したプロテクト: ${d.reset.protections} 件</li>
+        <li>取り消したエントリー: ${d.reset.entries} 件</li>
+        <li>差し戻した移籍申請: ${d.reset.transfers} 件</li>
+        <li>無効にした補填請求: ${d.reset.claims} 件</li>
+      </ul>
+      <p class="muted note-sm">
+        新規参加者と同じ状態です。新しいクラブでエントリーし直してもらってください。
+      </p>`
+    : '';
+
   document.getElementById('wd-report').innerHTML = `
     <div class="hint-box">
       <strong>${esc(d.old_club)}</strong> が大会から外れました
@@ -4851,6 +4870,7 @@ async function onSubmitWithdraw() {
         <li>スカッドから外れた選手: ${d.released} 名</li>
         <li>立った請求: ${d.claims.length} 件（払い戻しなら合計 ${esc(formatMoney(d.claim_total))}）</li>
       </ul>
+      ${reset}
       <p class="muted note-sm">${esc(d.note)}</p>
     </div>`;
 

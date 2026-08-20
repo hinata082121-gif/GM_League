@@ -353,10 +353,15 @@ function restorePlayerEligible(token, payload) {
  * **そのクラブの選手は全員使えなくなる**。現実移籍と同じ扱い。
  *
  * 辞退       — チームを active=false にし、スカッドを離脱させる
- * チーム変更 — チーム名を新しいクラブに変え、旧クラブの選手を手放す
+ * チーム変更 — **完全にリセットして新規参加者と同じ状態にする**
+ *              クラブ名を変え、スカッド全員を手放し、予算を初期値に戻す
  *
  * どちらの場合も、**旧クラブの選手を保有している他チーム**に補填の請求が立つ。
  * 抜ける本人には請求を立てない（自分の意思で抜けるため）。
+ *
+ * チーム変更を部分的なリセットにしないのは、旧クラブの選手だけ手放して
+ * 買い集めた戦力と予算を持ち越せると、クラブを乗り換えるほうが有利になるため。
+ * 新規参加者と同じ条件から始めてもらう。
  *
  * payload: { season_id, team_id, kind: '辞退' | 'チーム変更', new_club?, note? }
  *
@@ -446,15 +451,14 @@ function withdrawTeam(token, payload) {
     });
 
     // 3. チーム自体の処理
-    var released = 0;
+    var released = _releaseTeamRosters(seasonId, teamId);
+    var reset = null;
 
     if (kind === CLAIM_REASON_WITHDRAW) {
       updateRow("Teams", "team_id", teamId, { active: false });
-      released = _releaseTeamRosters(seasonId, teamId);
     } else {
       updateRow("Teams", "team_id", teamId, { name: newClub, kind: "新規" });
-      // 旧クラブの選手だけ手放す。移籍で獲得した他クラブの選手は残す
-      released = _releaseTeamRosters(seasonId, teamId, affectedPlayers);
+      reset = _resetTeamForFreshStart(seasonId, teamId, at);
     }
 
     var total = 0;
@@ -471,10 +475,115 @@ function withdrawTeam(token, payload) {
         released:       released,
         claims:         claims,
         claim_total:    total,
+        reset:          reset,
         note:           "補填はまだ入金されていません。参加者の選択後、期限の翌日に精算してください。",
       },
     };
   });
+}
+
+/**
+ * チームを新規参加者と同じ状態に戻す。
+ *
+ * スカッドは呼び出し側で既に離脱させている前提。ここでは
+ *   予算       — 残高を new_team_initial_budget にそろえる
+ *   プロテクト — このシーズン分を削除
+ *   エントリー — 提出済みの記録を削除（新しいクラブで出し直すため）
+ *   移籍申請   — 進行中のものを差戻
+ *   補填請求   — 未精算のものを無効化
+ * を行う。
+ *
+ * 予算は「残高カラム」を持たない設計（原則3）なので、
+ * **差額のマイナス取引を1行足して**目的の残高にそろえる。
+ * 履歴を消さないので、何が起きたか後から追える。
+ *
+ * @param {string} seasonId
+ * @param {string} teamId
+ * @param {Date} at
+ * @returns {Object} リセットの内訳
+ */
+function _resetTeamForFreshStart(seasonId, teamId, at) {
+  // --- 予算 ---
+  var balance = 0;
+  getSheetData("BudgetTx").forEach(function (tx) {
+    if (_str(tx.team_id) !== teamId) return;
+    balance += _num(tx.amount);
+  });
+
+  var initial = getConfigNum("new_team_initial_budget", 0);
+
+  if (balance !== initial) {
+    _addBudgetTx(
+      seasonId, teamId, initial - balance, REASON_TEAM_RESET,
+      "チーム変更による初期化", at
+    );
+  }
+
+  // --- プロテクト ---
+  var protections = _deleteRowsForTeam("Protections", seasonId, teamId);
+
+  // --- エントリー ---
+  var entries = _deleteRowsForTeam("EntryLists", seasonId, teamId);
+
+  // --- 進行中の移籍申請 ---
+  var transfers = 0;
+  getSheetData("Transfers").forEach(function (t) {
+    if (_str(t.season_id) !== seasonId) return;
+    var status = _str(t.status);
+    if (status === TX_APPROVED || status === "差戻") return;
+    if (_str(t.to_team) !== teamId && _str(t.from_team) !== teamId) return;
+
+    updateRow("Transfers", "transfer_id", _str(t.transfer_id), { status: "差戻" });
+    transfers++;
+  });
+
+  // --- 未精算の補填請求 ---
+  var claims = 0;
+  getSheetData("Claims").forEach(function (c) {
+    if (_str(c.team_id) !== teamId) return;
+    var status = _str(c.status);
+    if (status === CLAIM_SETTLED || status === CLAIM_VOID) return;
+
+    updateRow("Claims", "claim_id", _str(c.claim_id), { status: CLAIM_VOID });
+    claims++;
+  });
+
+  return {
+    budget_before: balance,
+    budget_after:  initial,
+    protections:   protections,
+    entries:       entries,
+    transfers:     transfers,
+    claims:        claims,
+  };
+}
+
+/**
+ * 指定シーズン・チームの行を削除する。
+ *
+ * @param {string} sheetName
+ * @param {string} seasonId
+ * @param {string} teamId
+ * @returns {number} 削除した行数
+ */
+function _deleteRowsForTeam(sheetName, seasonId, teamId) {
+  var sheet = getSheet(sheetName);
+  var values = sheet.getDataRange().getValues();
+  if (values.length < 2) return 0;
+
+  var headers = values[0];
+  var iSeason = headers.indexOf("season_id");
+  var iTeam = headers.indexOf("team_id");
+  if (iSeason === -1 || iTeam === -1) return 0;
+
+  var count = 0;
+  for (var i = values.length - 1; i >= 1; i--) {
+    if (String(values[i][iSeason]) !== seasonId) continue;
+    if (String(values[i][iTeam]) !== teamId) continue;
+    sheet.deleteRow(i + 1);
+    count++;
+  }
+  return count;
 }
 
 /**

@@ -38,6 +38,7 @@ var REASON_SEASON_FEE = "シーズン終了手数料";
 var REASON_CUP_PRIZE = "リーグ杯賞金";
 var REASON_SUPERCUP_PRIZE = "スーパーカップ賞金";
 var REASON_STREAM_FEE = "配信料";
+var REASON_TEAM_RESET = "チーム変更リセット";
 
 /** 補填金の種別 */
 var COMPENSATION_KINDS = ["大会外移籍", "辞退"];

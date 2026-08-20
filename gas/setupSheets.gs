@@ -391,6 +391,7 @@ function _setupConfig() {
     ["claim_rate_real_transfer",    0.80,        "補填率（現実移籍）獲得額×80%"],
     ["claim_rate_withdrawal",       0.90,        "補填率（辞退・チーム変更）獲得額×90%"],
     ["claim_default_choice",        "払い戻し",  "期限までに選ばれなかった請求の既定"],
+    ["new_team_initial_budget",     0,           "新規参加チームの初期予算。チーム変更のリセット後もこの額になる"],
 
     ["two_division_min_teams",      15,          "二部制にできる最小チーム数"],
 
