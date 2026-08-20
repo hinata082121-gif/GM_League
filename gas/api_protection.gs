@@ -55,9 +55,12 @@ function _endOfDay(d) {
 /**
  * 指定ウィンドウのプロテクト受付期間を算出する。
  *
+ * すべて**移籍市場の開幕日時からの逆算**で決める。
+ * 開幕日を1つ動かせば期間全体がついてくる。
+ *
  * @param {Object} season   Seasons の行
  * @param {number} windowNo 1 または 2
- * @returns {{ open: Date, freeEnd: Date, paidStart: Date, paidEnd: Date }|null}
+ * @returns {{ open: Date, freeStart: Date, freeEnd: Date, paidStart: Date, paidEnd: Date }|null}
  */
 function _protectionPeriods(season, windowNo) {
   var openRaw = windowNo === 2 ? season.window2_open_at : season.window1_open_at;
@@ -67,9 +70,18 @@ function _protectionPeriods(season, windowNo) {
     if (isNaN(openRaw.getTime())) return null;
   }
 
-  var freeBefore = getConfigNum("protect_free_before_days", 2);
+  var freeStartBefore = getConfigNum("protect_free_start_before_days", 6);
+  var freeBefore = getConfigNum("protect_free_before_days", 3);
   var paidBefore = getConfigNum("protect_paid_before_days", 1);
   var marketDays = getConfigNum("market_days", 3);
+
+  // 無料の開始 = 開幕の freeStartBefore 日前の 0:00
+  //
+  // 開始を設けているのは、シーズンが始まった直後からプロテクトできると
+  // 移籍市場の何週間も前に枠を使い切ってしまうため。
+  var freeStart = new Date(openRaw.getTime());
+  freeStart.setDate(freeStart.getDate() - freeStartBefore);
+  freeStart.setHours(0, 0, 0, 0);
 
   // 無料の締切 = 開幕の freeBefore 日前の終わり
   var freeEnd = new Date(openRaw.getTime());
@@ -87,7 +99,10 @@ function _protectionPeriods(season, windowNo) {
   paidEnd.setDate(paidEnd.getDate() + (marketDays - 1));
   paidEnd = _endOfDay(paidEnd);
 
-  return { open: openRaw, freeEnd: freeEnd, paidStart: paidStart, paidEnd: paidEnd };
+  return {
+    open: openRaw, freeStart: freeStart, freeEnd: freeEnd,
+    paidStart: paidStart, paidEnd: paidEnd,
+  };
 }
 
 /**
@@ -104,6 +119,11 @@ function _currentProtectionPhase(season, at) {
   for (var w = 1; w <= 2; w++) {
     var p = _protectionPeriods(season, w);
     if (!p) continue;
+
+    // このウィンドウの期間にまだ入っていない
+    if (at < p.freeStart) {
+      return { window: w, phase: PROTECT_PHASE_CLOSED, periods: p };
+    }
 
     if (at <= p.freeEnd) {
       return { window: w, phase: PROTECT_PHASE_FREE, periods: p };
@@ -233,6 +253,7 @@ function getProtectionStatus(token, payload) {
   if (ph.periods) {
     data.periods = {
       open:       _iso(ph.periods.open),
+      free_start: _iso(ph.periods.freeStart),
       free_end:   _iso(ph.periods.freeEnd),
       paid_start: _iso(ph.periods.paidStart),
       paid_end:   _iso(ph.periods.paidEnd),
@@ -411,7 +432,8 @@ function setProtection(token, payload) {
       var msg = "現在はプロテクトの受付期間外です。";
       if (ph.periods) {
         msg +=
-          "無料は " + _fmtDateTime(ph.periods.freeEnd) + " まで、" +
+          "無料は " + _fmtDateTime(ph.periods.freeStart) + " から " +
+          _fmtDateTime(ph.periods.freeEnd) + " まで、" +
           "有料は " + _fmtDateTime(ph.periods.paidStart) + " から受け付けます。";
       }
       return { ok: false, error: msg };

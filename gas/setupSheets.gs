@@ -520,7 +520,8 @@ function _setupConfig() {
     // ── プロテクト枠数（§6.2）─────────────────────────────────────────
     ["free_protect_count",          2,           "無料プロテクト枠数（移籍市場開幕 前々日まで）"],
     ["paid_protect_count",          3,           "有料プロテクト枠数（移籍市場開幕 前日23時以降）"],
-    ["protect_free_before_days",    2,           "無料プロテクトの締切（開幕の何日前の終わりまで）"],
+    ["protect_free_start_before_days", 6,        "無料プロテクトの開始（開幕の何日前から）"],
+    ["protect_free_before_days",    3,           "無料プロテクトの締切（開幕の何日前の終わりまで）"],
     ["protect_paid_before_days",    1,           "有料プロテクトの開始（開幕の何日前から）"],
     ["protect_paid_start",          "23:00",     "有料プロテクトの開始時刻"],
     ["market_days",                 3,           "移籍市場の日数（有料プロテクトの終了判定に使用）"],
