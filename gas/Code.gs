@@ -78,6 +78,10 @@ function _route(action, token, payload) {
     case "getSignupClubs":
       return getSignupClubs(token, payload);
 
+    // ---- 画面の出し分け ----
+    case "getUiState":
+      return getUiState(token, payload);
+
     // ---- 使用監督 ----
     case "getManagerStatus":
       return getManagerStatus(token, payload);

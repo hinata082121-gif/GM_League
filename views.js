@@ -22,6 +22,9 @@
 /** ログイン中ユーザー（whoami の結果） */
 let currentUser = null;
 
+/** getUiState の結果。どのタブを出すかの判定に使う */
+let uiState = null;
+
 /** マスタのキャッシュ。画面遷移のたびに再取得しないための保持 */
 const cache = {
   teams: null,
@@ -102,7 +105,50 @@ async function initViews(user) {
   // チーム・シーズンは各画面で使い回すので先に取得しておく
   await Promise.all([loadTeams(), loadSeasons()]);
 
+  await applyTabVisibility();
+
   showTab('dashboard');
+}
+
+/**
+ * 期間外のタブを参加者の画面から消す。
+ *
+ * 移籍市場や監督申告のように期間が決まっているものは、期間外に並んでいても
+ * 押せるだけで何もできない。「今できること」を探しにくくなるので隠す。
+ *
+ * **主催者には常に全部見せる。** 期限を過ぎた参加者の代わりに入力するため。
+ *
+ * ⚠️ これは見た目の整理であって権限の仕組みではない。
+ *   タブを隠しても API は叩けるので、期間の検証は各 action 側で行っている。
+ */
+async function applyTabVisibility() {
+  const seasonId = (cache.seasons && cache.seasons.length)
+    ? cache.seasons[cache.seasons.length - 1].season_id
+    : '';
+
+  const res = await callApi('getUiState', { season_id: seasonId });
+
+  // 取得に失敗したときは何も隠さない。
+  // 通信の不調でタブが消えると「機能が無くなった」と誤解されるため
+  if (!res.ok) {
+    console.warn('[views] タブの出し分けを取得できませんでした:', res.error);
+    return;
+  }
+
+  uiState = res.data;
+
+  Object.keys(uiState.tabs).forEach((key) => {
+    const btn = document.querySelector('.tab-btn[data-tab="' + key + '"]');
+    if (!btn) return;
+
+    const state = uiState.tabs[key];
+    btn.style.display = state.open ? '' : 'none';
+    btn.title = state.reason || '';
+  });
+
+  // 今開いているタブが消えたらダッシュボードへ戻す
+  const active = document.querySelector('.tab-btn.is-active');
+  if (active && active.style.display === 'none') showTab('dashboard');
 }
 
 /**
@@ -374,12 +420,62 @@ async function renderDashboard() {
     </div>
     <h3 class="sub-head">予算の内訳</h3>
     ${renderBudgetTable(budget)}
+    ${renderNowAvailable()}
     <h3 class="sub-head">スカッド</h3>
     ${renderSquadTable(squad.squad)}
     ${renderProfileEditor()}
   `;
 
   bindProfileEditor();
+
+  // 開いたままにしていると期間がずれるので、ここで取り直す
+  await applyTabVisibility();
+}
+
+/**
+ * 「今できること」をダッシュボードに出す。
+ *
+ * 期間外のタブは消えるので、消えた側にも触れておかないと
+ * 「機能が無くなった」と誤解される。閉じているものも理由付きで並べる。
+ *
+ * @returns {string} HTML
+ */
+function renderNowAvailable() {
+  if (!uiState || !uiState.tabs) return '';
+
+  const labels = {
+    entry:    'エントリー',
+    transfer: '移籍',
+    protect:  'プロテクト',
+    manager:  '使用監督',
+    claims:   '補填の選択',
+  };
+
+  const open = [];
+  const closed = [];
+
+  Object.keys(labels).forEach((key) => {
+    const state = uiState.tabs[key];
+    if (!state) return;
+    (state.open ? open : closed).push(
+      '<li>' + esc(labels[key]) + ' — ' + esc(state.reason) + '</li>'
+    );
+  });
+
+  return `
+    <h3 class="sub-head">今できること</h3>
+    <div class="hint-box">
+      ${open.length
+        ? '<ul class="detail-grid-list">' + open.join('') + '</ul>'
+        : '<p class="muted">受付中の手続きはありません。</p>'}
+      ${closed.length
+        ? '<details><summary class="muted">受付していないもの（' + closed.length + '）</summary>' +
+          '<ul class="detail-grid-list muted">' + closed.join('') + '</ul></details>'
+        : ''}
+      <p class="muted note-sm">
+        受付中のものはタブに表示されます。期間が終わるとタブは消えますが、記録は残っています。
+      </p>
+    </div>`;
 }
 
 /**

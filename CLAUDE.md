@@ -137,6 +137,7 @@ config.js
 │   ├─ api_claims.gs   # 補填の請求（払い戻し / 入れ替え）と精算
 │   ├─ api_schedule.gs # 日程表（ひな型・生成・編集）
 │   ├─ api_manager.gs  # 使用監督の申告と抽選
+│   ├─ api_ui.gs       # 参加者に見せるタブの判定
 │   └─ seed.gs         # テストデータ投入/削除（手動実行）
 ├─ SPEC.md           # 確定仕様
 ├─ OPERATION.md      # 主催者向け運用マニュアル

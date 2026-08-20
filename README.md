@@ -57,6 +57,7 @@ J リーグ選手限定の eFootball 私設大会を運営するための集計�
 │   ├─ api_claims.gs     # 補填の請求（払い戻し / 入れ替え）と精算
 │   ├─ api_schedule.gs   # 日程表（ひな型・生成・編集）
 │   ├─ api_manager.gs    # 使用監督の申告と抽選
+│   ├─ api_ui.gs         # 参加者に見せるタブの判定
 │   └─ seed.gs         # テストデータ投入・削除（手動実行）
 ├─ FEATURES.md       # 実装済み機能の一覧（分野別）
 ├─ SPEC.md           # 確定仕様（データモデル・経済ルール・API 一覧・画面一覧）
@@ -99,6 +100,7 @@ J リーグ選手限定の eFootball 私設大会を運営するための集計�
 | `api_claims` | `gas/api_claims.gs` |
 | `api_schedule` | `gas/api_schedule.gs` |
 | `api_manager` | `gas/api_manager.gs` |
+| `api_ui` | `gas/api_ui.gs` |
 | `seed` | `gas/seed.gs` |
 
 > 貼り付け後、**行数がリポジトリ側と一致しているか必ず確認する。**
@@ -399,6 +401,7 @@ GAS エディタの関数プルダウンから選んで実行する。どちら�
 | `drawManagers` | 主催者 | `season_id` | 第一次の抽選 |
 | `assignManager` / `clearManagerPick` | 主催者 | — | 手動割当・取消 |
 | `listManagers` / `upsertManager` | 主催者 | — | 監督マスタ |
+| `getUiState` | 全員 | `season_id?` | 参加者に見せるタブ（期間外は false） |
 | `getSeasonDivisions` | 全員 | `season_id` | ディビジョン割り当ての現状 |
 | `setSeasonDivisions` | 主催者 | `season_id`, `assignments:[{team_id,division}]` | GM1 / GM2 の割り当て |
 | `getSuperCup` | 全員 | `season_id` | スーパーカップの設定と前季王者の候補 |
