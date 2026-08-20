@@ -56,6 +56,7 @@ J リーグ選手限定の eFootball 私設大会を運営するための集計�
 │   ├─ api_realtransfer.gs # 現実移籍・辞退・チーム変更の反映
 │   ├─ api_claims.gs     # 補填の請求（払い戻し / 入れ替え）と精算
 │   └─ seed.gs         # テストデータ投入・削除（手動実行）
+├─ FEATURES.md       # 実装済み機能の一覧（分野別）
 ├─ SPEC.md           # 確定仕様（データモデル・経済ルール・API 一覧・画面一覧）
 ├─ OPERATION.md      # 主催者向け運用マニュアル
 ├─ GUIDE.md          # 参加者向け使い方ガイド

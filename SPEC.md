@@ -796,12 +796,12 @@ open = windowN_open_at。判定はすべて GAS の `now()` で行う。
 
 | 遷移 | 付随処理 |
 |---|---|
-| 準備中 → エントリー受付 | **シーズン賞金**（`season_prize`）を全アクティブチームに計上 |
 | シーズン1 → 移籍市場2 | **半期期限付きで獲得した選手を離脱**させる |
 | その他 | 状態を進めるのみ |
 
 - `終了` へは advanceSeason では進めない。`closeSeason` を使う。
-- シーズン賞金は既に計上済みなら二重計上しない（BudgetTx に同 reason があるかで判定）。
+- **シーズン賞金（全チーム一律の配布）は廃止した。** 賞金はすべて `closeSeason` で支給する。
+  途中で配ると、終了手数料の母数がチームごとにずれるため。
 
 ### closeSeason の処理内容（新賞金体系）
 1. **GM1リーグ 順位賞金**（一部制なら1〜4位、二部制なら1〜5位）
@@ -826,10 +826,13 @@ open = windowN_open_at。判定はすべて GAS の `now()` で行う。
 - **引継ぎ時は `acquisition_type` と `acquired_cost` を保持する。**
 - **二重実行を拒否する。** 既に `シーズン終了手数料` が計上されているシーズンは再実行できない。
 
-### 補填金（addCompensation）
+### 補填（Claims・§6.5）
 - 母数は Rosters の `acquired_cost`（そのチームが実際に払った額）。
-- 大会外移籍は `compensation_rate_transfer`（80%）、辞退は `compensation_rate_withdrawal`（90%）。
+- 現実移籍は `claim_rate_real_transfer`（80%）、辞退・チーム変更は `claim_rate_withdrawal`（90%）。
 - **オークションで獲得した選手は対象外**（シーズン終了で自動離脱するため・§5.1）。
+- **請求が立つだけで入金はしない。** 参加者が払い戻しか入れ替えかを選び、
+  `claim_deadline_at` を過ぎてから `settleClaims` でまとめて精算する。
+- `addCompensation` は旧方式の手動計上として残っているが、通常は使わない。
 
 ---
 
@@ -837,10 +840,10 @@ open = windowN_open_at。判定はすべて GAS の `now()` で行う。
 
 | key | value（仮） | 備考 |
 |---|---|---|
-| season_prize | 0 | シーズン賞金（未定） |
-| rank_prize_1 | 0 | 順位別賞金1位（未定） |
-| rank_prize_2 | 0 | 順位別賞金2位（未定） |
-| top_scorer_prize | 0 | 得点王保持チーム賞金（未定） |
+| season_prize | 0 | **旧体系の名残。現在は未使用**（賞金は §5.6 を参照） |
+| rank_prize_1 | 0 | **旧体系の名残。現在は未使用** |
+| rank_prize_2 | 0 | **旧体系の名残。現在は未使用** |
+| top_scorer_prize | 0 | **旧体系の名残。現在は未使用** |
 | special_w1 | 250000000 | 特別 第1次 |
 | special_w2 | 300000000 | 特別 第2次 |
 | special_w1_discount | 200000000 | 特別 第1次 割引 |
