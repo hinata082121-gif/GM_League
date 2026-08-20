@@ -39,6 +39,7 @@
             <option value="standings">順位表</option>
             <option value="transfers">移籍動向</option>
             <option value="participants">参加者一覧</option>
+            <option value="schedule">日程</option>
           </select>
         </label>
       </div>
@@ -214,6 +215,7 @@ function render() {
 
   if (view === 'standings') box.innerHTML = renderStandings();
   else if (view === 'transfers') box.innerHTML = renderTransfers();
+  else if (view === 'schedule') box.innerHTML = renderSchedule();
   else box.innerHTML = renderParticipants();
 
   document.getElementById('pb-footer').textContent =
@@ -309,6 +311,63 @@ function renderTransfers() {
       </table>
     </div>
     <p class="muted note-sm">移籍金は獲得側の実支払額です。オークションは移籍元が「—」になります。</p>`;
+}
+
+/**
+ * 日程表。今日の行を強調し、過ぎた予定は薄く表示する。
+ *
+ * @returns {string} HTML
+ */
+function renderSchedule() {
+  const sc = publicData.schedule;
+
+  if (!sc || sc.count === 0) {
+    return '<h3 class="sub-head">日程</h3><p class="muted">日程はまだ公開されていません。</p>';
+  }
+
+  const next = sc.next
+    ? '<div class="hint-box"><strong>次の予定:</strong> ' +
+      esc(sc.next.date_label) + '（' + esc(sc.next.weekday) + '） ' +
+      esc(sc.next.label) + ' — あと ' + sc.next.days_left + ' 日</div>'
+    : '';
+
+  let prevDate = '';
+
+  const rows = sc.items
+    .map((i) => {
+      const sameDay = i.date === prevDate;
+      prevDate = i.date;
+
+      const cls = [
+        i.is_today ? 'row-today' : '',
+        i.is_past ? 'row-past' : '',
+      ].filter(Boolean).join(' ');
+
+      const dateCell = sameDay
+        ? '<td class="muted">〃</td>'
+        : '<td><strong>' + esc(i.date_label) + '</strong>' +
+          '<span class="muted">（' + esc(i.weekday) + '）</span></td>';
+
+      return `
+        <tr class="${cls}">
+          ${dateCell}
+          <td>${esc(i.label)}${i.note ? '<br><span class="muted">' + esc(i.note) + '</span>' : ''}</td>
+          <td>${i.is_today ? '<strong>本日</strong>'
+              : i.is_past ? '<span class="muted">—</span>'
+              : '<span class="muted">あと' + i.days_left + '日</span>'}</td>
+        </tr>`;
+    })
+    .join('');
+
+  return `
+    <h3 class="sub-head">日程</h3>
+    ${next}
+    <div class="table-wrap">
+      <table class="data-table schedule-table">
+        <thead><tr><th>日付</th><th>予定</th><th>状況</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
 }
 
 /**

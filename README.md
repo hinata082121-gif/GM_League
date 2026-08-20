@@ -6,7 +6,7 @@ J リーグ選手限定の eFootball 私設大会を運営するための集計�
 - **フロント**：GitHub Pages（HTML/CSS/Vanilla JS・ビルド不要）
 - **認証**：Google Identity Services
 - **バックエンド**：Google Apps Script Web App
-- **DB**：Google Sheets（1シート = 1テーブル・全19シート）
+- **DB**：Google Sheets（1シート = 1テーブル・全21シート）
 
 公開 URL：https://hinata082121-gif.github.io/GM_League/
 
@@ -42,7 +42,7 @@ J リーグ選手限定の eFootball 私設大会を運営するための集計�
 │   ├─ auth.gs         # トークン検証・whoami
 │   ├─ config.gs       # Config シート読み取りヘルパ
 │   ├─ lib.gs          # Sheets 読み書きヘルパ・LockService ラッパ
-│   ├─ setupSheets.gs  # 全19シート作成・Config / Clubs 初期値投入（冪等）
+│   ├─ setupSheets.gs  # 全21シート作成・Config / Clubs 初期値投入（冪等）
 │   ├─ api_master.gs     # Phase 1: マスタ & 閲覧
 │   ├─ api_entry.gs      # Phase 2: エントリー提出・承認
 │   ├─ api_transfer.gs   # Phase 3: 移籍
@@ -55,6 +55,7 @@ J リーグ選手限定の eFootball 私設大会を運営するための集計�
 │   ├─ api_public.gs     # 認証不要の公開データ
 │   ├─ api_realtransfer.gs # 現実移籍・辞退・チーム変更の反映
 │   ├─ api_claims.gs     # 補填の請求（払い戻し / 入れ替え）と精算
+│   ├─ api_schedule.gs   # 日程表（ひな型・生成・編集）
 │   └─ seed.gs         # テストデータ投入・削除（手動実行）
 ├─ FEATURES.md       # 実装済み機能の一覧（分野別）
 ├─ SPEC.md           # 確定仕様（データモデル・経済ルール・API 一覧・画面一覧）
@@ -95,6 +96,7 @@ J リーグ選手限定の eFootball 私設大会を運営するための集計�
 | `api_public` | `gas/api_public.gs` |
 | `api_realtransfer` | `gas/api_realtransfer.gs` |
 | `api_claims` | `gas/api_claims.gs` |
+| `api_schedule` | `gas/api_schedule.gs` |
 | `seed` | `gas/seed.gs` |
 
 > 貼り付け後、**行数がリポジトリ側と一致しているか必ず確認する。**
@@ -105,7 +107,7 @@ J リーグ選手限定の eFootball 私設大会を運営するための集計�
 1. エディタ上部の関数選択プルダウンで **`setupAll`** を選ぶ
 2. **▶ 実行** をクリック
 3. 初回のみ権限承認 → 「詳細」→「GMリーグ管理（安全ではないページ）に移動」→「許可」
-4. 「実行ログ」で 19 シート作成・Config の投入・Clubs 60 件の投入を確認
+4. 「実行ログ」で 21 シート作成・Config の投入・Clubs 60 件の投入を確認
 
 > `setupAll` は既存シートを削除しない（冪等）。ヘッダーを変えたい場合は
 > 対象シートを手動削除してから再実行する。
@@ -382,6 +384,12 @@ GAS エディタの関数プルダウンから選んで実行する。どちら�
 | `overrideClaim` | 主催者 | `claim_id`, `choice`, `replacement_player_id?` | 代行入力（期限後も可） |
 | `voidClaim` | 主催者 | `claim_id` | 請求の無効化 |
 | `settleClaims` | 主催者 | `season_id`, `force?` | 期限後の一括精算 |
+| `getSeasonSchedule` | 全員 | `season_id` | 日程一覧＋今日／次の予定 |
+| `getScheduleTemplate` | 主催者 | — | 日程のひな型 |
+| `saveScheduleTemplate` | 主催者 | `rows[]` | ひな型を丸ごと差し替え |
+| `generateSchedule` | 主催者 | `season_id`, `opening_date`, `overwrite?` | ひな型から日程を生成 |
+| `upsertScheduleItem` | 主催者 | `schedule_id?`, `season_id`, `date`, `label`, ... | 予定の追加・修正 |
+| `deleteScheduleItem` | 主催者 | `schedule_id` | 予定の削除 |
 | `getSeasonDivisions` | 全員 | `season_id` | ディビジョン割り当ての現状 |
 | `setSeasonDivisions` | 主催者 | `season_id`, `assignments:[{team_id,division}]` | GM1 / GM2 の割り当て |
 | `getSuperCup` | 全員 | `season_id` | スーパーカップの設定と前季王者の候補 |

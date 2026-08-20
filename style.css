@@ -1126,3 +1126,37 @@ code {
 .claim-actions select {
   min-width: 200px;
 }
+
+/* ===== 日程表 ===== */
+
+.schedule-table td { vertical-align: top; }
+
+/* 今日の行を目立たせる */
+.row-today {
+  background: #eaf3ff;
+  border-left: 3px solid #1d63d1;
+}
+
+/* 過ぎた予定は控えめに */
+.row-past { opacity: 0.55; }
+
+.row-done { background: #f3f7f2; }
+
+#sg-template-wrap {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid #e5e9f0;
+}
+
+#sg-template-wrap summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #12325e;
+  padding: 4px 0;
+}
+
+#sg-template input[type="number"],
+#sg-template input[type="text"] {
+  width: 100%;
+  box-sizing: border-box;
+}

@@ -99,6 +99,7 @@
         <button class="tab-btn" data-tab="protect">プロテクト</button>
         <button class="tab-btn" data-tab="match">試合</button>
         <button class="tab-btn" data-tab="stats">順位・記録</button>
+        <button class="tab-btn" data-tab="schedule">日程</button>
         <button class="tab-btn" id="tab-claims" data-tab="claims">補填の選択</button>
         <button class="tab-btn" id="tab-approval" data-tab="approval" style="display:none;">
           エントリー承認
@@ -392,6 +393,21 @@
         </div>
       </div>
 
+      <!-- ===== 日程（全ロール） ===== -->
+      <div class="tab-panel" data-panel="schedule" style="display:none;">
+        <div class="card">
+          <h2>日程</h2>
+          <div class="filter-row">
+            <label>
+              シーズン
+              <select id="sd-season"></select>
+            </label>
+          </div>
+          <div id="sd-next"></div>
+          <div id="sd-list"></div>
+        </div>
+      </div>
+
       <!-- ===== 補填の選択（参加者） ===== -->
       <div class="tab-panel" data-panel="claims" style="display:none;">
         <div class="card">
@@ -483,6 +499,47 @@
             </div>
           </div>
           <div id="sp-report"></div>
+        </div>
+
+        <div class="card">
+          <h2>日程表</h2>
+          <p class="muted">
+            <strong>リーグ戦の開幕日</strong>を入れると、ひな型から全部の日付が決まります。
+            毎シーズン同じ並びを使い回し、ずらしたい予定だけ後から個別に直せます。
+          </p>
+          <div class="form-grid">
+            <label>
+              リーグ戦の開幕日
+              <input type="date" id="sg-open-date" />
+              <span class="unit-hint">この日を基準に、準備期間の日付が逆算されます。</span>
+            </label>
+            <label class="check-label">
+              <input type="checkbox" id="sg-overwrite" />
+              既存の日程を上書きする
+            </label>
+            <div class="form-actions">
+              <button type="button" id="sg-generate" class="btn btn-primary">日程を作成</button>
+              <span id="sg-gen-result" class="form-msg"></span>
+            </div>
+          </div>
+          <div id="sg-schedule"></div>
+          <div class="form-actions">
+            <button type="button" id="sg-add-item" class="btn btn-secondary btn-sm">予定を追加</button>
+          </div>
+          <details id="sg-template-wrap">
+            <summary>日程表のひな型を編集する</summary>
+            <p class="muted note-sm">
+              ここを直すと<strong>次に作成する日程</strong>から反映されます。
+              作成済みの日程は変わりません。
+              日数は<strong>開幕日を0とした相対日数</strong>で、開幕前は負の数です。
+            </p>
+            <div id="sg-template"></div>
+            <div class="form-actions">
+              <button type="button" id="sg-template-add" class="btn btn-secondary btn-sm">行を追加</button>
+              <button type="button" id="sg-template-save" class="btn btn-primary">ひな型を保存</button>
+              <span id="sg-template-result" class="form-msg"></span>
+            </div>
+          </details>
         </div>
 
         <div class="card">

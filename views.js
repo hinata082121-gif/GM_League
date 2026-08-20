@@ -137,6 +137,7 @@ function showTab(name) {
   if (name === 'season') renderSeasonAdmin();
   if (name === 'signup') renderSignupAdmin();
   if (name === 'claims') renderClaims();
+  if (name === 'schedule') renderSchedule();
   if (name === 'approval') renderApproval();
   if (name === 'txapproval') renderTxApproval();
   if (name === 'master') renderMaster();
@@ -3236,6 +3237,7 @@ async function loadSeasonAdmin() {
   await loadRealTransfers();
   await loadClaimAdmin();
   await loadWithdraw();
+  await loadScheduleAdmin();
 }
 
 // ---------------------------------------------------------------------------
@@ -4877,4 +4879,419 @@ async function onSubmitWithdraw() {
   cache.teams = null;
   await loadTeams(true);
   await loadSeasonAdmin();
+}
+
+// ---------------------------------------------------------------------------
+// 画面: 日程（全ロール）
+// ---------------------------------------------------------------------------
+
+/**
+ * 日程タブを初期化する。
+ */
+async function renderSchedule() {
+  const seasons = await loadSeasons();
+  fillSelect('sd-season', seasons, 'season_id', 'name');
+
+  const sel = document.getElementById('sd-season');
+  if (!sel.dataset.bound) {
+    sel.onchange = loadScheduleView;
+    sel.dataset.bound = '1';
+  }
+
+  await loadScheduleView();
+}
+
+/**
+ * 選択中シーズンの日程を描画する。
+ */
+async function loadScheduleView() {
+  const seasonId = document.getElementById('sd-season').value;
+  if (!seasonId) return;
+
+  setLoading('sd-list');
+
+  const res = await callApi('getSeasonSchedule', { season_id: seasonId });
+  if (!res.ok) {
+    setError('sd-list', '日程を取得できませんでした: ' + res.error);
+    return;
+  }
+
+  renderScheduleNext(res.data);
+  document.getElementById('sd-list').innerHTML = scheduleTableHtml(res.data, false);
+}
+
+/**
+ * 「今日」と「次の予定」を上部に出す。
+ *
+ * 一覧を上から探させるより、まずここを見れば済むようにする。
+ */
+function renderScheduleNext(d) {
+  const box = document.getElementById('sd-next');
+
+  if (d.count === 0) {
+    box.innerHTML = '';
+    return;
+  }
+
+  const today = d.today_items.length
+    ? '<li><strong>今日:</strong> ' +
+      d.today_items.map((i) => esc(i.label)).join(' / ') + '</li>'
+    : '';
+
+  const next = d.next
+    ? '<li><strong>次:</strong> ' + esc(d.next.date_label) +
+      '（' + esc(d.next.weekday) + '） ' + esc(d.next.label) +
+      ' — あと <strong>' + d.next.days_left + '</strong> 日</li>'
+    : '<li class="muted">この先の予定はありません。</li>';
+
+  const rest = d.upcoming.slice(1)
+    .map((i) => '<li class="muted">' + esc(i.date_label) + '（' + esc(i.weekday) + '） ' +
+      esc(i.label) + '</li>')
+    .join('');
+
+  box.innerHTML = `
+    <div class="hint-box">
+      <ul class="detail-grid-list">
+        ${today}
+        ${next}
+        ${rest}
+      </ul>
+    </div>`;
+}
+
+/**
+ * 日程表の HTML を作る。主催者向けは編集ボタンを付ける。
+ *
+ * 同じ日付が続く場合は2行目以降の日付欄を空にして、
+ * 「その日にまとめて起きること」が見た目で分かるようにする。
+ *
+ * @param {Object} d getSeasonSchedule の結果
+ * @param {boolean} editable
+ * @returns {string} HTML
+ */
+function scheduleTableHtml(d, editable) {
+  if (d.count === 0) {
+    return '<p class="muted">日程はまだ作成されていません。</p>';
+  }
+
+  let prevDate = '';
+
+  const rows = d.items
+    .map((i) => {
+      const sameDay = i.date === prevDate;
+      prevDate = i.date;
+
+      const cls = [
+        i.is_today ? 'row-today' : '',
+        i.is_past ? 'row-past' : '',
+        i.done ? 'row-done' : '',
+      ].filter(Boolean).join(' ');
+
+      const dateCell = sameDay
+        ? '<td class="muted">〃</td>'
+        : '<td><strong>' + esc(i.date_label) + '</strong>' +
+          '<span class="muted">（' + esc(i.weekday) + '）</span></td>';
+
+      const state = i.done
+        ? '<span class="tag-ok">済</span>'
+        : i.is_today
+          ? '<span class="tag-wait">本日</span>'
+          : i.is_past
+            ? '<span class="muted">—</span>'
+            : '<span class="muted">あと' + i.days_left + '日</span>';
+
+      const actions = editable
+        ? `<td>
+             <button type="button" class="btn btn-secondary btn-sm sd-edit"
+                     data-id="${esc(i.schedule_id)}">編集</button>
+             <button type="button" class="btn btn-secondary btn-sm sd-del"
+                     data-id="${esc(i.schedule_id)}">削除</button>
+           </td>`
+        : '';
+
+      return `
+        <tr class="${cls}">
+          ${dateCell}
+          <td>${esc(i.label)}${i.note ? '<br><span class="muted note-sm">' + esc(i.note) + '</span>' : ''}</td>
+          <td>${state}</td>
+          ${actions}
+        </tr>`;
+    })
+    .join('');
+
+  return `
+    <div class="table-wrap">
+      <table class="data-table schedule-table">
+        <thead>
+          <tr>
+            <th>日付</th><th>予定</th><th>状況</th>${editable ? '<th>操作</th>' : ''}
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// 日程表の管理（主催者）
+// ---------------------------------------------------------------------------
+
+/** getScheduleTemplate の結果 */
+let scheduleTemplateRows = [];
+
+/**
+ * 運営タブの日程表セクションを読み込む。
+ */
+async function loadScheduleAdmin() {
+  const seasonId = document.getElementById('sp-season').value;
+  if (!seasonId) return;
+
+  const btn = document.getElementById('sg-generate');
+  if (!btn.dataset.bound) {
+    btn.onclick = onGenerateSchedule;
+    document.getElementById('sg-add-item').onclick = () => onEditScheduleItem(null);
+    document.getElementById('sg-template-add').onclick = onAddTemplateRow;
+    document.getElementById('sg-template-save').onclick = onSaveTemplate;
+    btn.dataset.bound = '1';
+  }
+
+  await loadAdminSchedule();
+  await loadTemplateEditor();
+}
+
+/**
+ * そのシーズンの日程を編集モードで描画する。
+ */
+async function loadAdminSchedule() {
+  const seasonId = document.getElementById('sp-season').value;
+
+  setLoading('sg-schedule');
+
+  const res = await callApi('getSeasonSchedule', { season_id: seasonId });
+  if (!res.ok) {
+    setError('sg-schedule', '日程を取得できませんでした: ' + res.error);
+    return;
+  }
+
+  const box = document.getElementById('sg-schedule');
+  box.innerHTML = scheduleTableHtml(res.data, true);
+
+  box.querySelectorAll('.sd-edit').forEach((b) => {
+    const item = res.data.items.find((i) => i.schedule_id === b.dataset.id);
+    b.onclick = () => onEditScheduleItem(item);
+  });
+  box.querySelectorAll('.sd-del').forEach((b) => {
+    b.onclick = () => onDeleteScheduleItem(b.dataset.id);
+  });
+}
+
+/**
+ * 開幕日からひな型を展開する。
+ */
+async function onGenerateSchedule() {
+  const seasonId = document.getElementById('sp-season').value;
+  const date = document.getElementById('sg-open-date').value;
+  const overwrite = document.getElementById('sg-overwrite').checked;
+
+  if (!date) {
+    setResult('sg-gen-result', false, 'リーグ戦の開幕日を入れてください。');
+    return;
+  }
+
+  if (overwrite && !confirm(
+    '既存の日程をすべて削除して作り直します。\n' +
+    '個別に調整した内容も消えます。よろしいですか？'
+  )) return;
+
+  const btn = document.getElementById('sg-generate');
+  btn.disabled = true;
+  setResult('sg-gen-result', true, '作成中...');
+
+  const res = await callApi('generateSchedule', {
+    season_id: seasonId,
+    opening_date: date,
+    overwrite,
+  });
+
+  btn.disabled = false;
+
+  if (!res.ok) {
+    setResult('sg-gen-result', false, res.error);
+    return;
+  }
+
+  setResult('sg-gen-result', true, res.data.count + ' 件の日程を作成しました。');
+  document.getElementById('sg-overwrite').checked = false;
+  await loadAdminSchedule();
+}
+
+/**
+ * 予定を1件追加・編集する。
+ *
+ * @param {Object|null} item 既存の予定。null なら新規
+ */
+async function onEditScheduleItem(item) {
+  const seasonId = document.getElementById('sp-season').value;
+
+  const label = prompt('予定の名前', item ? item.label : '');
+  if (label === null || !label.trim()) return;
+
+  const date = prompt(
+    '日付（YYYY-MM-DD）',
+    item ? String(item.date).slice(0, 10) : ''
+  );
+  if (date === null || !date.trim()) return;
+
+  const note = prompt('補足（任意）', item ? item.note : '');
+  if (note === null) return;
+
+  const res = await callApi('upsertScheduleItem', {
+    schedule_id: item ? item.schedule_id : '',
+    season_id: seasonId,
+    date: date.trim(),
+    label: label.trim(),
+    note,
+    sort_order: item ? item.sort_order : 999,
+    done: item ? item.done : false,
+  });
+
+  if (!res.ok) {
+    alert('保存できません: ' + res.error);
+    return;
+  }
+
+  await loadAdminSchedule();
+}
+
+/**
+ * 予定を1件削除する。
+ *
+ * @param {string} scheduleId
+ */
+async function onDeleteScheduleItem(scheduleId) {
+  if (!confirm('この予定を削除します。よろしいですか？')) return;
+
+  const res = await callApi('deleteScheduleItem', { schedule_id: scheduleId });
+  if (!res.ok) {
+    alert('削除できません: ' + res.error);
+    return;
+  }
+
+  await loadAdminSchedule();
+}
+
+// ---------------------------------------------------------------------------
+// ひな型の編集
+// ---------------------------------------------------------------------------
+
+/**
+ * ひな型を読み込んで編集欄を作る。
+ */
+async function loadTemplateEditor() {
+  const res = await callApi('getScheduleTemplate', {});
+  if (!res.ok) {
+    setResult('sg-template-result', false, 'ひな型を取得できませんでした: ' + res.error);
+    return;
+  }
+
+  scheduleTemplateRows = res.data.rows;
+  renderTemplateEditor();
+}
+
+/**
+ * ひな型の編集欄を描く。
+ *
+ * 行の追加・削除は画面上だけで行い、「保存」で丸ごと差し替える。
+ * 1行ずつ通信すると、並べ替え中の中途半端な状態が保存されてしまう。
+ */
+function renderTemplateEditor() {
+  const rows = scheduleTemplateRows
+    .map((r, i) => `
+      <tr>
+        <td><input type="number" class="tpl-offset" data-i="${i}" value="${r.day_offset}" step="1" /></td>
+        <td><input type="text" class="tpl-label" data-i="${i}" value="${esc(r.label)}" /></td>
+        <td><input type="text" class="tpl-note" data-i="${i}" value="${esc(r.note)}" /></td>
+        <td><button type="button" class="btn btn-secondary btn-sm tpl-del" data-i="${i}">削除</button></td>
+      </tr>`)
+    .join('');
+
+  document.getElementById('sg-template').innerHTML = `
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th style="width:90px;">日数</th><th>予定</th><th>補足</th><th style="width:70px;">操作</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <p class="muted note-sm">
+      例: 開幕14日前なら <code>-14</code>、開幕当日なら <code>0</code>。
+      同じ日数の行は上から順に並びます。
+    </p>`;
+
+  document.querySelectorAll('.tpl-del').forEach((b) => {
+    b.onclick = () => {
+      collectTemplateRows();
+      scheduleTemplateRows.splice(Number(b.dataset.i), 1);
+      renderTemplateEditor();
+    };
+  });
+}
+
+/**
+ * 画面の入力値を scheduleTemplateRows に取り込む。
+ */
+function collectTemplateRows() {
+  document.querySelectorAll('.tpl-offset').forEach((el) => {
+    scheduleTemplateRows[el.dataset.i].day_offset = Number(el.value) || 0;
+  });
+  document.querySelectorAll('.tpl-label').forEach((el) => {
+    scheduleTemplateRows[el.dataset.i].label = el.value;
+  });
+  document.querySelectorAll('.tpl-note').forEach((el) => {
+    scheduleTemplateRows[el.dataset.i].note = el.value;
+  });
+}
+
+/**
+ * ひな型に空行を1つ足す。
+ */
+function onAddTemplateRow() {
+  collectTemplateRows();
+  scheduleTemplateRows.push({ day_offset: 0, label: '', note: '' });
+  renderTemplateEditor();
+}
+
+/**
+ * ひな型を保存する。
+ */
+async function onSaveTemplate() {
+  collectTemplateRows();
+
+  const rows = scheduleTemplateRows.filter((r) => r.label.trim());
+  if (rows.length === 0) {
+    setResult('sg-template-result', false, '少なくとも1件は必要です。');
+    return;
+  }
+
+  const btn = document.getElementById('sg-template-save');
+  btn.disabled = true;
+  setResult('sg-template-result', true, '保存中...');
+
+  const res = await callApi('saveScheduleTemplate', { rows });
+
+  btn.disabled = false;
+
+  if (!res.ok) {
+    setResult('sg-template-result', false, '保存できません: ' + res.error);
+    return;
+  }
+
+  setResult(
+    'sg-template-result', true,
+    res.data.count + ' 件を保存しました。次に作成する日程から反映されます。'
+  );
+  await loadTemplateEditor();
 }

@@ -78,6 +78,25 @@ function _route(action, token, payload) {
     case "getSignupClubs":
       return getSignupClubs(token, payload);
 
+    // ---- 日程表 ----
+    case "getSeasonSchedule":
+      return getSeasonSchedule(token, payload);
+
+    case "getScheduleTemplate":
+      return getScheduleTemplate(token);
+
+    case "saveScheduleTemplate":
+      return saveScheduleTemplate(token, payload);
+
+    case "generateSchedule":
+      return generateSchedule(token, payload);
+
+    case "upsertScheduleItem":
+      return upsertScheduleItem(token, payload);
+
+    case "deleteScheduleItem":
+      return deleteScheduleItem(token, payload);
+
     // ---- 参加登録（Google ログインのみ。Users 未登録でも可）----
     case "submitSignup":
       return submitSignup(token, payload);

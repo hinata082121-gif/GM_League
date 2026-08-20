@@ -12,7 +12,7 @@
  *   5. 集計は status=承認 のデータのみ（既存の集計関数をそのまま使う）
  *
  * 公開してよいもの / いけないもの
- *   公開する: チーム名・オーナーの表示名・X ID・順位表・承認済み移籍
+ *   公開する: チーム名・オーナーの表示名・X ID・順位表・承認済み移籍・日程表
  *   公開しない: email・申請中や差戻の移籍・未承認の試合
  */
 
@@ -82,6 +82,7 @@ function getPublicData(payload) {
       participants: _publicParticipants(),
       standings:    _publicStandings(seasonId),
       transfers:    _publicTransfers(seasonId),
+      schedule:     _publicSchedule(seasonId),
       signup_open:  _isSignupOpen(),
       generated_at: _iso(now()),
     },
@@ -150,6 +151,18 @@ function _publicStandings(seasonId) {
   }
 
   return result;
+}
+
+/**
+ * 日程表を返す。予定の名前と日付だけで、個人情報は含まれない。
+ *
+ * @param {string} seasonId
+ * @returns {Object|null}
+ */
+function _publicSchedule(seasonId) {
+  var view = _buildScheduleView(seasonId);
+  if (view.count === 0) return null;
+  return view;
 }
 
 /**

@@ -56,6 +56,9 @@ function setupAll() {
   // --- Clubs 初期値投入 ---
   var clubResult = _setupClubs();
 
+  // --- 日程表のひな型 投入 ---
+  var scheduleResult = _setupScheduleTemplate();
+
   // --- サマリー表示 ---
   Logger.log("────────────────────────────────────────");
   Logger.log("【作成】 " + results.created.length + " シート: " + (results.created.join(", ") || "なし"));
@@ -63,6 +66,7 @@ function setupAll() {
   Logger.log("【列追加】 " + (headerResult.added.length ? headerResult.added.join(" / ") : "なし"));
   Logger.log("【Config】 追加 " + configResult.added + " 件 / スキップ " + configResult.skipped + " 件");
   Logger.log("【Clubs】 追加 " + clubResult.added + " 件 / スキップ " + clubResult.skipped + " 件");
+  Logger.log("【日程ひな型】 追加 " + scheduleResult.added + " 件 / スキップ " + scheduleResult.skipped + " 件");
   if (results.errors.length > 0) {
     Logger.log("【エラー】 " + results.errors.join(" / "));
   }
@@ -75,7 +79,7 @@ function setupAll() {
 // =============================================================================
 
 /**
- * 全19シートの名前・ヘッダー配列・SPEC参照を返す。
+ * 全21シートの名前・ヘッダー配列・SPEC参照を返す。
  *
  * カラム名は SPEC.md §4 の表の「カラム」列と完全一致させる。
  * ここを変更した場合は lib.gs の getSheetData / appendRow も影響を受ける。
@@ -303,6 +307,31 @@ function _getSheetDefinitions() {
         "team_b",     // string  出場チーム2
         "streamed",   // bool    配信を行ったか
         "note",       // string  備考
+      ],
+    },
+    {
+      // §4.20 ScheduleTemplate ─ 日程表のひな型（毎シーズン使い回す）
+      name: "ScheduleTemplate",
+      spec: "SPEC.md §4.20",
+      headers: [
+        "sort_order",  // number  表示順
+        "day_offset",  // number  リーグ戦開幕日を0とした相対日数（開幕前は負）
+        "label",       // string  予定の名前
+        "note",        // string  補足
+      ],
+    },
+    {
+      // §4.21 SeasonSchedule ─ シーズンごとに確定した日程
+      name: "SeasonSchedule",
+      spec: "SPEC.md §4.21",
+      headers: [
+        "schedule_id", // string    主キー
+        "season_id",   // string
+        "date",        // date      実際の日付
+        "label",       // string    予定の名前
+        "note",        // string    補足
+        "sort_order",  // number    同じ日の中での表示順
+        "done",        // bool      消化済みか（主催者がチェック）
       ],
     },
     {
@@ -702,4 +731,64 @@ function _getClubDefinitions() {
     ["J3", "鹿児島ユナイテッドFC"],
     ["J3", "FC琉球"],
   ];
+}
+
+// =============================================================================
+// 日程表のひな型（SPEC.md §4.20）
+// =============================================================================
+
+/**
+ * ScheduleTemplate に既定のひな型を投入する。
+ *
+ * 既に1件でも行があれば何もしない（主催者が編集した内容を壊さないため）。
+ *
+ * day_offset は**リーグ戦開幕日を 0** とした相対日数。
+ * 開幕前の準備期間は負の数になる。開幕日を決めれば全部の日付が決まる。
+ *
+ * ⚠️ ここは前シーズンの日程表をそのまま写したもの。
+ *    運用しながら「運営・進行 → 日程表のひな型」で調整してよい。
+ *    このコードを書き換えても、既に行があるシートには反映されない。
+ *
+ * @returns {{ added: number, skipped: number }}
+ */
+function _setupScheduleTemplate() {
+  var sheet = getSheet("ScheduleTemplate");
+
+  if (sheet.getLastRow() >= 2) {
+    Logger.log("  [日程ひな型] スキップ（既に行があります）");
+    return { added: 0, skipped: 1 };
+  }
+
+  // [day_offset, label, note]
+  // 開幕 = 0。逆算して並べている
+  var defs = [
+    [-14, "エントリー変更締切", ""],
+    [-13, "スポンサー申告締切日", ""],
+    [-13, "無料プロテクト締切", ""],
+    [-12, "無料プロテクト掲示", ""],
+    [-11, "開幕前EL提出日", ""],
+    [-10, "移籍期間開幕［始］", ""],
+    [-10, "エントリー追加選手申告開始", ""],
+    [-9,  "エントリー追加選手申告締切", ""],
+    [-8,  "移籍期間［終］", ""],
+    [-8,  "オークション選手掲示", ""],
+    [-7,  "（空き日）", "予備日。処理が重なったときの調整に使う"],
+    [-6,  "オークション開始", ""],
+    [-5,  "オークション終了", ""],
+    [-4,  "EL最終提出日", ""],
+    [-3,  "GMスーパーカップ", ""],
+    [-2,  "GMスーパーカップ（続き）", ""],
+    [-2,  "リーグ戦日程・対戦表 発表日", ""],
+    [-1,  "GMスーパーカップ（続き）", ""],
+    [0,   "リーグ戦開幕", ""],
+  ];
+
+  var rows = defs.map(function (d, i) {
+    return [i + 1, d[0], d[1], d[2]];
+  });
+
+  sheet.getRange(2, 1, rows.length, 4).setValues(rows);
+  Logger.log("  [日程ひな型] " + rows.length + " 件を投入しました。");
+
+  return { added: rows.length, skipped: 0 };
 }
