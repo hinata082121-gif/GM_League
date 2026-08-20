@@ -59,6 +59,9 @@ function setupAll() {
   // --- 日程表のひな型 投入 ---
   var scheduleResult = _setupScheduleTemplate();
 
+  // --- 監督マスタの枠を用意 ---
+  var managerResult = _setupManagers();
+
   // --- サマリー表示 ---
   Logger.log("────────────────────────────────────────");
   Logger.log("【作成】 " + results.created.length + " シート: " + (results.created.join(", ") || "なし"));
@@ -67,6 +70,7 @@ function setupAll() {
   Logger.log("【Config】 追加 " + configResult.added + " 件 / スキップ " + configResult.skipped + " 件");
   Logger.log("【Clubs】 追加 " + clubResult.added + " 件 / スキップ " + clubResult.skipped + " 件");
   Logger.log("【日程ひな型】 追加 " + scheduleResult.added + " 件 / スキップ " + scheduleResult.skipped + " 件");
+  Logger.log("【監督マスタ】 追加 " + managerResult.added + " 件 / スキップ " + managerResult.skipped + " 件");
   if (results.errors.length > 0) {
     Logger.log("【エラー】 " + results.errors.join(" / "));
   }
@@ -79,7 +83,7 @@ function setupAll() {
 // =============================================================================
 
 /**
- * 全21シートの名前・ヘッダー配列・SPEC参照を返す。
+ * 全23シートの名前・ヘッダー配列・SPEC参照を返す。
  *
  * カラム名は SPEC.md §4 の表の「カラム」列と完全一致させる。
  * ここを変更した場合は lib.gs の getSheetData / appendRow も影響を受ける。
@@ -310,6 +314,33 @@ function _getSheetDefinitions() {
       ],
     },
     {
+      // §4.22 Managers ─ 使用監督のマスタ（現実の J1/J2 クラブの監督）
+      name: "Managers",
+      spec: "SPEC.md §4.22",
+      headers: [
+        "manager_id",  // string  主キー
+        "name",        // string  監督名。**主催者が毎シーズン入れ直す**
+        "club",        // string  率いているクラブ（Clubs.club_name と一致）
+        "category",    // enum    J1 / J2
+        "active",      // bool    今シーズンの選択肢に出すか
+      ],
+    },
+    {
+      // §4.23 ManagerPicks ─ 使用監督の申告と確定
+      name: "ManagerPicks",
+      spec: "SPEC.md §4.23",
+      headers: [
+        "pick_id",     // string    主キー
+        "season_id",   // string
+        "team_id",     // string    申告したチーム
+        "round",       // number    1 = 第一次（抽選） / 2 = 第二次（先着）
+        "manager_id",  // string
+        "status",      // enum      申告中 / 当選 / 落選 / 確定
+        "created_at",  // datetime
+        "decided_at",  // datetime  抽選・確定した日時
+      ],
+    },
+    {
       // §4.20 ScheduleTemplate ─ 日程表のひな型（毎シーズン使い回す）
       name: "ScheduleTemplate",
       spec: "SPEC.md §4.20",
@@ -421,6 +452,7 @@ function _setupConfig() {
     ["claim_rate_withdrawal",       0.90,        "補填率（辞退・チーム変更）獲得額×90%"],
     ["claim_default_choice",        "払い戻し",  "期限までに選ばれなかった請求の既定"],
     ["new_team_initial_budget",     0,           "新規参加チームの初期予算。チーム変更のリセット後もこの額になる"],
+    ["manager_round",               0,           "使用監督の受付状態。0=停止 / 1=第一次（抽選） / 2=第二次（先着）"],
 
     ["two_division_min_teams",      15,          "二部制にできる最小チーム数"],
 
@@ -801,6 +833,60 @@ function _setupScheduleTemplate() {
 
   sheet.getRange(2, 1, rows.length, 4).setValues(rows);
   Logger.log("  [日程ひな型] " + rows.length + " 件を投入しました。");
+
+  return { added: rows.length, skipped: 0 };
+}
+
+// =============================================================================
+// 監督マスタの枠（SPEC.md §4.22）
+// =============================================================================
+
+/**
+ * Managers に J1・J2 クラブぶんの空の行を用意する。
+ *
+ * **監督名は入れない。** 現実の監督は毎シーズン変わるうえ、
+ * 「新規募集終了日時点で率いている人」という基準があるため、
+ * ここでコードに書き込むと必ず古くなる。
+ *
+ * クラブ名だけを先に並べておき、主催者が名前を埋める。
+ * 40行の名前欄を埋めるだけで済むようにするのが狙い。
+ *
+ * 既に行があれば何もしない。
+ *
+ * @returns {{ added: number, skipped: number }}
+ */
+function _setupManagers() {
+  var sheet = getSheet("Managers");
+
+  if (sheet.getLastRow() >= 2) {
+    Logger.log("  [監督マスタ] スキップ（既に行があります）");
+    return { added: 0, skipped: 1 };
+  }
+
+  var clubs = getSheetData("Clubs")
+    .filter(function (c) {
+      var cat = String(c.category || "");
+      return String(c.club_name || "") && (cat === "J1" || cat === "J2");
+    })
+    .sort(function (a, b) { return Number(a.sort_order) - Number(b.sort_order); });
+
+  if (clubs.length === 0) {
+    Logger.log("  [監督マスタ] Clubs が空のためスキップ");
+    return { added: 0, skipped: 0 };
+  }
+
+  var rows = clubs.map(function (c, i) {
+    return [
+      "mg_" + String(i + 1),
+      "",                        // 名前は主催者が入れる
+      String(c.club_name),
+      String(c.category),
+      true,
+    ];
+  });
+
+  sheet.getRange(2, 1, rows.length, 5).setValues(rows);
+  Logger.log("  [監督マスタ] " + rows.length + " クラブぶんの枠を作りました。名前は手で入れてください。");
 
   return { added: rows.length, skipped: 0 };
 }

@@ -138,6 +138,7 @@ function showTab(name) {
   if (name === 'signup') renderSignupAdmin();
   if (name === 'claims') renderClaims();
   if (name === 'schedule') renderSchedule();
+  if (name === 'manager') renderManager();
   if (name === 'approval') renderApproval();
   if (name === 'txapproval') renderTxApproval();
   if (name === 'master') renderMaster();
@@ -3238,6 +3239,7 @@ async function loadSeasonAdmin() {
   await loadClaimAdmin();
   await loadWithdraw();
   await loadScheduleAdmin();
+  await loadManagerAdmin();
 }
 
 // ---------------------------------------------------------------------------
@@ -5294,4 +5296,511 @@ async function onSaveTemplate() {
     res.data.count + ' 件を保存しました。次に作成する日程から反映されます。'
   );
   await loadTemplateEditor();
+}
+
+// ---------------------------------------------------------------------------
+// 画面: 使用監督の申告（参加者）
+// ---------------------------------------------------------------------------
+
+/** getManagerStatus の結果 */
+let managerData = null;
+
+/**
+ * 使用監督タブを初期化する。
+ */
+async function renderManager() {
+  const seasons = await loadSeasons();
+  fillSelect('mg-season', seasons, 'season_id', 'name');
+
+  const wrap = document.getElementById('mg-team-wrap');
+  if (currentUser.role === 'organizer') {
+    wrap.style.display = '';
+    fillSelect('mg-team', (await loadTeams()).filter((t) => t.active), 'team_id', 'name');
+  } else {
+    wrap.style.display = 'none';
+  }
+
+  const sel = document.getElementById('mg-season');
+  if (!sel.dataset.bound) {
+    sel.onchange = loadManagerStatus;
+    document.getElementById('mg-team').onchange = loadManagerStatus;
+    document.getElementById('mg-category').onchange = renderManagerSelect;
+    document.getElementById('mg-submit').onclick = onDeclareManager;
+    sel.dataset.bound = '1';
+  }
+
+  await loadManagerStatus();
+}
+
+/**
+ * 監督の選択肢と自分の申告状況を読み込む。
+ */
+async function loadManagerStatus() {
+  const seasonId = document.getElementById('mg-season').value;
+  if (!seasonId) return;
+
+  setLoading('mg-list');
+
+  const payload = { season_id: seasonId };
+  if (currentUser.role === 'organizer') {
+    payload.team_id = document.getElementById('mg-team').value;
+  }
+
+  const res = await callApi('getManagerStatus', payload);
+  if (!res.ok) {
+    setError('mg-list', '監督の情報を取得できませんでした: ' + res.error);
+    return;
+  }
+
+  managerData = res.data;
+  renderManagerStatus();
+  renderManagerList();
+}
+
+/**
+ * 受付状態と自分の申告を上部に出す。
+ */
+function renderManagerStatus() {
+  const d = managerData;
+  const box = document.getElementById('mg-status');
+  const form = document.getElementById('mg-form');
+
+  // 確定済みなら申告フォームを閉じる
+  const fixed = d.my_pick && d.my_pick.status === '確定';
+  form.style.display = d.open && !fixed ? '' : 'none';
+
+  if (!d.open) {
+    box.innerHTML = `
+      <div class="warn-box">
+        <strong>現在は使用監督の申告を受け付けていません。</strong>
+        <p class="muted note-sm">受付が始まると、ここから申告できるようになります。</p>
+      </div>`;
+    if (d.my_pick) box.innerHTML += myManagerPickHtml(d);
+    return;
+  }
+
+  const rule = d.first_come
+    ? '<strong>第二次は先着順です。</strong>申告した時点で確定し、あとから変更できません。'
+    : '<strong>第一次は締切まで他チームの申告が見えません。</strong>' +
+      '締切後に主催者が抽選し、重複した監督だけ当選者を決めます。締切までは何度でも変更できます。';
+
+  box.innerHTML = `
+    <div class="hint-box">
+      <strong>${esc(d.team_name)}</strong> ／ 受付: ${esc(d.round_label)}
+      ／ 空き ${d.available} / ${d.total} 人
+      <p class="muted note-sm">${rule}</p>
+    </div>
+    ${myManagerPickHtml(d)}`;
+}
+
+/**
+ * 自分の申告状況の表示。
+ *
+ * @param {Object} d
+ * @returns {string} HTML
+ */
+function myManagerPickHtml(d) {
+  if (!d.my_pick) {
+    return '<p class="muted">まだ申告していません。</p>';
+  }
+
+  const all = [].concat(...d.categories.map((c) => d.managers[c]));
+  const m = all.find((x) => x.manager_id === d.my_pick.manager_id);
+  const name = m ? m.name + '（' + m.club + '）' : d.my_pick.manager_id;
+
+  const tag = {
+    確定: '<span class="tag-ok">確定</span>',
+    申告中: '<span class="tag-wait">申告中</span>',
+    落選: '<span class="tag-ng">落選</span>',
+  }[d.my_pick.status] || esc(d.my_pick.status);
+
+  return `<p>あなたの申告: <strong>${esc(name)}</strong> ${tag}</p>`;
+}
+
+/**
+ * カテゴリのプルダウンを作り、監督の選択肢を描く。
+ */
+function renderManagerList() {
+  const d = managerData;
+
+  const catSel = document.getElementById('mg-category');
+  const keep = catSel.value;
+  catSel.innerHTML = d.categories
+    .map((c) => '<option value="' + esc(c) + '">' + esc(c) + '</option>')
+    .join('');
+  if (d.categories.indexOf(keep) !== -1) catSel.value = keep;
+
+  renderManagerSelect();
+
+  // 確定済みの一覧（第二次以降は誰がどの監督か見える）
+  const fixedList = [].concat(...d.categories.map((c) => d.managers[c]))
+    .filter((m) => m.taken);
+
+  const box = document.getElementById('mg-list');
+
+  if (fixedList.length === 0) {
+    box.innerHTML = '<p class="muted note-sm">確定した監督はまだいません。</p>';
+    return;
+  }
+
+  box.innerHTML = `
+    <h3 class="sub-head">確定した監督</h3>
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr><th>監督</th><th>クラブ</th><th>チーム</th></tr></thead>
+        <tbody>
+          ${fixedList.map((m) => `
+            <tr${m.is_mine ? ' class="row-today"' : ''}>
+              <td>${esc(m.name)}</td>
+              <td class="muted">${esc(m.club)}</td>
+              <td>${esc(m.taken_by)}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+/**
+ * 選択中カテゴリの監督でプルダウンを組み直す。
+ *
+ * 埋まっている監督は選択肢に残したうえで無効にする。
+ * 消してしまうと「なぜ選べないのか」が分からない。
+ */
+function renderManagerSelect() {
+  const d = managerData;
+  const cat = document.getElementById('mg-category').value;
+  const list = (d.managers && d.managers[cat]) || [];
+  const sel = document.getElementById('mg-select');
+
+  sel.innerHTML =
+    '<option value="">監督を選択</option>' +
+    list
+      .map((m) => {
+        const label = m.taken
+          ? m.name + '（' + m.club + '・' + m.taken_by + 'で確定）'
+          : m.name + '（' + m.club + '）';
+        const selected = d.my_pick && d.my_pick.manager_id === m.manager_id;
+        return '<option value="' + esc(m.manager_id) + '"' +
+          (m.taken && !m.is_mine ? ' disabled' : '') +
+          (selected ? ' selected' : '') +
+          '>' + esc(label) + '</option>';
+      })
+      .join('');
+}
+
+/**
+ * 使用監督を申告する。
+ */
+async function onDeclareManager() {
+  const managerId = document.getElementById('mg-select').value;
+  if (!managerId) {
+    setResult('mg-result', false, '監督を選んでください。');
+    return;
+  }
+
+  if (managerData.first_come &&
+      !confirm('第二次は先着順です。\n申告するとその場で確定し、あとから変更できません。\n\nよろしいですか？')) {
+    return;
+  }
+
+  const btn = document.getElementById('mg-submit');
+  btn.disabled = true;
+  setResult('mg-result', true, '申告中...');
+
+  const payload = {
+    season_id: document.getElementById('mg-season').value,
+    manager_id: managerId,
+  };
+  if (currentUser.role === 'organizer') {
+    payload.team_id = document.getElementById('mg-team').value;
+  }
+
+  const res = await callApi('declareManager', payload);
+  btn.disabled = false;
+
+  if (!res.ok) {
+    setResult('mg-result', false, res.error);
+    return;
+  }
+
+  setResult(
+    'mg-result', true,
+    res.data.manager_name + ' を申告しました（' + res.data.status + '）。'
+  );
+  await loadManagerStatus();
+}
+
+// ---------------------------------------------------------------------------
+// 使用監督の受付（主催者）
+// ---------------------------------------------------------------------------
+
+/** listManagers の結果 */
+let managerMasterRows = [];
+
+/**
+ * 運営タブの監督セクションを読み込む。
+ */
+async function loadManagerAdmin() {
+  const btn = document.getElementById('mr-save-round');
+  if (!btn.dataset.bound) {
+    btn.onclick = onSaveManagerRound;
+    document.getElementById('mr-draw').onclick = onDrawManagers;
+    document.getElementById('mr-master-save').onclick = onSaveManagerMaster;
+    btn.dataset.bound = '1';
+  }
+
+  await loadManagerPicks();
+  await loadManagerMaster();
+}
+
+/**
+ * 申告の一覧を描画する。
+ */
+async function loadManagerPicks() {
+  const seasonId = document.getElementById('sp-season').value;
+  if (!seasonId) return;
+
+  setLoading('mr-list');
+
+  const res = await callApi('listManagerPicks', { season_id: seasonId });
+  if (!res.ok) {
+    setError('mr-list', '申告一覧を取得できませんでした: ' + res.error);
+    return;
+  }
+
+  const d = res.data;
+  document.getElementById('mr-round').value = String(d.round);
+
+  const dupes = d.duplicates.length
+    ? '<p><strong>抽選が必要な監督:</strong></p><ul class="detail-grid-list">' +
+      d.duplicates
+        .map((x) => '<li>' + esc(x.manager_name) + ' — ' + esc(x.teams.join(' / ')) + '</li>')
+        .join('') + '</ul>'
+    : '<p class="muted note-sm">重複はありません。</p>';
+
+  const undeclared = d.undeclared.length
+    ? '<p class="muted note-sm">未申告: ' +
+      d.undeclared.map((t) => esc(t.team_name)).join(' / ') + '</p>'
+    : '<p class="muted note-sm">全チームが申告済みです。</p>';
+
+  document.getElementById('mr-summary').innerHTML = `
+    <div class="${d.duplicates.length ? 'warn-box' : 'hint-box'}">
+      申告中 <strong>${d.declared}</strong> 件 ／ 確定 <strong>${d.fixed}</strong> 件
+      ${dupes}
+      ${undeclared}
+    </div>`;
+
+  document.getElementById('mr-draw').disabled = d.declared === 0;
+
+  const box = document.getElementById('mr-list');
+
+  if (d.picks.length === 0) {
+    box.innerHTML = '<p class="muted">まだ申告がありません。</p>';
+    return;
+  }
+
+  box.innerHTML = `
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr><th>チーム</th><th>監督</th><th>クラブ</th><th>回</th><th>状態</th><th>操作</th></tr>
+        </thead>
+        <tbody>
+          ${d.picks.map((p) => `
+            <tr>
+              <td>${esc(p.team_name)}</td>
+              <td>${esc(p.manager_name)}</td>
+              <td class="muted">${esc(p.club)}</td>
+              <td class="num">${p.round}</td>
+              <td>${esc(p.status)}</td>
+              <td>
+                <button type="button" class="btn btn-secondary btn-sm mr-clear"
+                        data-id="${esc(p.pick_id)}">取消</button>
+              </td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+
+  box.querySelectorAll('.mr-clear').forEach((b) => {
+    b.onclick = () => onClearManagerPick(b.dataset.id);
+  });
+}
+
+/**
+ * 受付状態を保存する。
+ */
+async function onSaveManagerRound() {
+  const round = Number(document.getElementById('mr-round').value);
+
+  const btn = document.getElementById('mr-save-round');
+  btn.disabled = true;
+  setResult('mr-result', true, '保存中...');
+
+  const res = await callApi('setManagerRound', { round });
+  btn.disabled = false;
+
+  if (!res.ok) {
+    setResult('mr-result', false, '保存できません: ' + res.error);
+    return;
+  }
+
+  setResult('mr-result', true, '受付を「' + res.data.label + '」にしました。');
+  await loadManagerPicks();
+}
+
+/**
+ * 第一次の抽選を実行する。
+ */
+async function onDrawManagers() {
+  if (!confirm(
+    '第一次の抽選を実行します。\n\n' +
+    '重複した監督は無作為に1チームが選ばれ、他は落選になります。\n' +
+    '重複していない申告はそのまま確定します。\n\n取り消せません。よろしいですか？'
+  )) return;
+
+  const btn = document.getElementById('mr-draw');
+  btn.disabled = true;
+  setResult('mr-result', true, '抽選中...');
+
+  const res = await callApi('drawManagers', {
+    season_id: document.getElementById('sp-season').value,
+  });
+
+  btn.disabled = false;
+
+  if (!res.ok) {
+    setResult('mr-result', false, '抽選できません: ' + res.error);
+    return;
+  }
+
+  const d = res.data;
+  setResult('mr-result', true, d.fixed_count + ' 件が確定しました。');
+
+  const lots = d.lotteries.length
+    ? '<h4 class="rank-title">抽選の結果</h4><ul class="detail-grid-list">' +
+      d.lotteries
+        .map((l) =>
+          '<li>' + esc(l.manager_name) + '：' + esc(l.entries.join(' / ')) +
+          ' → <strong>' + esc(l.winner) + '</strong> が当選' +
+          '（落選: ' + esc(l.losers.join(' / ')) + '）</li>')
+        .join('') + '</ul>'
+    : '<p class="muted">抽選が必要な重複はありませんでした。</p>';
+
+  document.getElementById('mr-report').innerHTML = `
+    <h3 class="sub-head">抽選の結果</h3>
+    <p>確定 <strong>${d.fixed_count}</strong> 件 ／ 落選 <strong>${d.lost_count}</strong> 件</p>
+    ${lots}
+    <p class="muted note-sm">${esc(d.note)}</p>`;
+
+  await loadManagerPicks();
+}
+
+/**
+ * 申告を取り消す。
+ *
+ * @param {string} pickId
+ */
+async function onClearManagerPick(pickId) {
+  if (!confirm('この申告を取り消します。監督は空きに戻ります。よろしいですか？')) return;
+
+  const res = await callApi('clearManagerPick', { pick_id: pickId });
+  if (!res.ok) {
+    setResult('mr-result', false, '取り消せません: ' + res.error);
+    return;
+  }
+
+  await loadManagerPicks();
+}
+
+/**
+ * 監督マスタを読み込んで編集欄を作る。
+ */
+async function loadManagerMaster() {
+  const res = await callApi('listManagers', {});
+  if (!res.ok) {
+    setResult('mr-master-result', false, 'マスタを取得できませんでした: ' + res.error);
+    return;
+  }
+
+  managerMasterRows = res.data.managers;
+
+  const rows = managerMasterRows
+    .map((m, i) => `
+      <tr>
+        <td class="muted">${esc(m.category)}</td>
+        <td>${esc(m.club)}</td>
+        <td><input type="text" class="mgm-name" data-i="${i}" value="${esc(m.name)}"
+                   placeholder="監督名" /></td>
+        <td>
+          <label class="check-label">
+            <input type="checkbox" class="mgm-active" data-i="${i}" ${m.active ? 'checked' : ''} />
+            使う
+          </label>
+        </td>
+      </tr>`)
+    .join('');
+
+  document.getElementById('mr-master').innerHTML = `
+    <p class="muted note-sm">
+      名前が未入力: <strong>${res.data.unnamed}</strong> / ${res.data.total} クラブ
+    </p>
+    <div class="table-wrap scroll-list">
+      <table class="data-table">
+        <thead><tr><th>区分</th><th>クラブ</th><th>監督名</th><th>選択肢</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+/**
+ * 監督名をまとめて保存する。
+ *
+ * 変更のあった行だけ送る。40行を毎回全部送ると通信が重いため。
+ */
+async function onSaveManagerMaster() {
+  const changed = [];
+
+  document.querySelectorAll('.mgm-name').forEach((el) => {
+    const i = Number(el.dataset.i);
+    const row = managerMasterRows[i];
+    const active = document.querySelector('.mgm-active[data-i="' + i + '"]').checked;
+
+    if (el.value.trim() === row.name && active === row.active) return;
+    changed.push({ ...row, name: el.value.trim(), active });
+  });
+
+  if (changed.length === 0) {
+    setResult('mr-master-result', true, '変更はありません。');
+    return;
+  }
+
+  const btn = document.getElementById('mr-master-save');
+  btn.disabled = true;
+  setResult('mr-master-result', true, changed.length + ' 件を保存中...');
+
+  let failed = 0;
+  for (const m of changed) {
+    // 名前が空のまま「使う」にすると選択肢に出ないので、そのまま送って構わない
+    const res = await callApi('upsertManager', {
+      manager_id: m.manager_id,
+      name: m.name || '（未定）',
+      club: m.club,
+      category: m.category,
+      active: m.active,
+    });
+    if (!res.ok) failed++;
+  }
+
+  btn.disabled = false;
+
+  setResult(
+    'mr-master-result',
+    failed === 0,
+    failed === 0
+      ? changed.length + ' 件を保存しました。'
+      : failed + ' 件の保存に失敗しました。'
+  );
+
+  await loadManagerMaster();
 }

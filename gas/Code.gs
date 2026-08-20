@@ -78,6 +78,34 @@ function _route(action, token, payload) {
     case "getSignupClubs":
       return getSignupClubs(token, payload);
 
+    // ---- 使用監督 ----
+    case "getManagerStatus":
+      return getManagerStatus(token, payload);
+
+    case "declareManager":
+      return declareManager(token, payload);
+
+    case "setManagerRound":
+      return setManagerRound(token, payload);
+
+    case "listManagerPicks":
+      return listManagerPicks(token, payload);
+
+    case "drawManagers":
+      return drawManagers(token, payload);
+
+    case "assignManager":
+      return assignManager(token, payload);
+
+    case "clearManagerPick":
+      return clearManagerPick(token, payload);
+
+    case "listManagers":
+      return listManagers(token);
+
+    case "upsertManager":
+      return upsertManager(token, payload);
+
     // ---- 日程表 ----
     case "getSeasonSchedule":
       return getSeasonSchedule(token, payload);

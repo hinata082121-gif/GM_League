@@ -1160,3 +1160,28 @@ code {
   width: 100%;
   box-sizing: border-box;
 }
+
+/* ===== 使用監督 ===== */
+
+#mr-master-wrap {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid #e5e9f0;
+}
+
+#mr-master-wrap summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #12325e;
+  padding: 4px 0;
+}
+
+#mr-master input[type="text"] {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* 埋まっている監督は選べないことを見た目でも示す */
+#mg-select option:disabled {
+  color: #999;
+}

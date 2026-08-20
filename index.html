@@ -99,6 +99,7 @@
         <button class="tab-btn" data-tab="protect">プロテクト</button>
         <button class="tab-btn" data-tab="match">試合</button>
         <button class="tab-btn" data-tab="stats">順位・記録</button>
+        <button class="tab-btn" data-tab="manager">使用監督</button>
         <button class="tab-btn" data-tab="schedule">日程</button>
         <button class="tab-btn" id="tab-claims" data-tab="claims">補填の選択</button>
         <button class="tab-btn" id="tab-approval" data-tab="approval" style="display:none;">
@@ -393,6 +394,43 @@
         </div>
       </div>
 
+      <!-- ===== 使用監督（参加者） ===== -->
+      <div class="tab-panel" data-panel="manager" style="display:none;">
+        <div class="card">
+          <h2>使用監督の申告</h2>
+          <p class="muted">
+            現実の J1・J2 クラブを率いている監督から1人を選びます。
+            <strong>毎シーズン全員が申告し直します。</strong>
+          </p>
+          <div class="filter-row">
+            <label>
+              シーズン
+              <select id="mg-season"></select>
+            </label>
+            <label id="mg-team-wrap" style="display:none;">
+              チーム（主催者は代理申告できます）
+              <select id="mg-team"></select>
+            </label>
+          </div>
+          <div id="mg-status"></div>
+          <div class="form-grid" id="mg-form" style="display:none;">
+            <label>
+              カテゴリ
+              <select id="mg-category"></select>
+            </label>
+            <label>
+              監督
+              <select id="mg-select"></select>
+            </label>
+            <div class="form-actions">
+              <button type="button" id="mg-submit" class="btn btn-primary">申告する</button>
+              <span id="mg-result" class="form-msg"></span>
+            </div>
+          </div>
+          <div id="mg-list"></div>
+        </div>
+      </div>
+
       <!-- ===== 日程（全ロール） ===== -->
       <div class="tab-panel" data-panel="schedule" style="display:none;">
         <div class="card">
@@ -499,6 +537,44 @@
             </div>
           </div>
           <div id="sp-report"></div>
+        </div>
+
+        <div class="card">
+          <h2>使用監督の受付</h2>
+          <p class="muted">
+            第一次は<strong>締切まで他チームの申告が見えません</strong>。締切後に抽選します。
+            第二次は<strong>先着順</strong>で、申告した瞬間に確定します。
+          </p>
+          <div class="form-grid">
+            <label>
+              受付状態
+              <select id="mr-round">
+                <option value="0">停止中</option>
+                <option value="1">第一次（抽選）</option>
+                <option value="2">第二次（先着）</option>
+              </select>
+            </label>
+            <div class="form-actions">
+              <button type="button" id="mr-save-round" class="btn btn-secondary">状態を保存</button>
+              <button type="button" id="mr-draw" class="btn btn-danger">第一次の抽選を実行</button>
+              <span id="mr-result" class="form-msg"></span>
+            </div>
+          </div>
+          <div id="mr-summary"></div>
+          <div id="mr-list"></div>
+          <div id="mr-report"></div>
+          <details id="mr-master-wrap">
+            <summary>監督マスタを編集する</summary>
+            <p class="muted note-sm">
+              <strong>新規募集終了日時点</strong>で各クラブを率いている監督名を入れてください。
+              名前が空の行は参加者の選択肢に出ません。毎シーズン入れ直します。
+            </p>
+            <div id="mr-master"></div>
+            <div class="form-actions">
+              <button type="button" id="mr-master-save" class="btn btn-primary">監督名を保存</button>
+              <span id="mr-master-result" class="form-msg"></span>
+            </div>
+          </details>
         </div>
 
         <div class="card">

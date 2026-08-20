@@ -12,8 +12,8 @@
  *   5. 集計は status=承認 のデータのみ（既存の集計関数をそのまま使う）
  *
  * 公開してよいもの / いけないもの
- *   公開する: チーム名・オーナーの表示名・X ID・順位表・承認済み移籍・日程表
- *   公開しない: email・申請中や差戻の移籍・未承認の試合
+ *   公開する: チーム名・オーナーの表示名・X ID・順位表・承認済み移籍・日程表・確定した監督
+ *   公開しない: email・申請中や差戻の移籍・未承認の試合・監督の申告中
  */
 
 // =============================================================================
@@ -83,6 +83,7 @@ function getPublicData(payload) {
       standings:    _publicStandings(seasonId),
       transfers:    _publicTransfers(seasonId),
       schedule:     _publicSchedule(seasonId),
+      managers:     _publicManagers(seasonId),
       signup_open:  _isSignupOpen(),
       generated_at: _iso(now()),
     },
@@ -163,6 +164,52 @@ function _publicSchedule(seasonId) {
   var view = _buildScheduleView(seasonId);
   if (view.count === 0) return null;
   return view;
+}
+
+/**
+ * 確定した使用監督を返す。
+ *
+ * **申告中は含めない。** 第一次は締切まで伏せて行うため、
+ * 公開ページから漏れては意味がない。
+ *
+ * @param {string} seasonId
+ * @returns {Object[]}
+ */
+function _publicManagers(seasonId) {
+  var teamNames = _teamNameMap();
+
+  var names = {};
+  try {
+    getSheetData("Managers").forEach(function (m) {
+      names[_str(m.manager_id)] = { name: _str(m.name), club: _str(m.club) };
+    });
+  } catch (e) {
+    return [];
+  }
+
+  var out = [];
+  try {
+    getSheetData("ManagerPicks").forEach(function (p) {
+      if (_str(p.season_id) !== seasonId) return;
+      if (_str(p.status) !== MG_FIXED) return;
+
+      var m = names[_str(p.manager_id)] || { name: _str(p.manager_id), club: "" };
+      out.push({
+        team_id:      _str(p.team_id),
+        team_name:    teamNames[_str(p.team_id)] || _str(p.team_id),
+        manager_name: m.name,
+        club:         m.club,
+      });
+    });
+  } catch (e) {
+    return [];
+  }
+
+  out.sort(function (a, b) {
+    return String(a.team_name).localeCompare(String(b.team_name), "ja");
+  });
+
+  return out;
 }
 
 /**
