@@ -445,7 +445,7 @@ function closeSeason(token, payload) {
     var report = {
       rank_prizes: [], cup_prizes: [], supercup_prizes: [], stream_fees: [],
       top_scorer_prizes: [], fees: [], expired: 0, carried: 0,
-      dropped_ineligible: [],
+      dropped_ineligible: [], sponsor_results: [],
     };
 
     // --- 1. リーグ順位賞金（GM1 / GM2）---
@@ -466,6 +466,10 @@ function closeSeason(token, payload) {
 
     // --- 2c. 得点王賞金（大会別）---
     _payTopScorers(token, seasonId, d.twoDivision, at, report);
+
+    // --- スポンサーのノルマ判定（未達なら罰金）---
+    // 手数料の前に置く。罰金も賞金と同じく手数料の母数に含めるため
+    _settleSponsors(token, seasonId, at, report);
 
     // --- 3. シーズン終了手数料（賞金計上後の残高が母数） ---
     var feeRate = Number(getConfig("season_end_fee_rate", 0.1));

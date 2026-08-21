@@ -135,6 +135,28 @@ function saveScheduleTemplate(token, payload) {
  * @param {Object} payload
  * @returns {{ ok: boolean, data?: Object, error?: string }}
  */
+/**
+ * 作成した日程のうち、今日より前になっている件数を数える。
+ *
+ * 準備期間は開幕の23日前から始まるので、開幕日を近くに置きすぎると
+ * 募集や申告の締切が過去日になる。**エラーにはしない**。
+ * 途中から使い始める場合や、過ぎた分を記録として残す場合があるため。
+ * 件数だけ返して、画面に注意を出す判断は呼び出し側に任せる。
+ *
+ * @param {Object[]} rows
+ * @returns {number}
+ */
+function _countPastRows(rows) {
+  var today = now();
+  today.setHours(0, 0, 0, 0);
+
+  var n = 0;
+  rows.forEach(function (r) {
+    if (r.date && r.date.getTime() < today.getTime()) n++;
+  });
+  return n;
+}
+
 function generateSchedule(token, payload) {
   var auth = _requireOrganizer(token);
   if (!auth.ok) return auth;
@@ -193,6 +215,7 @@ function generateSchedule(token, payload) {
         count:        rows.length,
         first_date:   _iso(rows[0].date),
         last_date:    _iso(rows[rows.length - 1].date),
+        past_count:   _countPastRows(rows),
       },
     };
   });

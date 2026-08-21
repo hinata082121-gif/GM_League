@@ -78,6 +78,31 @@ function _route(action, token, payload) {
     case "getSignupClubs":
       return getSignupClubs(token, payload);
 
+    // ---- スポンサー ----
+    case "getSponsorOptions":
+      return getSponsorOptions(token, payload);
+
+    case "chooseSponsor":
+      return chooseSponsor(token, payload);
+
+    case "listSponsors":
+      return listSponsors(token, payload);
+
+    case "upsertSponsor":
+      return upsertSponsor(token, payload);
+
+    case "deleteSponsor":
+      return deleteSponsor(token, payload);
+
+    case "copySponsors":
+      return copySponsors(token, payload);
+
+    case "setSponsorOpen":
+      return setSponsorOpen(token, payload);
+
+    case "clearTeamSponsor":
+      return clearTeamSponsor(token, payload);
+
     // ---- 画面の出し分け ----
     case "getUiState":
       return getUiState(token, payload);

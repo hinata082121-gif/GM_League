@@ -1185,3 +1185,30 @@ code {
 #mg-select option:disabled {
   color: #999;
 }
+
+/* ===== スポンサー ===== */
+
+.sponsor-card {
+  margin: 10px 0;
+  padding: 12px 14px;
+}
+
+.sponsor-mine {
+  border-left: 3px solid #1d63d1;
+  background: #f6faff;
+}
+
+/* 契約金・ノルマ・罰金を同じ大きさで並べる。
+   契約金だけが目立つと罰金を見落としたまま選んでしまう */
+.sponsor-terms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin: 10px 0 6px;
+}
+
+.sponsor-terms > div {
+  display: flex;
+  flex-direction: column;
+  min-width: 130px;
+}

@@ -93,7 +93,7 @@ function _allTabsOpen() {
  * @returns {string[]}
  */
 function _periodTabs() {
-  return ["entry", "transfer", "protect", "manager", "claims"];
+  return ["entry", "transfer", "protect", "manager", "sponsor", "claims"];
 }
 
 /**
@@ -110,6 +110,7 @@ function _participantTabs(season, teamId, at) {
     transfer: _transferTabState(season),
     protect:  _protectTabState(season, at),
     manager:  _managerTabState(),
+    sponsor:  _sponsorTabState(),
     claims:   _claimsTabState(season, teamId),
   };
 }
@@ -189,6 +190,18 @@ function _managerTabState() {
   }
 
   return { open: false, reason: "使用監督の申告期間ではありません。" };
+}
+
+/**
+ * スポンサー — 受付中のときだけ。
+ *
+ * @returns {Object}
+ */
+function _sponsorTabState() {
+  if (_isSponsorOpen()) {
+    return { open: true, reason: "スポンサーの契約を受け付けています。" };
+  }
+  return { open: false, reason: "スポンサー契約の受付期間ではありません。" };
 }
 
 /**

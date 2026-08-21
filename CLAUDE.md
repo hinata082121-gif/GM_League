@@ -122,7 +122,7 @@ config.js
 │   ├─ auth.gs         # トークン検証・whoami
 │   ├─ config.gs       # Config シート読み取りヘルパ
 │   ├─ lib.gs          # Sheets 読み書きヘルパ・LockService ラッパ
-│   ├─ setupSheets.gs  # 全23シート作成・Config / Clubs 初期値投入（冪等）
+│   ├─ setupSheets.gs  # 全25シート作成・Config / Clubs 初期値投入（冪等）
 │   ├─ api_master.gs   # Phase 1: マスタ & 閲覧
 │   ├─ api_entry.gs    # Phase 2: エントリー提出・承認
 │   ├─ api_transfer.gs # Phase 3: 移籍（コスト算出・承認・オークション）
@@ -137,6 +137,7 @@ config.js
 │   ├─ api_claims.gs   # 補填の請求（払い戻し / 入れ替え）と精算
 │   ├─ api_schedule.gs # 日程表（ひな型・生成・編集）
 │   ├─ api_manager.gs  # 使用監督の申告と抽選
+│   ├─ api_sponsor.gs  # スポンサー（契約金・ノルマ・罰則）
 │   ├─ api_ui.gs       # 参加者に見せるタブの判定
 │   └─ seed.gs         # テストデータ投入/削除（手動実行）
 ├─ SPEC.md           # 確定仕様

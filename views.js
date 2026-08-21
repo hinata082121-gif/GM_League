@@ -185,6 +185,7 @@ function showTab(name) {
   if (name === 'claims') renderClaims();
   if (name === 'schedule') renderSchedule();
   if (name === 'manager') renderManager();
+  if (name === 'sponsor') renderSponsor();
   if (name === 'approval') renderApproval();
   if (name === 'txapproval') renderTxApproval();
   if (name === 'master') renderMaster();
@@ -3336,6 +3337,7 @@ async function loadSeasonAdmin() {
   await loadWithdraw();
   await loadScheduleAdmin();
   await loadManagerAdmin();
+  await loadSponsorAdmin();
 }
 
 // ---------------------------------------------------------------------------
@@ -3712,6 +3714,8 @@ function renderCloseReport(report) {
       ${list('終了手数料', report.fees, (r) => nameOf(r.team_id) + ' −' + formatMoney(r.fee))}
       ${list('現実移籍で離脱', report.dropped_ineligible || [],
         (r) => nameOf(r.team_id) + ' ' + r.name)}
+      ${list('スポンサーのノルマ', report.sponsor_results || [],
+        (r) => r.team_name + ' ' + r.sponsor_name + ' ' + (r.met ? '達成' : '未達（' + r.actual + '）−' + formatMoney(r.penalty)))}
     </div>
     <p class="muted note-sm">
       期限切れで離脱: ${report.expired} 名
@@ -5218,7 +5222,15 @@ async function onGenerateSchedule() {
     return;
   }
 
-  setResult('sg-gen-result', true, res.data.count + ' 件の日程を作成しました。');
+  // 準備期間は開幕の23日前から始まる。開幕日が近すぎると締切が過去日になるので知らせる
+  const past = res.data.past_count || 0;
+  setResult(
+    'sg-gen-result', past === 0,
+    res.data.count + ' 件の日程を作成しました。' +
+    (past > 0
+      ? ' ただし ' + past + ' 件が過去の日付です。開幕日を後ろへずらすか、個別に編集してください。'
+      : '')
+  );
   document.getElementById('sg-overwrite').checked = false;
   await loadAdminSchedule();
 }
@@ -5899,4 +5911,477 @@ async function onSaveManagerMaster() {
   );
 
   await loadManagerMaster();
+}
+
+// ---------------------------------------------------------------------------
+// 画面: スポンサー契約（参加者）
+// ---------------------------------------------------------------------------
+
+/** getSponsorOptions の結果 */
+let sponsorData = null;
+
+/**
+ * スポンサータブを初期化する。
+ */
+async function renderSponsor() {
+  const seasons = await loadSeasons();
+  fillSelect('sn-season', seasons, 'season_id', 'name');
+
+  const wrap = document.getElementById('sn-team-wrap');
+  if (currentUser.role === 'organizer') {
+    wrap.style.display = '';
+    fillSelect('sn-team', (await loadTeams()).filter((t) => t.active), 'team_id', 'name');
+  } else {
+    wrap.style.display = 'none';
+  }
+
+  const sel = document.getElementById('sn-season');
+  if (!sel.dataset.bound) {
+    sel.onchange = loadSponsorOptions;
+    document.getElementById('sn-team').onchange = loadSponsorOptions;
+    sel.dataset.bound = '1';
+  }
+
+  await loadSponsorOptions();
+}
+
+/**
+ * スポンサー一覧と自分の契約を読み込む。
+ */
+async function loadSponsorOptions() {
+  const seasonId = document.getElementById('sn-season').value;
+  if (!seasonId) return;
+
+  setLoading('sn-list');
+
+  const payload = { season_id: seasonId };
+  if (currentUser.role === 'organizer') {
+    payload.team_id = document.getElementById('sn-team').value;
+  }
+
+  const res = await callApi('getSponsorOptions', payload);
+  if (!res.ok) {
+    setError('sn-list', 'スポンサーの情報を取得できませんでした: ' + res.error);
+    return;
+  }
+
+  sponsorData = res.data;
+  renderSponsorStatus();
+  renderSponsorList();
+}
+
+/**
+ * 受付状態と自分の契約を上部に出す。
+ */
+function renderSponsorStatus() {
+  const d = sponsorData;
+  const box = document.getElementById('sn-status');
+
+  const mine = d.my_contract
+    ? `
+      <p>
+        現在の契約: <strong>${esc(d.my_contract.sponsor_name)}</strong>
+        （契約金 ${esc(formatMoney(d.my_contract.contract_fee))}
+        ／ ${esc(d.my_contract.quota_label)}
+        ／ 未達なら ${esc(formatMoney(d.my_contract.penalty))}）
+        ${d.my_contract.result !== '未判定'
+          ? '<span class="' + (d.my_contract.result === '達成' ? 'tag-ok' : 'tag-ng') + '">' +
+            esc(d.my_contract.result) + '</span>'
+          : ''}
+      </p>`
+    : '<p class="muted">まだ契約していません。</p>';
+
+  box.innerHTML = `
+    <div class="${d.open ? 'hint-box' : 'warn-box'}">
+      <strong>${esc(d.team_name)}</strong>
+      ${d.open
+        ? '／ 契約を受け付けています。締切までは何度でも変更できます。'
+        : '／ <strong>受付期間外です。</strong>変更が必要な場合は主催者に連絡してください。'}
+      ${mine}
+    </div>`;
+}
+
+/**
+ * スポンサーをカードで並べる。
+ *
+ * 契約金・ノルマ・罰金を同じ大きさで並べる。
+ * 契約金だけが目立つと、罰金を見落としたまま選んでしまう。
+ */
+function renderSponsorList() {
+  const d = sponsorData;
+  const box = document.getElementById('sn-list');
+
+  if (d.sponsors.length === 0) {
+    box.innerHTML = '<p class="muted">このシーズンのスポンサーはまだ設定されていません。</p>';
+    return;
+  }
+
+  const settled = d.my_contract && d.my_contract.result !== '未判定';
+  const canChoose = (d.open || currentUser.role === 'organizer') && !settled;
+
+  box.innerHTML = d.sponsors
+    .map((s) => `
+      <div class="card sponsor-card${s.is_mine ? ' sponsor-mine' : ''}">
+        <div class="claim-head">
+          <strong>${esc(s.name)}</strong>
+          ${s.is_mine ? '<span class="tag-ok">契約中</span>' : ''}
+        </div>
+        <div class="sponsor-terms">
+          <div>
+            <span class="stat-label">契約金</span>
+            <span class="stat-value stat-sm">${esc(formatMoney(s.contract_fee))}</span>
+          </div>
+          <div>
+            <span class="stat-label">ノルマ</span>
+            <span class="stat-value stat-sm">${esc(s.quota_label)}</span>
+          </div>
+          <div>
+            <span class="stat-label">未達の罰金</span>
+            <span class="stat-value stat-sm">${s.penalty > 0 ? esc(formatMoney(s.penalty)) : 'なし'}</span>
+          </div>
+        </div>
+        ${s.note ? '<p class="muted note-sm">' + esc(s.note) + '</p>' : ''}
+        <p class="muted note-sm">契約中のチーム: ${s.contracted} 件</p>
+        ${canChoose && !s.is_mine
+          ? '<button type="button" class="btn btn-primary btn-sm sn-choose" data-id="' +
+            esc(s.sponsor_id) + '">このスポンサーと契約</button>'
+          : ''}
+      </div>`)
+    .join('');
+
+  box.querySelectorAll('.sn-choose').forEach((b) => {
+    b.onclick = () => onChooseSponsor(b.dataset.id);
+  });
+}
+
+/**
+ * スポンサーと契約する。
+ *
+ * @param {string} sponsorId
+ */
+async function onChooseSponsor(sponsorId) {
+  const d = sponsorData;
+  const s = d.sponsors.find((x) => x.sponsor_id === sponsorId);
+  if (!s) return;
+
+  const msg =
+    esc(s.name) + ' と契約します。\n\n' +
+    '契約金 ' + formatMoney(s.contract_fee) + ' がすぐに予算へ入ります。\n' +
+    'ノルマ: ' + s.quota_label + '\n' +
+    (s.penalty > 0
+      ? '未達の場合、シーズン終了時に ' + formatMoney(s.penalty) + ' が引かれます。\n'
+      : '') +
+    (d.my_contract ? '\n現在の契約は解除され、契約金は返金されます。\n' : '') +
+    '\nよろしいですか？';
+
+  if (!confirm(msg)) return;
+
+  const payload = {
+    season_id: document.getElementById('sn-season').value,
+    sponsor_id: sponsorId,
+  };
+  if (currentUser.role === 'organizer') {
+    payload.team_id = document.getElementById('sn-team').value;
+  }
+
+  const res = await callApi('chooseSponsor', payload);
+  if (!res.ok) {
+    alert('契約できません: ' + res.error);
+    return;
+  }
+
+  await loadSponsorOptions();
+}
+
+// ---------------------------------------------------------------------------
+// スポンサーの設定（主催者）
+// ---------------------------------------------------------------------------
+
+/**
+ * 運営タブのスポンサーセクションを読み込む。
+ */
+async function loadSponsorAdmin() {
+  const btn = document.getElementById('sa-save-open');
+  if (!btn.dataset.bound) {
+    btn.onclick = onSaveSponsorOpen;
+    document.getElementById('sa-add').onclick = () => onEditSponsor(null);
+    document.getElementById('sa-copy').onclick = onCopySponsors;
+    btn.dataset.bound = '1';
+  }
+
+  const seasonId = document.getElementById('sp-season').value;
+  if (!seasonId) return;
+
+  // 複製元の候補は自分以外のシーズン
+  const seasons = (await loadSeasons()).filter((s) => s.season_id !== seasonId);
+  fillSelect('sa-copy-from', seasons, 'season_id', 'name', '複製元を選択');
+
+  setLoading('sa-list');
+
+  const res = await callApi('listSponsors', { season_id: seasonId });
+  if (!res.ok) {
+    setError('sa-list', 'スポンサーを取得できませんでした: ' + res.error);
+    return;
+  }
+
+  const d = res.data;
+  document.getElementById('sa-open').checked = d.open;
+
+  document.getElementById('sa-summary').innerHTML = `
+    <div class="${d.uncontracted.length ? 'warn-box' : 'hint-box'}">
+      スポンサー <strong>${d.sponsors.length}</strong> 社
+      ／ 契約済み <strong>${d.contracts.length}</strong> チーム
+      ${d.uncontracted.length
+        ? '<p class="muted note-sm">未契約: ' +
+          d.uncontracted.map((t) => esc(t.team_name)).join(' / ') + '</p>'
+        : '<p class="muted note-sm">全チームが契約済みです。</p>'}
+    </div>`;
+
+  renderSponsorAdminList(d);
+  renderSponsorContracts(d);
+}
+
+/**
+ * スポンサー一覧（主催者）を描く。
+ *
+ * @param {Object} d listSponsors の結果
+ */
+function renderSponsorAdminList(d) {
+  const box = document.getElementById('sa-list');
+
+  if (d.sponsors.length === 0) {
+    box.innerHTML = '<p class="muted">まだスポンサーがありません。</p>';
+    return;
+  }
+
+  box.innerHTML = `
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>スポンサー</th><th class="num">契約金</th><th>ノルマ</th>
+            <th class="num">罰金</th><th>契約チーム</th><th>使う</th><th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${d.sponsors.map((s) => `
+            <tr${s.active ? '' : ' class="row-inactive"'}>
+              <td>${esc(s.name)}${s.note ? '<br><span class="muted note-sm">' + esc(s.note) + '</span>' : ''}</td>
+              <td class="num">${esc(formatMoney(s.contract_fee))}</td>
+              <td>${esc(s.quota_label)}</td>
+              <td class="num">${s.penalty > 0 ? esc(formatMoney(s.penalty)) : '—'}</td>
+              <td class="muted">${s.teams.length ? esc(s.teams.join(' / ')) : '—'}</td>
+              <td>${s.active ? '○' : '×'}</td>
+              <td>
+                <button type="button" class="btn btn-secondary btn-sm sa-edit"
+                        data-id="${esc(s.sponsor_id)}">編集</button>
+                <button type="button" class="btn btn-secondary btn-sm sa-del"
+                        data-id="${esc(s.sponsor_id)}">削除</button>
+              </td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+
+  box.querySelectorAll('.sa-edit').forEach((b) => {
+    b.onclick = () => onEditSponsor(d.sponsors.find((s) => s.sponsor_id === b.dataset.id));
+  });
+  box.querySelectorAll('.sa-del').forEach((b) => {
+    b.onclick = () => onDeleteSponsor(b.dataset.id);
+  });
+}
+
+/**
+ * 契約状況を出す。判定済みなら結果も出す。
+ *
+ * @param {Object} d
+ */
+function renderSponsorContracts(d) {
+  const box = document.getElementById('sa-contracts');
+
+  if (d.contracts.length === 0) {
+    box.innerHTML = '';
+    return;
+  }
+
+  box.innerHTML = `
+    <h3 class="sub-head">契約状況</h3>
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr><th>チーム</th><th>スポンサー</th><th class="num">契約金</th><th>結果</th><th class="num">罰金</th><th>操作</th></tr>
+        </thead>
+        <tbody>
+          ${d.contracts.map((c) => `
+            <tr>
+              <td>${esc(c.team_name)}</td>
+              <td>${esc(c.sponsor_name)}<br><span class="muted note-sm">${esc(c.quota_label)}</span></td>
+              <td class="num">${esc(formatMoney(c.contract_fee))}</td>
+              <td>${c.result === '未判定'
+                ? '<span class="muted">未判定</span>'
+                : '<span class="' + (c.result === '達成' ? 'tag-ok' : 'tag-ng') + '">' + esc(c.result) + '</span>'}</td>
+              <td class="num">${c.penalty_paid > 0 ? '−' + esc(formatMoney(c.penalty_paid)) : '—'}</td>
+              <td>${c.result === '未判定'
+                ? '<button type="button" class="btn btn-secondary btn-sm sa-clear" data-id="' +
+                  esc(c.contract_id) + '">取消</button>'
+                : '<span class="muted">—</span>'}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+    <p class="muted note-sm">
+      ノルマの判定はシーズン終了処理で自動的に行われ、未達なら罰金が引かれます。
+    </p>`;
+
+  box.querySelectorAll('.sa-clear').forEach((b) => {
+    b.onclick = () => onClearTeamSponsor(b.dataset.id);
+  });
+}
+
+/**
+ * 受付状態を保存する。
+ */
+async function onSaveSponsorOpen() {
+  const open = document.getElementById('sa-open').checked;
+
+  const btn = document.getElementById('sa-save-open');
+  btn.disabled = true;
+  setResult('sa-open-result', true, '保存中...');
+
+  const res = await callApi('setSponsorOpen', { open });
+  btn.disabled = false;
+
+  if (!res.ok) {
+    setResult('sa-open-result', false, '保存できません: ' + res.error);
+    return;
+  }
+
+  setResult('sa-open-result', true, open ? '受付中にしました。' : '受付を停止しました。');
+}
+
+/**
+ * スポンサーを追加・編集する。
+ *
+ * @param {Object|null} s 既存のスポンサー。null なら新規
+ */
+async function onEditSponsor(s) {
+  const seasonId = document.getElementById('sp-season').value;
+
+  const name = prompt('スポンサー名', s ? s.name : '');
+  if (name === null || !name.trim()) return;
+
+  const fee = prompt('契約金（100万円単位。例: 300 → 3億円）',
+    s ? String(s.contract_fee / 1000000) : '');
+  if (fee === null) return;
+
+  const quotaType = prompt(
+    'ノルマの種別を入力\n  1 = リーグ順位\n  2 = リーグ杯\n  3 = なし',
+    s ? (s.quota_type === 'リーグ順位' ? '1' : s.quota_type === 'リーグ杯' ? '2' : '3') : '1'
+  );
+  if (quotaType === null) return;
+
+  const typeMap = { '1': 'リーグ順位', '2': 'リーグ杯', '3': 'なし' };
+  const type = typeMap[quotaType.trim()] || 'なし';
+
+  let quotaValue = '';
+  if (type === 'リーグ順位') {
+    quotaValue = prompt('何位以内？（例: 3）', s ? s.quota_value : '3');
+    if (quotaValue === null) return;
+  } else if (type === 'リーグ杯') {
+    quotaValue = prompt('優勝 / 準優勝以上 / ベスト4以上 のいずれか',
+      s ? s.quota_value : 'ベスト4以上');
+    if (quotaValue === null) return;
+  }
+
+  let penalty = '0';
+  if (type !== 'なし') {
+    penalty = prompt('未達時の罰金（100万円単位。例: 200 → 2億円）',
+      s ? String(s.penalty / 1000000) : '');
+    if (penalty === null) return;
+  }
+
+  const note = prompt('備考（任意）', s ? s.note : '');
+  if (note === null) return;
+
+  const res = await callApi('upsertSponsor', {
+    sponsor_id: s ? s.sponsor_id : '',
+    season_id: seasonId,
+    name: name.trim(),
+    contract_fee: (Number(fee) || 0) * 1000000,
+    quota_type: type,
+    quota_value: (quotaValue || '').trim(),
+    penalty: (Number(penalty) || 0) * 1000000,
+    note,
+    active: s ? s.active : true,
+  });
+
+  if (!res.ok) {
+    alert('保存できません: ' + res.error);
+    return;
+  }
+
+  await loadSponsorAdmin();
+}
+
+/**
+ * スポンサーを削除する。
+ *
+ * @param {string} sponsorId
+ */
+async function onDeleteSponsor(sponsorId) {
+  if (!confirm('このスポンサーを削除します。よろしいですか？')) return;
+
+  const res = await callApi('deleteSponsor', { sponsor_id: sponsorId });
+  if (!res.ok) {
+    setResult('sa-result', false, res.error);
+    return;
+  }
+
+  await loadSponsorAdmin();
+}
+
+/**
+ * 別のシーズンから複製する。
+ */
+async function onCopySponsors() {
+  const from = document.getElementById('sa-copy-from').value;
+  if (!from) {
+    setResult('sa-result', false, '複製元のシーズンを選んでください。');
+    return;
+  }
+
+  const res = await callApi('copySponsors', {
+    from_season_id: from,
+    to_season_id: document.getElementById('sp-season').value,
+  });
+
+  if (!res.ok) {
+    setResult('sa-result', false, res.error);
+    return;
+  }
+
+  setResult(
+    'sa-result', true,
+    res.data.copied + ' 社を複製しました。' +
+    (res.data.skipped ? '（同名の ' + res.data.skipped + ' 社はスキップ）' : '')
+  );
+  await loadSponsorAdmin();
+}
+
+/**
+ * チームの契約を取り消す。
+ *
+ * @param {string} contractId
+ */
+async function onClearTeamSponsor(contractId) {
+  if (!confirm('この契約を取り消します。契約金も返金されます。よろしいですか？')) return;
+
+  const res = await callApi('clearTeamSponsor', { contract_id: contractId });
+  if (!res.ok) {
+    setResult('sa-result', false, res.error);
+    return;
+  }
+
+  setResult('sa-result', true, '契約を取り消しました（返金 ' + formatMoney(res.data.refunded) + '）。');
+  await loadSponsorAdmin();
 }

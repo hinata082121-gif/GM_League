@@ -100,6 +100,7 @@
         <button class="tab-btn" data-tab="match">試合</button>
         <button class="tab-btn" data-tab="stats">順位・記録</button>
         <button class="tab-btn" data-tab="manager">使用監督</button>
+        <button class="tab-btn" data-tab="sponsor">スポンサー</button>
         <button class="tab-btn" data-tab="schedule">日程</button>
         <button class="tab-btn" id="tab-claims" data-tab="claims">補填の選択</button>
         <button class="tab-btn" id="tab-approval" data-tab="approval" style="display:none;">
@@ -431,6 +432,29 @@
         </div>
       </div>
 
+      <!-- ===== スポンサー（参加者） ===== -->
+      <div class="tab-panel" data-panel="sponsor" style="display:none;">
+        <div class="card">
+          <h2>スポンサー契約</h2>
+          <p class="muted">
+            <strong>1チーム1社</strong>です。契約金はその場で予算に入りますが、
+            ノルマを達成できないとシーズン終了時に罰金が引かれます。
+          </p>
+          <div class="filter-row">
+            <label>
+              シーズン
+              <select id="sn-season"></select>
+            </label>
+            <label id="sn-team-wrap" style="display:none;">
+              チーム（主催者は代理契約できます）
+              <select id="sn-team"></select>
+            </label>
+          </div>
+          <div id="sn-status"></div>
+          <div id="sn-list"></div>
+        </div>
+      </div>
+
       <!-- ===== 日程（全ロール） ===== -->
       <div class="tab-panel" data-panel="schedule" style="display:none;">
         <div class="card">
@@ -537,6 +561,33 @@
             </div>
           </div>
           <div id="sp-report"></div>
+        </div>
+
+        <div class="card">
+          <h2>スポンサーの設定</h2>
+          <p class="muted">
+            シーズンごとに設定します。<strong>契約金・ノルマ・罰金</strong>の3点を決めてください。
+            ノルマはリーグ戦の順位か GMリーグ杯の成績から選べます。
+          </p>
+          <div class="form-grid">
+            <label class="check-label">
+              <input type="checkbox" id="sa-open" />
+              スポンサー契約を受け付ける
+            </label>
+            <div class="form-actions">
+              <button type="button" id="sa-save-open" class="btn btn-secondary">受付状態を保存</button>
+              <span id="sa-open-result" class="form-msg"></span>
+            </div>
+          </div>
+          <div id="sa-summary"></div>
+          <div id="sa-list"></div>
+          <div class="form-actions">
+            <button type="button" id="sa-add" class="btn btn-primary">スポンサーを追加</button>
+            <select id="sa-copy-from"></select>
+            <button type="button" id="sa-copy" class="btn btn-secondary btn-sm">選んだシーズンから複製</button>
+            <span id="sa-result" class="form-msg"></span>
+          </div>
+          <div id="sa-contracts"></div>
         </div>
 
         <div class="card">
