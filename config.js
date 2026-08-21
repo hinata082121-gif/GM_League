@@ -29,6 +29,18 @@ const GM_CONFIG = {
    */
   SPREADSHEET_ID: "1pi8-gYlKfc_fe_F4iY1idp3fD6lJMzMhW2HbLdQ42aM",
 
-  /** GitHub Pages の公開 URL（OAuth リダイレクト許可元に登録済み） */
-  ORIGIN: "https://hinata082121-gif.github.io",
+  /**
+   * 公開 URL の控え。
+   *
+   * ⚠️ この値はコードから参照していない。**記録用**。
+   *    実際の許可は Google Cloud Console 側の
+   *    「承認済みの JavaScript 生成元」で行う。
+   *    ここに書き足しただけでは origin_mismatch は直らない。
+   *
+   * 登録が必要なオリジン（末尾のスラッシュもパスも付けない）:
+   *   https://hinata082121-gif.github.io   GitHub Pages
+   *   https://gm-league-eight.vercel.app   Vercel（本番）
+   *   http://localhost:8000                ローカル確認用
+   */
+  ORIGIN: "https://gm-league-eight.vercel.app",
 };
