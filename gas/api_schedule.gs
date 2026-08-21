@@ -285,6 +285,8 @@ function _buildScheduleView(seasonId) {
       weekday:     _weekdayLabel(d),
       label:       _str(r.label),
       note:        _str(r.note),
+      category:    _scheduleCategory(_str(r.label)),
+      derived:     false,
       done:        _toBool(r.done),
       sort_order:  _num(r.sort_order),
       days_left:   diff,
@@ -292,6 +294,12 @@ function _buildScheduleView(seasonId) {
       is_past:     diff !== null && diff < 0,
     };
   });
+
+  // 日程を作っていないシーズンに導出項目だけが出ると、
+  // 「日程はまだありません」と言えなくなるので足さない
+  if (items.length > 0) {
+    _paidProtectItems(seasonId, today).forEach(function (i) { items.push(i); });
+  }
 
   items.sort(function (a, b) {
     if (a.date !== b.date) return String(a.date).localeCompare(String(b.date));
@@ -311,7 +319,131 @@ function _buildScheduleView(seasonId) {
     today_items: items.filter(function (i) { return i.is_today; }),
     next:        upcoming.length > 0 ? upcoming[0] : null,
     upcoming:    upcoming.slice(0, 5),
+    categories:  _usedCategories(items),
   };
+}
+
+// =============================================================================
+// 分類
+// =============================================================================
+
+/**
+ * 予定の分類。絞り込みの選択肢になる。
+ *
+ * シートにカラムを足さず、**ラベルから毎回導く**。
+ * 主催者が予定を追加したときに分類を選ばせると入力が1つ増えるうえ、
+ * 選び忘れた行が「その他」に落ちて絞り込みから漏れる。
+ */
+var SCHEDULE_CATEGORY_RULES = [
+  ["プロテクト",   "プロテクト"],
+  ["監督",         "使用監督"],
+  ["オークション", "オークション"],
+  ["移籍",         "移籍"],
+  ["エントリー",   "エントリー"],
+  ["スポンサー",   "スポンサー"],
+  ["EL",           "EL"],
+  ["募集",         "募集"],
+  ["スーパーカップ", "大会"],
+  ["リーグ戦",     "大会"],
+  ["対戦表",       "大会"],
+];
+
+var SCHEDULE_CATEGORY_OTHER = "その他";
+
+/**
+ * ラベルから分類を決める。
+ *
+ * 上から順に見て最初に当たったものを使うので、**並び順に意味がある**。
+ * 「エントリー追加選手申告」より先に「オークション」を見るなど、
+ * 複数の語を含むラベルで意図した側に寄せている。
+ *
+ * @param {string} label
+ * @returns {string}
+ */
+function _scheduleCategory(label) {
+  for (var i = 0; i < SCHEDULE_CATEGORY_RULES.length; i++) {
+    if (label.indexOf(SCHEDULE_CATEGORY_RULES[i][0]) !== -1) {
+      return SCHEDULE_CATEGORY_RULES[i][1];
+    }
+  }
+  return SCHEDULE_CATEGORY_OTHER;
+}
+
+/**
+ * 実際に使われている分類だけを、日付順に並べて返す。
+ *
+ * 全分類を常に出すと、その予定が無いシーズンでも空の絞り込みが並ぶ。
+ *
+ * @param {Object[]} items
+ * @returns {string[]}
+ */
+function _usedCategories(items) {
+  var seen = {};
+  var out = [];
+  items.forEach(function (i) {
+    if (seen[i.category]) return;
+    seen[i.category] = true;
+    out.push(i.category);
+  });
+  return out;
+}
+
+// =============================================================================
+// 有料プロテクトの開始（導出）
+// =============================================================================
+
+/**
+ * 有料プロテクトの開始を日程の項目として組み立てる。
+ *
+ * **ひな型には入れない。** 有料の開始は移籍市場の開幕日時と Config から
+ * 逆算して決まるので（api_protection.gs の _protectionPeriods）、
+ * ひな型にも日付を持たせると二重管理になり、片方だけ直したときにずれる。
+ * 掲示のためだけに、表示のたびに計算して差し込む。
+ *
+ * 参加者からは「いつ有料枠が開くのか」が分からないと動けないので、
+ * 導出であっても日程表には出す。編集はできない（derived）。
+ *
+ * @param {string} seasonId
+ * @param {Date} today
+ * @returns {Object[]}
+ */
+function _paidProtectItems(seasonId, today) {
+  var season = findRow("Seasons", "season_id", seasonId);
+  if (!season) return [];
+
+  var out = [];
+
+  for (var w = 1; w <= 2; w++) {
+    var p = null;
+    try {
+      p = _protectionPeriods(season, w);
+    } catch (e) {
+      p = null;
+    }
+    if (!p || !p.paidStart) continue;
+
+    var d = p.paidStart;
+    var diff = _dayDiff(today, d);
+    var hm = ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2);
+
+    out.push({
+      schedule_id: "",
+      date:        _iso(d),
+      date_label:  _formatDate(d),
+      weekday:     _weekdayLabel(d),
+      label:       "有料プロテクト開始（第" + w + "次）",
+      note:        hm + " から。無料の締切後に空く枠で、こちらは有料。",
+      category:    "プロテクト",
+      derived:     true,
+      done:        false,
+      sort_order:  999,
+      days_left:   diff,
+      is_today:    diff === 0,
+      is_past:     diff !== null && diff < 0,
+    });
+  }
+
+  return out;
 }
 
 /**

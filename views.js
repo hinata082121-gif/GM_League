@@ -5018,8 +5018,73 @@ async function loadScheduleView() {
     return;
   }
 
+  scheduleView = res.data;
   renderScheduleNext(res.data);
-  document.getElementById('sd-list').innerHTML = scheduleTableHtml(res.data, false);
+  renderScheduleFilter();
+  applyScheduleFilter();
+}
+
+/** getSeasonSchedule の結果（絞り込みで使い回す） */
+let scheduleView = null;
+
+/** 選択中の分類。空文字はすべて */
+let scheduleFilter = '';
+
+/**
+ * 分類の絞り込みボタンを出す。
+ *
+ * 予定が20件を超えると、目当ての締切を探すのに一覧を上から追うことになる。
+ * 「プロテクトだけ」「監督だけ」に絞れれば、その1本だけを追える。
+ *
+ * 選択肢はサーバーが返した**実際に使われている分類だけ**。
+ * 空の絞り込みが並んでも押す意味がない。
+ */
+function renderScheduleFilter() {
+  const box = document.getElementById('sd-filter');
+  const cats = (scheduleView && scheduleView.categories) || [];
+
+  if (cats.length <= 1) {
+    box.innerHTML = '';
+    return;
+  }
+
+  const chip = (value, label) => {
+    const on = scheduleFilter === value;
+    return '<button type="button" class="chip' + (on ? ' chip-on' : '') +
+      '" data-cat="' + esc(value) + '">' + esc(label) + '</button>';
+  };
+
+  box.innerHTML =
+    '<div class="chip-row">' +
+    chip('', 'すべて') +
+    cats.map((c) => chip(c, c)).join('') +
+    '</div>';
+
+  box.querySelectorAll('.chip').forEach((b) => {
+    b.onclick = () => {
+      scheduleFilter = b.dataset.cat;
+      renderScheduleFilter();
+      applyScheduleFilter();
+    };
+  });
+}
+
+/**
+ * 絞り込みを反映して一覧を描き直す。
+ */
+function applyScheduleFilter() {
+  const d = scheduleView;
+  if (!d) return;
+
+  const items = scheduleFilter
+    ? d.items.filter((i) => i.category === scheduleFilter)
+    : d.items;
+
+  const view = Object.assign({}, d, { items, count: items.length });
+
+  document.getElementById('sd-list').innerHTML = scheduleFilter && items.length === 0
+    ? '<p class="muted">「' + esc(scheduleFilter) + '」の予定はありません。</p>'
+    : scheduleTableHtml(view, false);
 }
 
 /**
@@ -5102,13 +5167,16 @@ function scheduleTableHtml(d, editable) {
             ? '<span class="muted">—</span>'
             : '<span class="muted">あと' + i.days_left + '日</span>';
 
+      // 導出項目は SeasonSchedule に行が無いので編集も削除もできない
       const actions = editable
-        ? `<td>
-             <button type="button" class="btn btn-secondary btn-sm sd-edit"
-                     data-id="${esc(i.schedule_id)}">編集</button>
-             <button type="button" class="btn btn-secondary btn-sm sd-del"
-                     data-id="${esc(i.schedule_id)}">削除</button>
-           </td>`
+        ? (i.derived
+          ? '<td><span class="muted">自動</span></td>'
+          : `<td>
+               <button type="button" class="btn btn-secondary btn-sm sd-edit"
+                       data-id="${esc(i.schedule_id)}">編集</button>
+               <button type="button" class="btn btn-secondary btn-sm sd-del"
+                       data-id="${esc(i.schedule_id)}">削除</button>
+             </td>`)
         : '';
 
       return `

@@ -1212,3 +1212,32 @@ code {
   flex-direction: column;
   min-width: 130px;
 }
+
+/* ===== 日程の絞り込み ===== */
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0;
+}
+
+.chip {
+  padding: 4px 12px;
+  border: 1px solid #ccd3dd;
+  border-radius: 14px;
+  background: #fff;
+  color: #33414f;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.chip:hover {
+  border-color: #1d63d1;
+}
+
+.chip-on {
+  background: #1d63d1;
+  border-color: #1d63d1;
+  color: #fff;
+}
