@@ -582,6 +582,7 @@
           </div>
           <div id="sa-summary"></div>
           <div id="sa-list"></div>
+          <div id="sa-form"></div>
           <div class="form-actions">
             <button type="button" id="sa-add" class="btn btn-primary">スポンサーを追加</button>
             <select id="sa-copy-from"></select>
@@ -627,6 +628,51 @@
               <span id="mr-master-result" class="form-msg"></span>
             </div>
           </details>
+        </div>
+
+        <div class="card">
+          <h2>シーズンを作る</h2>
+          <p class="muted">
+            新しいシーズンを追加します。作成後に移籍市場の日時と日程表を設定してください。
+          </p>
+          <div class="form-grid">
+            <label>
+              シーズン名
+              <input type="text" id="ns-name" placeholder="Season14" />
+            </label>
+            <label class="check-label">
+              <input type="checkbox" id="ns-leg" checked />
+              GMリーグ杯を2レグ制にする
+            </label>
+            <div class="form-actions">
+              <button type="button" id="ns-create" class="btn btn-primary">シーズンを作成</button>
+              <span id="ns-result" class="form-msg"></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>移籍市場の開幕日時</h2>
+          <p class="muted">
+            <strong>プロテクトの期限はここから逆算されます。</strong>
+            無料は開幕の6日前から3日前まで、有料は前日の23時から。
+            参加者に告知した後の変更は避けてください。
+          </p>
+          <div class="form-grid">
+            <label>
+              第1次移籍市場
+              <input type="datetime-local" id="mw-window1" />
+            </label>
+            <label>
+              第2次移籍市場
+              <input type="datetime-local" id="mw-window2" />
+            </label>
+            <div class="form-actions">
+              <button type="button" id="mw-save" class="btn btn-primary">日時を保存</button>
+              <span id="mw-result" class="form-msg"></span>
+            </div>
+          </div>
+          <div id="mw-derived"></div>
         </div>
 
         <div class="card">

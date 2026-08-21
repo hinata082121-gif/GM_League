@@ -3287,6 +3287,9 @@ async function renderSeasonAdmin() {
   fillSelect('pn-team', teams, 'team_id', 'name', 'チームを選択');
   fillSelect('cp-team', teams, 'team_id', 'name', 'チームを選択');
 
+  // シーズンが0件でも押せる必要があるので、loadSeasonAdmin より先につなぐ
+  bindCreateSeason();
+
   const sel = document.getElementById('sp-season');
   if (!sel.dataset.bound) {
     sel.onchange = loadSeasonAdmin;
@@ -3335,9 +3338,186 @@ async function loadSeasonAdmin() {
   await loadRealTransfers();
   await loadClaimAdmin();
   await loadWithdraw();
+  await loadMarketWindows();
   await loadScheduleAdmin();
   await loadManagerAdmin();
   await loadSponsorAdmin();
+}
+
+// ---------------------------------------------------------------------------
+// シーズンの作成
+// ---------------------------------------------------------------------------
+
+/**
+ * 「シーズンを作成」ボタンをつなぐ。
+ *
+ * シーズンが1つも無いとどの画面も動かないが、作る手段がシートの直接編集しか
+ * 無かったので画面から作れるようにした。
+ */
+function bindCreateSeason() {
+  const btn = document.getElementById('ns-create');
+  if (btn.dataset.bound) return;
+
+  btn.onclick = onCreateSeason;
+  btn.dataset.bound = '1';
+}
+
+/**
+ * 新しいシーズンを作る。状態は「準備中」から始まる。
+ */
+async function onCreateSeason() {
+  const name = document.getElementById('ns-name').value.trim();
+  if (!name) {
+    setResult('ns-result', false, 'シーズン名を入れてください。');
+    return;
+  }
+
+  const btn = document.getElementById('ns-create');
+  btn.disabled = true;
+  setResult('ns-result', true, '作成中...');
+
+  const res = await callApi('upsertSeason', {
+    name,
+    status: '準備中',
+    leg_enabled: document.getElementById('ns-leg').checked,
+  });
+
+  btn.disabled = false;
+
+  if (!res.ok) {
+    setResult('ns-result', false, '作成できません: ' + res.error);
+    return;
+  }
+
+  setResult('ns-result', true, name + ' を作成しました。');
+  document.getElementById('ns-name').value = '';
+
+  cache.seasons = null;
+  const seasons = await loadSeasons(true);
+  fillSelect('sp-season', seasons, 'season_id', 'name');
+  document.getElementById('sp-season').value = res.data.season_id;
+  await loadSeasonAdmin();
+}
+
+// ---------------------------------------------------------------------------
+// 移籍市場の開幕日時
+// ---------------------------------------------------------------------------
+
+/**
+ * 移籍市場の開幕日時を読み込む。
+ *
+ * プロテクトの無料期・有料期はこの日時からの逆算で決まる（SPEC.md §7.3）。
+ * シートを直接触らないと設定できない状態だったので、画面から直せるようにした。
+ */
+async function loadMarketWindows() {
+  const seasonId = document.getElementById('sp-season').value;
+  const season = (await loadSeasons()).find((s) => s.season_id === seasonId);
+  if (!season) return;
+
+  const btn = document.getElementById('mw-save');
+  if (!btn.dataset.bound) {
+    btn.onclick = onSaveMarketWindows;
+    btn.dataset.bound = '1';
+  }
+
+  document.getElementById('mw-window1').value = toDatetimeLocal(season.window1_open_at);
+  document.getElementById('mw-window2').value = toDatetimeLocal(season.window2_open_at);
+
+  renderMarketDerived();
+}
+
+/**
+ * datetime-local の入力欄に入れられる形（YYYY-MM-DDTHH:mm）へ変換する。
+ *
+ * @param {string} value
+ * @returns {string}
+ */
+function toDatetimeLocal(value) {
+  if (!value) return '';
+
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return '';
+
+  const p = (n) => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) +
+    'T' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
+/**
+ * 入力された日時から、プロテクトの期間がいつになるかを出す。
+ *
+ * 保存する前に「無料はいつからいつまでか」が見えないと、
+ * 日程表と食い違っていても気づけない。
+ */
+function renderMarketDerived() {
+  const box = document.getElementById('mw-derived');
+  const raw = document.getElementById('mw-window1').value;
+
+  if (!raw) {
+    box.innerHTML = '';
+    return;
+  }
+
+  const open = new Date(raw);
+  if (isNaN(open.getTime())) {
+    box.innerHTML = '';
+    return;
+  }
+
+  const shift = (days) => {
+    const d = new Date(open.getTime());
+    d.setDate(d.getDate() + days);
+    return d;
+  };
+
+  const fmt = (d) => (d.getMonth() + 1) + '/' + d.getDate() +
+    '（' + '日月火水木金土'[d.getDay()] + '）';
+
+  box.innerHTML = `
+    <div class="hint-box">
+      この日時にすると、第1次のプロテクトはこうなります。
+      <ul class="detail-grid-list">
+        <li>無料期: ${esc(fmt(shift(-6)))} 〜 ${esc(fmt(shift(-3)))}</li>
+        <li>有料期: ${esc(fmt(shift(-1)))} 23:00 〜 市場最終日</li>
+      </ul>
+      <p class="muted note-sm">日数は Config で変えられます。</p>
+    </div>`;
+}
+
+/**
+ * 移籍市場の開幕日時を保存する。
+ */
+async function onSaveMarketWindows() {
+  const seasonId = document.getElementById('sp-season').value;
+  const season = (await loadSeasons()).find((s) => s.season_id === seasonId);
+  if (!season) return;
+
+  const btn = document.getElementById('mw-save');
+  btn.disabled = true;
+  setResult('mw-result', true, '保存中...');
+
+  // upsertSeason は全項目を受け取るので、他の値は今のまま渡す
+  const res = await callApi('upsertSeason', {
+    season_id: seasonId,
+    name: season.name,
+    status: season.status,
+    leg_enabled: season.leg_enabled,
+    window1_open_at: document.getElementById('mw-window1').value,
+    window2_open_at: document.getElementById('mw-window2').value,
+    claim_deadline_at: season.claim_deadline_at,
+  });
+
+  btn.disabled = false;
+
+  if (!res.ok) {
+    setResult('mw-result', false, '保存できません: ' + res.error);
+    return;
+  }
+
+  setResult('mw-result', true, '日時を保存しました。');
+  cache.seasons = null;
+  await loadSeasons(true);
+  renderMarketDerived();
 }
 
 // ---------------------------------------------------------------------------
@@ -5145,8 +5325,10 @@ function scheduleTableHtml(d, editable) {
 
   const rows = d.items
     .map((i) => {
-      const sameDay = i.date === prevDate;
-      prevDate = i.date;
+      // date は時刻まで持つので、同じ日でも一致しない項目がある
+      // （有料プロテクト開始は23:00）。表示用の日付で比べる
+      const sameDay = i.date_label === prevDate;
+      prevDate = i.date_label;
 
       const cls = [
         i.is_today ? 'row-today' : '',
@@ -6089,10 +6271,11 @@ function renderSponsorList() {
 
   box.innerHTML = d.sponsors
     .map((s) => `
-      <div class="card sponsor-card${s.is_mine ? ' sponsor-mine' : ''}">
+      <div class="card sponsor-card${s.is_mine ? ' sponsor-mine' : ''}${s.unlocked ? '' : ' sponsor-locked'}">
         <div class="claim-head">
           <strong>${esc(s.name)}</strong>
           ${s.is_mine ? '<span class="tag-ok">契約中</span>' : ''}
+          ${s.unlocked ? '' : '<span class="tag-ng">条件未達</span>'}
         </div>
         <div class="sponsor-terms">
           <div>
@@ -6108,11 +6291,19 @@ function renderSponsorList() {
             <span class="stat-value stat-sm">${s.penalty > 0 ? esc(formatMoney(s.penalty)) : 'なし'}</span>
           </div>
         </div>
+        ${s.unlock_label
+          ? '<p class="note-sm' + (s.unlocked ? ' muted' : ' text-ng') + '">解放条件: ' +
+            esc(s.unlock_label) +
+            (s.unlocked ? '' : '（' + esc(s.unlock_reason) + '）') + '</p>'
+          : ''}
         ${s.note ? '<p class="muted note-sm">' + esc(s.note) + '</p>' : ''}
         <p class="muted note-sm">契約中のチーム: ${s.contracted} 件</p>
-        ${canChoose && !s.is_mine
+        ${canChoose && !s.is_mine && s.unlocked
           ? '<button type="button" class="btn btn-primary btn-sm sn-choose" data-id="' +
             esc(s.sponsor_id) + '">このスポンサーと契約</button>'
+          : ''}
+        ${canChoose && !s.is_mine && !s.unlocked
+          ? '<p class="muted note-sm">条件を満たすと選べるようになります。</p>'
           : ''}
       </div>`)
     .join('');
@@ -6193,6 +6384,10 @@ async function loadSponsorAdmin() {
   }
 
   const d = res.data;
+  // 解放条件の「判定するシーズン」で前シーズンを選べるようにする
+  d.all_seasons = await loadSeasons();
+  sponsorAdminData = d;
+
   document.getElementById('sa-open').checked = d.open;
 
   document.getElementById('sa-summary').innerHTML = `
@@ -6228,7 +6423,7 @@ function renderSponsorAdminList(d) {
         <thead>
           <tr>
             <th>スポンサー</th><th class="num">契約金</th><th>ノルマ</th>
-            <th class="num">罰金</th><th>契約チーム</th><th>使う</th><th>操作</th>
+            <th class="num">罰金</th><th>解放条件</th><th>契約チーム</th><th>使う</th><th>操作</th>
           </tr>
         </thead>
         <tbody>
@@ -6238,6 +6433,12 @@ function renderSponsorAdminList(d) {
               <td class="num">${esc(formatMoney(s.contract_fee))}</td>
               <td>${esc(s.quota_label)}</td>
               <td class="num">${s.penalty > 0 ? esc(formatMoney(s.penalty)) : '—'}</td>
+              <td class="muted">${s.unlock_label
+                ? esc(s.unlock_label) +
+                  (s.unlock_type === '指定'
+                    ? '<br><span class="note-sm">' + s.unlock_teams.length + 'チームに解放</span>'
+                    : '')
+                : '—'}</td>
               <td class="muted">${s.teams.length ? esc(s.teams.join(' / ')) : '—'}</td>
               <td>${s.active ? '○' : '×'}</td>
               <td>
@@ -6327,67 +6528,244 @@ async function onSaveSponsorOpen() {
   setResult('sa-open-result', true, open ? '受付中にしました。' : '受付を停止しました。');
 }
 
+/** listSponsors の結果（設定フォームで使い回す） */
+let sponsorAdminData = null;
+
 /**
- * スポンサーを追加・編集する。
+ * スポンサーの追加・編集フォームを出す。
+ *
+ * 項目が10近くあるので、prompt を連打させると
+ * 途中で間違えたときに最初からやり直しになる。
+ * 1枚のフォームにまとめて、保存前に全体を見直せるようにする。
  *
  * @param {Object|null} s 既存のスポンサー。null なら新規
  */
-async function onEditSponsor(s) {
-  const seasonId = document.getElementById('sp-season').value;
+function onEditSponsor(s) {
+  const d = sponsorAdminData;
+  if (!d) return;
 
-  const name = prompt('スポンサー名', s ? s.name : '');
-  if (name === null || !name.trim()) return;
+  const box = document.getElementById('sa-form');
+  const v = s || {
+    sponsor_id: '', name: '', contract_fee: 0,
+    quota_type: 'なし', quota_value: '', quota_type2: 'なし', quota_value2: '',
+    penalty: 0, unlock_type: 'なし', unlock_season_id: '', unlock_value: '',
+    unlock_teams: [], unlock_note: '', note: '', active: true,
+  };
 
-  const fee = prompt('契約金（100万円単位。例: 300 → 3億円）',
-    s ? String(s.contract_fee / 1000000) : '');
-  if (fee === null) return;
+  const million = (n) => (Number(n) || 0) / 1000000;
 
-  const quotaType = prompt(
-    'ノルマの種別を入力\n  1 = リーグ順位\n  2 = リーグ杯\n  3 = なし',
-    s ? (s.quota_type === 'リーグ順位' ? '1' : s.quota_type === 'リーグ杯' ? '2' : '3') : '1'
-  );
-  if (quotaType === null) return;
+  box.innerHTML = `
+    <div class="card sponsor-form">
+      <h3 class="sub-head">${s ? 'スポンサーを編集' : 'スポンサーを追加'}</h3>
 
-  const typeMap = { '1': 'リーグ順位', '2': 'リーグ杯', '3': 'なし' };
-  const type = typeMap[quotaType.trim()] || 'なし';
+      <div class="form-grid">
+        <label>
+          スポンサー名
+          <input type="text" id="sf-name" value="${esc(v.name)}" />
+        </label>
+        <label>
+          契約金 <span class="unit-hint">100万円単位</span>
+          <input type="number" id="sf-fee" min="0" step="1" value="${million(v.contract_fee)}" />
+        </label>
+      </div>
 
-  let quotaValue = '';
-  if (type === 'リーグ順位') {
-    quotaValue = prompt('何位以内？（例: 3）', s ? s.quota_value : '3');
-    if (quotaValue === null) return;
-  } else if (type === 'リーグ杯') {
-    quotaValue = prompt('優勝 / 準優勝以上 / ベスト4以上 のいずれか',
-      s ? s.quota_value : 'ベスト4以上');
-    if (quotaValue === null) return;
-  }
+      <h4 class="sub-head-sm">ノルマ</h4>
+      <p class="muted note-sm">
+        2つ設定すると<strong>どちらか達成すればよい</strong>という条件になります。
+      </p>
+      ${quotaRowHtml(1, v.quota_type, v.quota_value, d)}
+      ${quotaRowHtml(2, v.quota_type2, v.quota_value2, d)}
 
-  let penalty = '0';
-  if (type !== 'なし') {
-    penalty = prompt('未達時の罰金（100万円単位。例: 200 → 2億円）',
-      s ? String(s.penalty / 1000000) : '');
-    if (penalty === null) return;
-  }
+      <div class="form-grid">
+        <label>
+          未達時の罰金 <span class="unit-hint">100万円単位</span>
+          <input type="number" id="sf-penalty" min="0" step="1" value="${million(v.penalty)}" />
+        </label>
+      </div>
 
-  const note = prompt('備考（任意）', s ? s.note : '');
-  if (note === null) return;
+      <h4 class="sub-head-sm">解放条件</h4>
+      <p class="muted note-sm">
+        条件を満たしたチームだけが選べるようになります。
+        <strong>順位</strong>はツールに入っているシーズンの順位表から自動で判定し、
+        <strong>指定</strong>は選んだチームだけに開きます。
+        過去シーズンの成績がツールに無い場合は「指定」を使ってください。
+      </p>
+      <div class="form-grid">
+        <label>
+          種別
+          <select id="sf-unlock-type">
+            ${d.unlock_types.map((t) =>
+              '<option value="' + esc(t) + '"' + (v.unlock_type === t ? ' selected' : '') +
+              '>' + esc(t) + '</option>').join('')}
+          </select>
+        </label>
+        <label id="sf-unlock-season-wrap">
+          判定するシーズン
+          <select id="sf-unlock-season"></select>
+        </label>
+        <label id="sf-unlock-value-wrap">
+          何位以内
+          <input type="number" id="sf-unlock-value" min="1" step="1" value="${esc(v.unlock_value)}" />
+        </label>
+      </div>
+      <div id="sf-unlock-teams-wrap">
+        <p class="muted note-sm">選べるチーム</p>
+        <div class="check-grid">
+          ${d.teams.map((t) =>
+            '<label class="check-label"><input type="checkbox" class="sf-team" value="' +
+            esc(t.team_id) + '"' +
+            (v.unlock_teams.indexOf(t.team_id) !== -1 ? ' checked' : '') + ' /> ' +
+            esc(t.team_name) + '</label>').join('')}
+        </div>
+      </div>
 
-  const res = await callApi('upsertSponsor', {
-    sponsor_id: s ? s.sponsor_id : '',
-    season_id: seasonId,
-    name: name.trim(),
-    contract_fee: (Number(fee) || 0) * 1000000,
-    quota_type: type,
-    quota_value: (quotaValue || '').trim(),
-    penalty: (Number(penalty) || 0) * 1000000,
-    note,
-    active: s ? s.active : true,
+      <div class="form-grid">
+        <label>
+          解放条件の説明文 <span class="unit-hint">参加者の画面にこのまま出ます</span>
+          <input type="text" id="sf-unlock-note" value="${esc(v.unlock_note)}"
+                 placeholder="例: Season7〜13でGM1所属かつタイトル獲得" />
+        </label>
+        <label>
+          備考
+          <input type="text" id="sf-note" value="${esc(v.note)}" />
+        </label>
+        <label class="check-label">
+          <input type="checkbox" id="sf-active" ${v.active ? 'checked' : ''} />
+          選択肢に出す
+        </label>
+      </div>
+
+      <div class="form-actions">
+        <button type="button" id="sf-save" class="btn btn-primary">保存</button>
+        <button type="button" id="sf-cancel" class="btn btn-secondary">キャンセル</button>
+        <span id="sf-result" class="form-msg"></span>
+      </div>
+    </div>`;
+
+  // 判定シーズンは自分以外も含めて全部から選べる（前シーズンを指すため）
+  fillSelect('sf-unlock-season', d.all_seasons, 'season_id', 'name', 'シーズンを選択');
+  document.getElementById('sf-unlock-season').value = v.unlock_season_id || '';
+
+  [1, 2].forEach((n) => {
+    document.getElementById('sf-qtype' + n).onchange = () => syncQuotaRow(n);
+    syncQuotaRow(n);
   });
 
+  document.getElementById('sf-unlock-type').onchange = syncUnlockRow;
+  syncUnlockRow();
+
+  document.getElementById('sf-save').onclick = () => onSaveSponsorForm(v.sponsor_id);
+  document.getElementById('sf-cancel').onclick = () => { box.innerHTML = ''; };
+
+  box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+/**
+ * ノルマ1行ぶんの HTML。
+ *
+ * @param {number} n 1 か 2
+ * @param {string} type
+ * @param {string} value
+ * @param {Object} d listSponsors の結果
+ * @returns {string}
+ */
+function quotaRowHtml(n, type, value, d) {
+  return `
+    <div class="form-grid">
+      <label>
+        ${n === 1 ? 'ノルマ' : 'または'}
+        <select id="sf-qtype${n}">
+          ${d.quota_types.map((t) =>
+            '<option value="' + esc(t) + '"' + (type === t ? ' selected' : '') +
+            '>' + esc(t) + '</option>').join('')}
+        </select>
+      </label>
+      <label id="sf-qrank-wrap${n}">
+        何位以内
+        <input type="number" id="sf-qrank${n}" min="1" step="1"
+               value="${type === 'リーグ順位' ? esc(value) : ''}" />
+      </label>
+      <label id="sf-qcup-wrap${n}">
+        リーグ杯の成績
+        <select id="sf-qcup${n}">
+          ${d.cup_goals.map((g) =>
+            '<option value="' + esc(g) + '"' + (value === g ? ' selected' : '') +
+            '>' + esc(g) + '</option>').join('')}
+        </select>
+      </label>
+    </div>`;
+}
+
+/**
+ * ノルマの種別に応じて入力欄を出し分ける。
+ *
+ * @param {number} n
+ */
+function syncQuotaRow(n) {
+  const t = document.getElementById('sf-qtype' + n).value;
+  document.getElementById('sf-qrank-wrap' + n).style.display = t === 'リーグ順位' ? '' : 'none';
+  document.getElementById('sf-qcup-wrap' + n).style.display = t === 'リーグ杯' ? '' : 'none';
+}
+
+/**
+ * 解放条件の種別に応じて入力欄を出し分ける。
+ */
+function syncUnlockRow() {
+  const t = document.getElementById('sf-unlock-type').value;
+  document.getElementById('sf-unlock-season-wrap').style.display = t === '順位' ? '' : 'none';
+  document.getElementById('sf-unlock-value-wrap').style.display = t === '順位' ? '' : 'none';
+  document.getElementById('sf-unlock-teams-wrap').style.display = t === '指定' ? '' : 'none';
+}
+
+/**
+ * フォームの内容を保存する。
+ *
+ * @param {string} sponsorId 空なら新規
+ */
+async function onSaveSponsorForm(sponsorId) {
+  const q = (n) => {
+    const t = document.getElementById('sf-qtype' + n).value;
+    if (t === 'リーグ順位') return { type: t, value: document.getElementById('sf-qrank' + n).value };
+    if (t === 'リーグ杯') return { type: t, value: document.getElementById('sf-qcup' + n).value };
+    return { type: 'なし', value: '' };
+  };
+
+  const q1 = q(1);
+  const q2 = q(2);
+
+  const teams = [...document.querySelectorAll('.sf-team:checked')].map((c) => c.value);
+
+  const btn = document.getElementById('sf-save');
+  btn.disabled = true;
+  setResult('sf-result', true, '保存中...');
+
+  const res = await callApi('upsertSponsor', {
+    sponsor_id: sponsorId,
+    season_id: document.getElementById('sp-season').value,
+    name: document.getElementById('sf-name').value.trim(),
+    contract_fee: (Number(document.getElementById('sf-fee').value) || 0) * 1000000,
+    quota_type: q1.type,
+    quota_value: q1.value,
+    quota_type2: q2.type,
+    quota_value2: q2.value,
+    penalty: (Number(document.getElementById('sf-penalty').value) || 0) * 1000000,
+    unlock_type: document.getElementById('sf-unlock-type').value,
+    unlock_season_id: document.getElementById('sf-unlock-season').value,
+    unlock_value: document.getElementById('sf-unlock-value').value,
+    unlock_teams: teams,
+    unlock_note: document.getElementById('sf-unlock-note').value.trim(),
+    note: document.getElementById('sf-note').value.trim(),
+    active: document.getElementById('sf-active').checked,
+  });
+
+  btn.disabled = false;
+
   if (!res.ok) {
-    alert('保存できません: ' + res.error);
+    setResult('sf-result', false, '保存できません: ' + res.error);
     return;
   }
 
+  document.getElementById('sa-form').innerHTML = '';
   await loadSponsorAdmin();
 }
 

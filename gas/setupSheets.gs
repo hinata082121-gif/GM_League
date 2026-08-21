@@ -324,7 +324,14 @@ function _getSheetDefinitions() {
         "contract_fee", // number  契約金。契約した時点でチーム予算に入る
         "quota_type",   // enum    リーグ順位 / リーグ杯 / なし
         "quota_value",  // string  リーグ順位なら「3」、リーグ杯なら「ベスト4以上」など
+        "quota_type2",  // enum    2つ目のノルマ。どちらか達成すればよい
+        "quota_value2", // string  2つ目のノルマの値
         "penalty",      // number  ノルマ未達時の罰金。シーズン終了時に引かれる
+        "unlock_type",  // enum    なし / 順位 / 指定
+        "unlock_season_id", // string  順位で判定するときの対象シーズン
+        "unlock_value", // string  順位なら「4」（4位以内）
+        "unlock_teams", // string  指定のとき、選べる team_id をカンマ区切り
+        "unlock_note",  // string  解放条件の説明文（表示用）
         "note",         // string  備考
         "active",       // bool    選択肢に出すか
       ],

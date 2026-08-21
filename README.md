@@ -404,7 +404,7 @@ GAS エディタの関数プルダウンから選んで実行する。どちら�
 | `assignManager` / `clearManagerPick` | 主催者 | — | 手動割当・取消 |
 | `listManagers` / `upsertManager` | 主催者 | — | 監督マスタ |
 | `getUiState` | 全員 | `season_id?` | 参加者に見せるタブ（期間外は false） |
-| `getSponsorOptions` | 全員 | `season_id`, `team_id?` | 選べるスポンサーと自分の契約 |
+| `getSponsorOptions` | 全員 | `season_id`, `team_id?` | 選べるスポンサーと自分の契約（解放状態つき） |
 | `chooseSponsor` | team | `season_id`, `sponsor_id` | 契約。契約金が即入金 |
 | `listSponsors` / `upsertSponsor` / `deleteSponsor` | 主催者 | — | 設定の一覧と編集 |
 | `copySponsors` | 主催者 | `from_season_id`, `to_season_id` | 別シーズンから複製 |

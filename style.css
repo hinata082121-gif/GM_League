@@ -1241,3 +1241,37 @@ code {
   border-color: #1d63d1;
   color: #fff;
 }
+
+/* ===== スポンサーの設定フォーム ===== */
+
+.sponsor-form {
+  border-left: 3px solid #1d63d1;
+  margin: 12px 0;
+}
+
+.sub-head-sm {
+  margin: 14px 0 4px;
+  font-size: 14px;
+  color: #33414f;
+}
+
+.check-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-bottom: 10px;
+}
+
+.check-grid .check-label {
+  min-width: 180px;
+}
+
+/* 条件を満たしていないスポンサーは薄くする。
+   消してしまうと「何を目指せば開くのか」が分からなくなる */
+.sponsor-locked {
+  opacity: 0.62;
+}
+
+.text-ng {
+  color: #b3261e;
+}

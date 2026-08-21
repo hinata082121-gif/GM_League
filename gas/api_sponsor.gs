@@ -47,6 +47,12 @@ var SPONSOR_QUOTA_TYPES = [SPONSOR_QUOTA_NONE, SPONSOR_QUOTA_RANK, SPONSOR_QUOTA
 /** リーグ杯のノルマとして選べる値。上にあるほど厳しい */
 var SPONSOR_CUP_GOALS = ["優勝", "準優勝以上", "ベスト4以上"];
 
+/** 解放条件の種別 */
+var SPONSOR_UNLOCK_NONE = "なし";
+var SPONSOR_UNLOCK_RANK = "順位";
+var SPONSOR_UNLOCK_LIST = "指定";
+var SPONSOR_UNLOCK_TYPES = [SPONSOR_UNLOCK_NONE, SPONSOR_UNLOCK_RANK, SPONSOR_UNLOCK_LIST];
+
 var SPONSOR_RESULT_NONE = "未判定";
 var SPONSOR_RESULT_MET = "達成";
 var SPONSOR_RESULT_MISS = "未達";
@@ -129,6 +135,7 @@ function getSponsorOptions(token, payload) {
   });
 
   var mine = _contractOfTeam(seasonId, teamId);
+  var rankCache = {};
 
   return {
     ok: true,
@@ -138,14 +145,21 @@ function getSponsorOptions(token, payload) {
       team_name:   teamNames[teamId] || teamId,
       open:        _isSponsorOpen(),
       sponsors:    sponsors.map(function (s) {
+        var u = _isUnlocked(s, teamId, rankCache);
+
         return {
           sponsor_id:   s.sponsor_id,
           name:         s.name,
           contract_fee: s.contract_fee,
           quota_type:   s.quota_type,
           quota_value:  s.quota_value,
+          quota_type2:  s.quota_type2,
+          quota_value2: s.quota_value2,
           quota_label:  _quotaLabel(s),
           penalty:      s.penalty,
+          unlock_label: _unlockLabel(s),
+          unlocked:     u.unlocked,
+          unlock_reason: u.reason,
           note:         s.note,
           contracted:   counts[s.sponsor_id] || 0,
           is_mine:      !!mine && _str(mine.sponsor_id) === s.sponsor_id,
@@ -163,13 +177,103 @@ function getSponsorOptions(token, payload) {
  * @returns {string}
  */
 function _quotaLabel(s) {
-  if (s.quota_type === SPONSOR_QUOTA_RANK) {
-    return "リーグ戦 " + s.quota_value + "位以内";
+  var parts = [_oneQuotaLabel(s.quota_type, s.quota_value)];
+
+  if (s.quota_type2 && s.quota_type2 !== SPONSOR_QUOTA_NONE) {
+    parts.push(_oneQuotaLabel(s.quota_type2, s.quota_value2));
   }
-  if (s.quota_type === SPONSOR_QUOTA_CUP) {
-    return "GMリーグ杯 " + s.quota_value;
+
+  parts = parts.filter(function (p) { return p; });
+  if (parts.length === 0) return "ノルマなし";
+
+  // 2つあるときは「どちらか達成すればよい」ことが一目で分かるようにする
+  return parts.join(" または ");
+}
+
+/**
+ * ノルマ1つぶんの文言。
+ *
+ * @param {string} type
+ * @param {string} value
+ * @returns {string}
+ */
+function _oneQuotaLabel(type, value) {
+  if (type === SPONSOR_QUOTA_RANK) return "リーグ戦 " + value + "位以内";
+  if (type === SPONSOR_QUOTA_CUP) return "GMリーグ杯 " + value;
+  return "";
+}
+
+/**
+ * 解放条件を1行の文にする。
+ *
+ * @param {Object} s
+ * @returns {string}
+ */
+function _unlockLabel(s) {
+  if (s.unlock_note) return s.unlock_note;
+
+  if (s.unlock_type === SPONSOR_UNLOCK_RANK) {
+    return "前シーズン " + s.unlock_value + "位以内";
   }
-  return "ノルマなし";
+  if (s.unlock_type === SPONSOR_UNLOCK_LIST) {
+    return "主催者が指定したチームのみ";
+  }
+  return "";
+}
+
+// =============================================================================
+// 解放条件
+// =============================================================================
+
+/**
+ * そのチームがこのスポンサーを選べるかを判定する。
+ *
+ * 「強いスポンサーは実績のあるチームだけ」という制限を表すための仕組み。
+ * 契約金が大きいものほど条件を重くしておくと、上位と下位の差が開きすぎない。
+ *
+ * ▶ 判定できるもの / できないもの
+ *   - **順位**: 指定シーズンの順位表から自動で判定する。
+ *     そのシーズンがツールに入っている場合だけ使える。
+ *   - **指定**: 主催者が選んだチームだけ。過去シーズンの成績が
+ *     ツールに入っていない場合（Season13以前など）はこちらを使う。
+ *
+ * 判定に使うシーズンが見つからないときは**開けない**。
+ * 開けてしまうと、条件付きのスポンサーが誰でも選べる状態で気づかれずに進む。
+ *
+ * @param {Object} sponsor
+ * @param {string} teamId
+ * @param {Object} rankCache season_id → (team_id → 順位) の使い回し
+ * @returns {{ unlocked: boolean, reason: string }}
+ */
+function _isUnlocked(sponsor, teamId, rankCache) {
+  if (sponsor.unlock_type === SPONSOR_UNLOCK_LIST) {
+    if (sponsor.unlock_teams.indexOf(teamId) !== -1) {
+      return { unlocked: true, reason: "解放済み" };
+    }
+    return { unlocked: false, reason: "条件を満たしていません" };
+  }
+
+  if (sponsor.unlock_type === SPONSOR_UNLOCK_RANK) {
+    var sid = sponsor.unlock_season_id;
+    if (!sid) {
+      return { unlocked: false, reason: "判定するシーズンが設定されていません" };
+    }
+
+    if (!rankCache[sid]) rankCache[sid] = _leagueRankMap(PUBLIC_ACCESS, sid);
+    var rank = rankCache[sid][teamId];
+
+    if (!rank) {
+      return { unlocked: false, reason: "対象シーズンの順位がありません" };
+    }
+
+    var target = Math.round(_num(sponsor.unlock_value));
+    return {
+      unlocked: rank <= target,
+      reason: rank + "位（条件: " + target + "位以内）",
+    };
+  }
+
+  return { unlocked: true, reason: "" };
 }
 
 /**
@@ -210,6 +314,17 @@ function chooseSponsor(token, payload) {
     var sponsor = _findSponsor(seasonId, sponsorId);
     if (!sponsor) return { ok: false, error: "スポンサーが見つかりません。" };
     if (!sponsor.active) return { ok: false, error: "このスポンサーは現在選べません。" };
+
+    // 解放条件。主催者は代理契約のため通す（画面には理由を出している）
+    if (_str(user.role) !== "organizer") {
+      var u = _isUnlocked(sponsor, teamId, {});
+      if (!u.unlocked) {
+        return {
+          ok: false,
+          error: "このスポンサーの解放条件を満たしていません（" + u.reason + "）。",
+        };
+      }
+    }
 
     var at = now();
     var existing = _contractOfTeam(seasonId, teamId);
@@ -320,8 +435,16 @@ function listSponsors(token, payload) {
           contract_fee: s.contract_fee,
           quota_type:   s.quota_type,
           quota_value:  s.quota_value,
+          quota_type2:  s.quota_type2,
+          quota_value2: s.quota_value2,
           quota_label:  _quotaLabel(s),
           penalty:      s.penalty,
+          unlock_type:  s.unlock_type,
+          unlock_season_id: s.unlock_season_id,
+          unlock_value: s.unlock_value,
+          unlock_teams: s.unlock_teams,
+          unlock_note:  s.unlock_note,
+          unlock_label: _unlockLabel(s),
           note:         s.note,
           active:       s.active,
           teams:        takers,
@@ -338,7 +461,12 @@ function listSponsors(token, payload) {
         .map(function (t) {
           return { team_id: _str(t.team_id), team_name: _str(t.name) };
         }),
-      cup_goals: SPONSOR_CUP_GOALS,
+      cup_goals:    SPONSOR_CUP_GOALS,
+      quota_types:  SPONSOR_QUOTA_TYPES,
+      unlock_types: SPONSOR_UNLOCK_TYPES,
+      teams:        _activeTeams().map(function (t) {
+        return { team_id: _str(t.team_id), team_name: _str(t.name) };
+      }),
     },
   };
 }
@@ -362,28 +490,17 @@ function upsertSponsor(token, payload) {
   if (!seasonId) return { ok: false, error: "season_id は必須です。" };
   if (!name) return { ok: false, error: "スポンサー名を入力してください。" };
 
-  var quotaType = _str(payload.quota_type) || SPONSOR_QUOTA_NONE;
-  try {
-    _assertEnum("quota_type", quotaType, SPONSOR_QUOTA_TYPES);
-  } catch (e) {
-    return { ok: false, error: e.message };
-  }
+  var q1 = _normalizeQuota(payload.quota_type, payload.quota_value);
+  if (q1.error) return { ok: false, error: q1.error };
 
-  var quotaValue = _str(payload.quota_value).trim();
+  var q2 = _normalizeQuota(payload.quota_type2, payload.quota_value2);
+  if (q2.error) return { ok: false, error: "2つ目のノルマ: " + q2.error };
 
-  if (quotaType === SPONSOR_QUOTA_RANK) {
-    var rank = Math.round(_num(quotaValue));
-    if (rank < 1) return { ok: false, error: "リーグ順位のノルマは1以上で入力してください。" };
-    quotaValue = String(rank);
-  } else if (quotaType === SPONSOR_QUOTA_CUP) {
-    if (SPONSOR_CUP_GOALS.indexOf(quotaValue) === -1) {
-      return {
-        ok: false,
-        error: "リーグ杯のノルマは " + SPONSOR_CUP_GOALS.join(" / ") + " から選んでください。",
-      };
-    }
-  } else {
-    quotaValue = "";
+  // 1つ目が空で2つ目だけあると、判定はできるが画面の見え方が分かりにくい。
+  // 1つ目へ寄せてしまう
+  if (q1.type === SPONSOR_QUOTA_NONE && q2.type !== SPONSOR_QUOTA_NONE) {
+    q1 = q2;
+    q2 = { type: SPONSOR_QUOTA_NONE, value: "" };
   }
 
   var fee = Math.round(_num(payload.contract_fee));
@@ -392,8 +509,37 @@ function upsertSponsor(token, payload) {
   if (fee < 0) return { ok: false, error: "契約金は0以上で入力してください。" };
   if (penalty < 0) return { ok: false, error: "罰金は0以上で入力してください。" };
 
-  if (quotaType === SPONSOR_QUOTA_NONE && penalty > 0) {
+  if (q1.type === SPONSOR_QUOTA_NONE && penalty > 0) {
     return { ok: false, error: "ノルマなしのスポンサーに罰金は設定できません。" };
+  }
+
+  var unlockType = _str(payload.unlock_type) || SPONSOR_UNLOCK_NONE;
+  try {
+    _assertEnum("unlock_type", unlockType, SPONSOR_UNLOCK_TYPES);
+  } catch (e2) {
+    return { ok: false, error: e2.message };
+  }
+
+  var unlockSeason = _str(payload.unlock_season_id);
+  var unlockValue = _str(payload.unlock_value).trim();
+  var unlockTeams = _joinIds(payload.unlock_teams);
+
+  if (unlockType === SPONSOR_UNLOCK_RANK) {
+    var ur = Math.round(_num(unlockValue));
+    if (ur < 1) return { ok: false, error: "解放条件の順位は1以上で入力してください。" };
+    unlockValue = String(ur);
+
+    if (!unlockSeason) {
+      return { ok: false, error: "順位で解放するときは、判定するシーズンを選んでください。" };
+    }
+    unlockTeams = "";
+  } else if (unlockType === SPONSOR_UNLOCK_LIST) {
+    unlockSeason = "";
+    unlockValue = "";
+  } else {
+    unlockSeason = "";
+    unlockValue = "";
+    unlockTeams = "";
   }
 
   var sponsorId = _str(payload.sponsor_id);
@@ -403,9 +549,16 @@ function upsertSponsor(token, payload) {
       season_id:    seasonId,
       name:         name,
       contract_fee: fee,
-      quota_type:   quotaType,
-      quota_value:  quotaValue,
+      quota_type:   q1.type,
+      quota_value:  q1.value,
+      quota_type2:  q2.type,
+      quota_value2: q2.value,
       penalty:      penalty,
+      unlock_type:  unlockType,
+      unlock_season_id: unlockSeason,
+      unlock_value: unlockValue,
+      unlock_teams: unlockTeams,
+      unlock_note:  _str(payload.unlock_note),
       note:         _str(payload.note),
       active:       payload.active === undefined ? true : _toBool(payload.active),
     };
@@ -512,7 +665,17 @@ function copySponsors(token, payload) {
         contract_fee: s.contract_fee,
         quota_type:   s.quota_type,
         quota_value:  s.quota_value,
+        quota_type2:  s.quota_type2,
+        quota_value2: s.quota_value2,
         penalty:      s.penalty,
+        unlock_type:  s.unlock_type,
+        // 解放の対象シーズンとチームは引き継がない。
+        // 前シーズンの設定をそのまま持ってくると、別のシーズンの順位で
+        // 判定してしまう。複製後に選び直す前提にする
+        unlock_season_id: "",
+        unlock_value: s.unlock_value,
+        unlock_teams: "",
+        unlock_note:  s.unlock_note,
         note:         s.note,
         active:       s.active,
       });
@@ -642,24 +805,58 @@ function _settleSponsors(token, seasonId, at, report) {
  * @returns {{ met: boolean, actual: string }}
  */
 function _judgeQuota(sponsor, teamId, ranks, cup) {
-  if (sponsor.quota_type === SPONSOR_QUOTA_NONE) {
-    return { met: true, actual: "ノルマなし" };
-  }
+  var conds = [
+    { type: sponsor.quota_type, value: sponsor.quota_value },
+    { type: sponsor.quota_type2, value: sponsor.quota_value2 },
+  ].filter(function (c) { return c.type && c.type !== SPONSOR_QUOTA_NONE; });
 
-  if (sponsor.quota_type === SPONSOR_QUOTA_RANK) {
+  if (conds.length === 0) return { met: true, actual: "ノルマなし" };
+
+  // **どれか1つ達成していればよい。** 2つ設定するのは
+  // 「リーグ優勝 または カップ優勝」のような選択式のノルマを表すため。
+  var met = false;
+  var actuals = [];
+
+  conds.forEach(function (c) {
+    var r = _judgeOneQuota(c.type, c.value, teamId, ranks, cup);
+    if (r.met) met = true;
+    actuals.push(r.actual);
+  });
+
+  // 実績は重複を除いて並べる（両方がリーグ順位なら同じ文言が2つ出るため）
+  var seen = {};
+  var uniq = actuals.filter(function (a) {
+    if (seen[a]) return false;
+    seen[a] = true;
+    return true;
+  });
+
+  return { met: met, actual: uniq.join(" / ") };
+}
+
+/**
+ * ノルマ1つぶんを判定する。
+ *
+ * @param {string} type
+ * @param {string} value
+ * @param {string} teamId
+ * @param {Object} ranks
+ * @param {Object} cup
+ * @returns {{ met: boolean, actual: string }}
+ */
+function _judgeOneQuota(type, value, teamId, ranks, cup) {
+  if (type === SPONSOR_QUOTA_RANK) {
     var rank = ranks[teamId];
     if (!rank) {
       // 順位が出ていない（1試合も消化していない等）。達成扱いにはしない
       return { met: false, actual: "順位なし" };
     }
-    var target = Math.round(_num(sponsor.quota_value));
-    return { met: rank <= target, actual: rank + "位" };
+    return { met: rank <= Math.round(_num(value)), actual: rank + "位" };
   }
 
-  // リーグ杯
   var reached = cup[teamId] || "";
   var order = { "優勝": 3, "準優勝以上": 2, "ベスト4以上": 1 };
-  var need = order[_str(sponsor.quota_value)] || 0;
+  var need = order[_str(value)] || 0;
   var got = order[reached] || 0;
 
   return { met: got >= need, actual: reached || "ベスト4未満" };
@@ -768,11 +965,31 @@ function _sponsorsOf(seasonId) {
         contract_fee: _num(s.contract_fee),
         quota_type:   _str(s.quota_type) || SPONSOR_QUOTA_NONE,
         quota_value:  _str(s.quota_value),
+        quota_type2:  _str(s.quota_type2) || SPONSOR_QUOTA_NONE,
+        quota_value2: _str(s.quota_value2),
         penalty:      _num(s.penalty),
+        unlock_type:  _str(s.unlock_type) || SPONSOR_UNLOCK_NONE,
+        unlock_season_id: _str(s.unlock_season_id),
+        unlock_value: _str(s.unlock_value),
+        unlock_teams: _splitIds(s.unlock_teams),
+        unlock_note:  _str(s.unlock_note),
         note:         _str(s.note),
         active:       _toBool(s.active),
       };
     });
+}
+
+/**
+ * カンマ区切りの ID 文字列を配列にする。
+ *
+ * @param {*} value
+ * @returns {string[]}
+ */
+function _splitIds(value) {
+  return _str(value)
+    .split(",")
+    .map(function (v) { return v.trim(); })
+    .filter(function (v) { return v; });
 }
 
 /**
@@ -848,4 +1065,59 @@ function _contractView(c, sponsors) {
     chosen_at:    _iso(c.chosen_at),
     settled_at:   _iso(c.settled_at),
   };
+}
+
+/**
+ * ノルマの種別と値を検証して整える。
+ *
+ * @param {*} type
+ * @param {*} value
+ * @returns {{ type: string, value: string, error?: string }}
+ */
+function _normalizeQuota(type, value) {
+  var t = _str(type) || SPONSOR_QUOTA_NONE;
+
+  try {
+    _assertEnum("quota_type", t, SPONSOR_QUOTA_TYPES);
+  } catch (e) {
+    return { type: t, value: "", error: e.message };
+  }
+
+  var v = _str(value).trim();
+
+  if (t === SPONSOR_QUOTA_RANK) {
+    var rank = Math.round(_num(v));
+    if (rank < 1) {
+      return { type: t, value: v, error: "リーグ順位のノルマは1以上で入力してください。" };
+    }
+    return { type: t, value: String(rank) };
+  }
+
+  if (t === SPONSOR_QUOTA_CUP) {
+    if (SPONSOR_CUP_GOALS.indexOf(v) === -1) {
+      return {
+        type: t, value: v,
+        error: "リーグ杯のノルマは " + SPONSOR_CUP_GOALS.join(" / ") + " から選んでください。",
+      };
+    }
+    return { type: t, value: v };
+  }
+
+  return { type: SPONSOR_QUOTA_NONE, value: "" };
+}
+
+/**
+ * team_id の配列（または文字列）をカンマ区切りにする。
+ *
+ * @param {*} value
+ * @returns {string}
+ */
+function _joinIds(value) {
+  if (Object.prototype.toString.call(value) === "[object Array]") {
+    return value
+      .map(function (v) { return _str(v).trim(); })
+      .filter(function (v) { return v; })
+      .join(",");
+  }
+  return _splitIds(value).join(",");
 }
