@@ -5803,6 +5803,9 @@ function renderManagerList() {
 
   box.innerHTML = `
     <h3 class="sub-head">確定した監督</h3>
+    <p class="muted note-sm">
+      1人の監督は <strong>${managerData.max_teams}</strong> チームまで使えます。
+    </p>
     <div class="table-wrap">
       <table class="data-table">
         <thead><tr><th>監督</th><th>クラブ</th><th>チーム</th></tr></thead>
@@ -5834,9 +5837,13 @@ function renderManagerSelect() {
     '<option value="">監督を選択</option>' +
     list
       .map((m) => {
+        // 同じ監督は上限まで使える。残り枠を出さないと
+        // 「使われているのに選べる」理由が分からない
         const label = m.taken
-          ? m.name + '（' + m.club + '・' + m.taken_by + 'で確定）'
-          : m.name + '（' + m.club + '）';
+          ? m.name + '（' + m.club + '・満枠 ' + m.taken_by + '）'
+          : m.used > 0
+            ? m.name + '（' + m.club + '・残り' + m.remaining + '枠 使用中: ' + m.taken_by + '）'
+            : m.name + '（' + m.club + '）';
         const selected = d.my_pick && d.my_pick.manager_id === m.manager_id;
         return '<option value="' + esc(m.manager_id) + '"' +
           (m.taken && !m.is_mine ? ' disabled' : '') +
@@ -5934,7 +5941,7 @@ async function loadManagerPicks() {
       d.duplicates
         .map((x) => '<li>' + esc(x.manager_name) + ' — ' + esc(x.teams.join(' / ')) + '</li>')
         .join('') + '</ul>'
-    : '<p class="muted note-sm">重複はありません。</p>';
+    : '<p class="muted note-sm">上限を超えた重複はありません。抽選なしで全員確定します。</p>';
 
   const undeclared = d.undeclared.length
     ? '<p class="muted note-sm">未申告: ' +
@@ -6040,7 +6047,7 @@ async function onDrawManagers() {
       d.lotteries
         .map((l) =>
           '<li>' + esc(l.manager_name) + '：' + esc(l.entries.join(' / ')) +
-          ' → <strong>' + esc(l.winner) + '</strong> が当選' +
+          ' → <strong>' + esc(l.winners.join(' / ')) + '</strong> が当選' +
           '（落選: ' + esc(l.losers.join(' / ')) + '）</li>')
         .join('') + '</ul>'
     : '<p class="muted">抽選が必要な重複はありませんでした。</p>';

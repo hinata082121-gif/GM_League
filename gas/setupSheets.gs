@@ -492,6 +492,7 @@ function _setupConfig() {
     ["claim_default_choice",        "払い戻し",  "期限までに選ばれなかった請求の既定"],
     ["new_team_initial_budget",     0,           "新規参加チームの初期予算。チーム変更のリセット後もこの額になる"],
     ["manager_round",               0,           "使用監督の受付状態。0=停止 / 1=第一次（抽選） / 2=第二次（先着）"],
+    ["manager_max_teams",           3,           "1人の監督を使えるチーム数の上限。超えた分だけ抽選になる"],
     ["sponsor_open",                false,       "スポンサー契約の受付中フラグ"],
 
     ["two_division_min_teams",      15,          "二部制にできる最小チーム数"],

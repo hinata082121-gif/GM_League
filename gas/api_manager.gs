@@ -143,16 +143,20 @@ function getManagerStatus(token, payload) {
     mine = p;
   });
 
+  var maxTeams = _managerMaxTeams();
+
   var managers = _managerRows().map(function (m) {
-    var holder = takenBy[m.manager_id] || "";
+    var holders = takenBy[m.manager_id] || [];
     return {
       manager_id: m.manager_id,
       name:       m.name,
       club:       m.club,
       category:   m.category,
-      taken:      !!holder,
-      taken_by:   holder ? (teamNames[holder] || holder) : "",
-      is_mine:    holder === teamId,
+      taken:      _isManagerFull(takenBy, m.manager_id, teamId),
+      taken_by:   holders.map(function (t) { return teamNames[t] || t; }).join(" / "),
+      used:       holders.length,
+      remaining:  Math.max(0, maxTeams - holders.length),
+      is_mine:    holders.indexOf(teamId) !== -1,
     };
   });
 
@@ -181,6 +185,7 @@ function getManagerStatus(token, payload) {
       managers:    grouped,
       available:   managers.filter(function (m) { return !m.taken; }).length,
       total:       managers.length,
+      max_teams:   maxTeams,
     },
   };
 }
@@ -225,10 +230,11 @@ function declareManager(token, payload) {
     var picks = _picksOf(seasonId);
     var takenBy = _fixedManagerMap(picks);
 
-    if (takenBy[managerId] && takenBy[managerId] !== teamId) {
+    if (_isManagerFull(takenBy, managerId, teamId)) {
       return {
         ok: false,
-        error: manager.name + " は既に他のチームで確定しています。別の監督を選んでください。",
+        error: manager.name + " は既に上限の " + _managerMaxTeams() +
+          " チームで確定しています。別の監督を選んでください。",
       };
     }
 
@@ -425,50 +431,51 @@ function drawManagers(token, payload) {
     var fixed = [];
     var lotteries = [];
 
+    var maxTeams = _managerMaxTeams();
+
     Object.keys(byManager).forEach(function (mid) {
       var group = byManager[mid];
       var name = managerNames[mid] || mid;
+      var teamOf = function (p) {
+        return teamNames[_str(p.team_id)] || _str(p.team_id);
+      };
 
-      if (group.length === 1) {
-        updateRow("ManagerPicks", "pick_id", _str(group[0].pick_id), {
-          status: MG_FIXED, decided_at: at,
-        });
-        fixed.push({
-          team_name: teamNames[_str(group[0].team_id)] || _str(group[0].team_id),
-          manager_name: name,
-          by_lottery: false,
+      // 上限に収まっていれば全員そのまま確定。抽選は不要
+      if (group.length <= maxTeams) {
+        group.forEach(function (p) {
+          updateRow("ManagerPicks", "pick_id", _str(p.pick_id), {
+            status: MG_FIXED, decided_at: at,
+          });
+          fixed.push({ team_name: teamOf(p), manager_name: name, by_lottery: false });
         });
         return;
       }
 
-      // 重複したので抽選
-      var winIndex = Math.floor(Math.random() * group.length);
+      // 上限を超えたぶんだけ抽選する。
+      // 並びを混ぜて先頭から上限ぶんを当選とすれば、
+      // 「何番目に申告したか」が結果に影響しない
+      var shuffled = _shuffle(group);
+      var winners = shuffled.slice(0, maxTeams);
+      var losers = shuffled.slice(maxTeams);
 
-      group.forEach(function (p, i) {
-        var won = i === winIndex;
+      winners.forEach(function (p) {
         updateRow("ManagerPicks", "pick_id", _str(p.pick_id), {
-          status: won ? MG_FIXED : MG_LOST,
-          decided_at: at,
+          status: MG_FIXED, decided_at: at,
         });
+        fixed.push({ team_name: teamOf(p), manager_name: name, by_lottery: true });
+      });
 
-        if (won) {
-          fixed.push({
-            team_name: teamNames[_str(p.team_id)] || _str(p.team_id),
-            manager_name: name,
-            by_lottery: true,
-          });
-        }
+      losers.forEach(function (p) {
+        updateRow("ManagerPicks", "pick_id", _str(p.pick_id), {
+          status: MG_LOST, decided_at: at,
+        });
       });
 
       lotteries.push({
         manager_name: name,
-        entries: group.map(function (p) {
-          return teamNames[_str(p.team_id)] || _str(p.team_id);
-        }),
-        winner: teamNames[_str(group[winIndex].team_id)] || _str(group[winIndex].team_id),
-        losers: group
-          .filter(function (p, i) { return i !== winIndex; })
-          .map(function (p) { return teamNames[_str(p.team_id)] || _str(p.team_id); }),
+        entries: group.map(teamOf),
+        winners: winners.map(teamOf),
+        losers: losers.map(teamOf),
       });
     });
 
@@ -514,8 +521,11 @@ function assignManager(token, payload) {
     var picks = _picksOf(seasonId);
     var takenBy = _fixedManagerMap(picks);
 
-    if (takenBy[managerId] && takenBy[managerId] !== teamId) {
-      return { ok: false, error: manager.name + " は既に他のチームで確定しています。" };
+    if (_isManagerFull(takenBy, managerId, teamId)) {
+      return {
+        ok: false,
+        error: manager.name + " は既に上限の " + _managerMaxTeams() + " チームで確定しています。",
+      };
     }
 
     var at = now();
@@ -743,9 +753,59 @@ function _fixedManagerMap(picks) {
   var map = {};
   picks.forEach(function (p) {
     if (_str(p.status) !== MG_FIXED) return;
-    map[_str(p.manager_id)] = _str(p.team_id);
+    var mid = _str(p.manager_id);
+    if (!map[mid]) map[mid] = [];
+    map[mid].push(_str(p.team_id));
   });
   return map;
+}
+
+/**
+ * 配列の並びを無作為に入れ替える（Fisher-Yates）。
+ *
+ * 元の配列は壊さない。抽選の結果が申告順に左右されないようにするため、
+ * 「先頭から当選」ではなく**混ぜてから先頭を取る**形にしている。
+ *
+ * @param {Array} arr
+ * @returns {Array}
+ */
+function _shuffle(arr) {
+  var out = arr.slice();
+  for (var i = out.length - 1; i > 0; i--) {
+    var j = Math.floor(Math.random() * (i + 1));
+    var tmp = out[i];
+    out[i] = out[j];
+    out[j] = tmp;
+  }
+  return out;
+}
+
+/**
+ * 1人の監督を使えるチーム数の上限。
+ *
+ * **同じ監督を複数チームが使える。** 監督は40人しかいないので、
+ * 1チーム1人の独占にすると人気の監督を巡って毎シーズン抽選だらけになる。
+ * 上限まではそのまま通り、**超えた分だけ抽選**にする。
+ *
+ * @returns {number}
+ */
+function _managerMaxTeams() {
+  var n = Math.round(getConfigNum("manager_max_teams", 3));
+  return n > 0 ? n : 1;
+}
+
+/**
+ * その監督がもう埋まっているか。
+ *
+ * @param {Object} takenBy manager_id → team_id[]
+ * @param {string} managerId
+ * @param {string} teamId 自分のチーム（自分の枠は数に入れない）
+ * @returns {boolean}
+ */
+function _isManagerFull(takenBy, managerId, teamId) {
+  var holders = takenBy[managerId] || [];
+  var others = holders.filter(function (t) { return t !== teamId; });
+  return others.length >= _managerMaxTeams();
 }
 
 /**
@@ -765,9 +825,11 @@ function _duplicatesInRound(picks, round) {
     byManager[mid].push(_str(p.team_id));
   });
 
+  // **上限を超えたものだけが抽選になる。** 上限内の重複は普通のことなので出さない
+  var max = _managerMaxTeams();
   var dupes = {};
   Object.keys(byManager).forEach(function (mid) {
-    if (byManager[mid].length > 1) dupes[mid] = byManager[mid];
+    if (byManager[mid].length > max) dupes[mid] = byManager[mid];
   });
   return dupes;
 }
