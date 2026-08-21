@@ -1,0 +1,338 @@
+/**
+ * api_import.gs — 過去シーズンのチームを取り込む（主催者専用）
+ *
+ *   importRoster  — チームのスカッドを名前で一括登録する
+ *   adjustBudget  — 予算を任意の理由で増減する
+ *
+ * ▶ 何のための機能か
+ *   ツールを使い始める前から続いている大会を取り込むための入口。
+ *   通常の在籍データは「エントリー提出 → 承認」か「移籍承認」でしか作られないが、
+ *   **過去シーズンのスカッドはそのどちらの手順も踏めない**。
+ *   - エントリーは自クラブの選手に限られるが、過去の移籍で他クラブの選手を持っている
+ *   - 新規チームは28名ちょうどだが、実際の人数はそれとは限らない
+ *   そこで、主催者が名簿をそのまま流し込める道を用意する。
+ *
+ * ⚠️ これは移行用であって、通常運用では使わない。
+ *   シーズンが動き出したら、在籍は移籍の承認を通して動かす。
+ *   人数制限（22〜35名）も**かけない**。過去の記録をありのまま入れるため。
+ *   ただし外れている場合は warnings で知らせる。
+ *
+ * ⚠️ 設計原則
+ *   1. 書き込みは必ず GAS 経由
+ *   3. 予算は BudgetTx の SUM。adjustBudget も行を1本足すだけ
+ */
+
+/** 予算調整の理由（既定） */
+var REASON_BUDGET_ADJUST = "予算調整";
+
+/** 取り込みで作った在籍の既定の獲得種別 */
+var ACQ_INITIAL = "初期";
+
+// =============================================================================
+// スカッドの取り込み
+// =============================================================================
+
+/**
+ * チームのスカッドを一括登録する。主催者専用。
+ *
+ * 選手は**名前とポジションで照合**し、選手マスタに無ければ作る。
+ * 名簿を書き写すだけで済むように、player_id を用意させない。
+ *
+ * payload: {
+ *   season_id, team_id, replace?,
+ *   players: [{ name, position, real_club?, acquisition_type?, acquired_cost?, expires_season? }]
+ * }
+ *
+ * @param {string} token
+ * @param {Object} payload
+ * @returns {{ ok: boolean, data?: Object, error?: string }}
+ */
+function importRoster(token, payload) {
+  var auth = _requireOrganizer(token);
+  if (!auth.ok) return auth;
+
+  var seasonId = _str(payload.season_id);
+  var teamId = _str(payload.team_id);
+  var list = payload.players || [];
+
+  if (!seasonId) return { ok: false, error: "season_id は必須です。" };
+  if (!teamId) return { ok: false, error: "team_id は必須です。" };
+  if (list.length === 0) return { ok: false, error: "選手が1人も指定されていません。" };
+
+  if (!findRow("Seasons", "season_id", seasonId)) {
+    return { ok: false, error: "シーズンが見つかりません。" };
+  }
+  if (!findRow("Teams", "team_id", teamId)) {
+    return { ok: false, error: "チームが見つかりません。" };
+  }
+
+  // 先に全件を検証する。1件でも駄目なら何も書かない。
+  // 途中まで登録された状態で失敗すると、どこまで入ったのか分からなくなる
+  var parsed = [];
+  for (var i = 0; i < list.length; i++) {
+    var row = _parseImportRow(list[i], i);
+    if (row.error) return { ok: false, error: row.error };
+    parsed.push(row);
+  }
+
+  var dup = _findDuplicateNames(parsed);
+  if (dup) {
+    return { ok: false, error: "名簿の中で " + dup + " が重複しています。" };
+  }
+
+  return withLock(function () {
+    var at = now();
+
+    // 既存の選手マスタを 名前+ポジション で引けるようにする
+    var byKey = {};
+    getSheetData("Players").forEach(function (p) {
+      byKey[_str(p.name) + "|" + _str(p.position)] = p;
+    });
+
+    // 同じシーズンで他チームが持っている選手（入替のときは自チーム分を除く）
+    var heldBy = {};
+    getSheetData("Rosters").forEach(function (r) {
+      if (_str(r.season_id) !== seasonId) return;
+      var st = _str(r.status);
+      if (st !== ROSTER_ACTIVE && st !== ROSTER_PENDING) return;
+      heldBy[_str(r.player_id)] = _str(r.team_id);
+    });
+
+    var teamNames = _teamNameMap();
+    var conflicts = [];
+    var createdPlayers = [];
+    var resolved = [];
+
+    parsed.forEach(function (row) {
+      var key = row.name + "|" + row.position;
+      var player = byKey[key];
+
+      if (!player) {
+        var pid = generateId("p_");
+        appendRow("Players", {
+          player_id: pid,
+          name:      row.name,
+          position:  row.position,
+          real_club: row.real_club,
+          eligible:  true,
+        });
+        player = { player_id: pid, name: row.name, position: row.position };
+        byKey[key] = player;
+        createdPlayers.push(row.name);
+      }
+
+      var playerId = _str(player.player_id);
+      var holder = heldBy[playerId];
+
+      if (holder && holder !== teamId) {
+        conflicts.push(row.name + "（" + (teamNames[holder] || holder) + "）");
+      }
+
+      resolved.push({ row: row, player_id: playerId });
+    });
+
+    if (conflicts.length > 0) {
+      return {
+        ok: false,
+        error: "他のチームが既に保有しています: " + conflicts.join(" / "),
+      };
+    }
+
+    // 入れ替えなら、このシーズンのこのチームの在籍・申請中を先に消す。
+    // 離脱の履歴は残す
+    var removed = 0;
+    if (_toBool(payload.replace)) {
+      removed = _deleteRostersByStatus(seasonId, teamId, [ROSTER_PENDING, ROSTER_ACTIVE]);
+    }
+
+    var rows = [];
+    var added = 0;
+    var skipped = [];
+
+    resolved.forEach(function (r) {
+      if (!_toBool(payload.replace) && heldBy[r.player_id] === teamId) {
+        skipped.push(r.row.name);
+        return;
+      }
+
+      rows.push({
+        roster_id:        generateId("rs_"),
+        season_id:        seasonId,
+        team_id:          teamId,
+        player_id:        r.player_id,
+        status:           ROSTER_ACTIVE,
+        acquisition_type: r.row.acquisition_type,
+        acquired_cost:    r.row.acquired_cost,
+        acquired_at:      at,
+        expires_season:   r.row.expires_season,
+      });
+      added++;
+    });
+
+    _appendRowsBatch("Rosters", rows);
+
+    return {
+      ok: true,
+      data: {
+        season_id:       seasonId,
+        team_id:         teamId,
+        team_name:       teamNames[teamId] || teamId,
+        added:           added,
+        removed:         removed,
+        skipped:         skipped,
+        created_players: createdPlayers,
+        warnings:        _squadWarnings(added),
+      },
+    };
+  });
+}
+
+/**
+ * 名簿の1行を検証して整える。
+ *
+ * @param {Object} raw
+ * @param {number} index 0起点。エラー文で何行目かを示す
+ * @returns {Object} error があれば失敗
+ */
+function _parseImportRow(raw, index) {
+  var no = (index + 1) + "人目";
+  var name = _str(raw.name).trim();
+  var position = _str(raw.position).trim().toUpperCase();
+
+  if (!name) return { error: no + ": 選手名が空です。" };
+
+  if (POSITIONS.indexOf(position) === -1) {
+    return {
+      error: no + "（" + name + "）: ポジションは " +
+        POSITIONS.join(" / ") + " のいずれかにしてください。",
+    };
+  }
+
+  var acq = _str(raw.acquisition_type).trim() || ACQ_INITIAL;
+  if (acq !== ACQ_INITIAL && TRANSFER_METHODS.indexOf(acq) === -1) {
+    return {
+      error: no + "（" + name + "）: 獲得種別は " + ACQ_INITIAL + " / " +
+        TRANSFER_METHODS.join(" / ") + " のいずれかにしてください。",
+    };
+  }
+
+  var cost = Math.round(_num(raw.acquired_cost));
+  if (cost < 0) return { error: no + "（" + name + "）: 獲得額は0以上にしてください。" };
+
+  return {
+    name:             name,
+    position:         position,
+    real_club:        _str(raw.real_club).trim(),
+    acquisition_type: acq,
+    acquired_cost:    cost,
+    expires_season:   _str(raw.expires_season).trim(),
+  };
+}
+
+/**
+ * 名簿の中で重複している名前を1つ返す。
+ *
+ * @param {Object[]} rows
+ * @returns {string} 無ければ空文字
+ */
+function _findDuplicateNames(rows) {
+  var seen = {};
+  for (var i = 0; i < rows.length; i++) {
+    var key = rows[i].name + "|" + rows[i].position;
+    if (seen[key]) return rows[i].name;
+    seen[key] = true;
+  }
+  return "";
+}
+
+/**
+ * 人数がスカッド制約から外れていれば知らせる。
+ *
+ * **エラーにはしない。** 過去シーズンの記録をそのまま入れるための機能なので、
+ * 当時の人数が今の制約に収まっているとは限らない。
+ *
+ * @param {number} count
+ * @returns {string[]}
+ */
+function _squadWarnings(count) {
+  var min = getConfigNum("squad_min", 22);
+  var max = getConfigNum("squad_max", 35);
+  var out = [];
+
+  if (count < min) out.push(count + "名です。最小人数（" + min + "名）を下回っています。");
+  if (count > max) out.push(count + "名です。最大人数（" + max + "名）を超えています。");
+
+  return out;
+}
+
+// =============================================================================
+// 予算の調整
+// =============================================================================
+
+/**
+ * 予算を任意の理由で増減する。主催者専用。
+ *
+ * 前シーズンからの繰越を入れるために使う。
+ * **残高を書き換えるのではなく、取引を1本足す**（設計原則3）。
+ * 履歴に残るので、後から「なぜこの額なのか」を追える。
+ *
+ * payload: { season_id, team_id, amount, reason?, note? }
+ *
+ * @param {string} token
+ * @param {Object} payload
+ * @returns {{ ok: boolean, data?: Object, error?: string }}
+ */
+function adjustBudget(token, payload) {
+  var auth = _requireOrganizer(token);
+  if (!auth.ok) return auth;
+
+  var seasonId = _str(payload.season_id);
+  var teamId = _str(payload.team_id);
+  var amount = Math.round(_num(payload.amount));
+
+  if (!seasonId) return { ok: false, error: "season_id は必須です。" };
+  if (!teamId) return { ok: false, error: "team_id は必須です。" };
+  if (!amount) return { ok: false, error: "金額を0以外で入力してください。" };
+
+  if (!findRow("Seasons", "season_id", seasonId)) {
+    return { ok: false, error: "シーズンが見つかりません。" };
+  }
+  if (!findRow("Teams", "team_id", teamId)) {
+    return { ok: false, error: "チームが見つかりません。" };
+  }
+
+  var reason = _str(payload.reason).trim() || REASON_BUDGET_ADJUST;
+
+  return withLock(function () {
+    var at = now();
+    _addBudgetTx(seasonId, teamId, amount, reason, _str(payload.note), at);
+
+    return {
+      ok: true,
+      data: {
+        season_id: seasonId,
+        team_id:   teamId,
+        amount:    amount,
+        reason:    reason,
+        balance:   _budgetBalance(seasonId, teamId),
+      },
+    };
+  });
+}
+
+/**
+ * そのシーズンのそのチームの残高。取引の合計で出す（設計原則3）。
+ *
+ * @param {string} seasonId
+ * @param {string} teamId
+ * @returns {number}
+ */
+function _budgetBalance(seasonId, teamId) {
+  var sum = 0;
+  getSheetData("BudgetTx").forEach(function (t) {
+    if (_str(t.team_id) !== teamId) return;
+    if (_str(t.season_id) !== seasonId) return;
+    sum += _num(t.amount);
+  });
+  return sum;
+}

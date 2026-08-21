@@ -138,6 +138,7 @@ config.js
 │   ├─ api_schedule.gs # 日程表（ひな型・生成・編集）
 │   ├─ api_manager.gs  # 使用監督の申告と抽選
 │   ├─ api_sponsor.gs  # スポンサー（契約金・ノルマ・罰則）
+│   ├─ api_import.gs   # 過去シーズンの取り込み（移行用）
 │   ├─ api_ui.gs       # 参加者に見せるタブの判定
 │   └─ seed.gs         # テストデータ投入/削除（手動実行）
 ├─ SPEC.md           # 確定仕様

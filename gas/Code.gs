@@ -316,6 +316,12 @@ function _route(action, token, payload) {
     case "closeSeason":
       return closeSeason(token, payload);
 
+    case "importRoster":
+      return importRoster(token, payload);
+
+    case "adjustBudget":
+      return adjustBudget(token, payload);
+
     case "upsertSeason":
       return upsertSeason(token, payload);
 
