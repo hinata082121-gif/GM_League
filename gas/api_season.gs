@@ -35,6 +35,10 @@ var REASON_COMP_TRANSFER = "補填金_大会外移籍";
 var REASON_COMP_WITHDRAW = "補填金_辞退";
 var REASON_PENALTY = "罰金";
 var REASON_SEASON_FEE = "シーズン終了手数料";
+
+/** 予算の繰越（シーズンをまたぐときの1組） */
+var REASON_CARRY_OUT = "次シーズンへ繰越";
+var REASON_CARRY_IN = "前シーズンからの繰越";
 var REASON_CUP_PRIZE = "リーグ杯賞金";
 var REASON_SUPERCUP_PRIZE = "スーパーカップ賞金";
 var REASON_STREAM_FEE = "配信料";
@@ -445,7 +449,7 @@ function closeSeason(token, payload) {
     var report = {
       rank_prizes: [], cup_prizes: [], supercup_prizes: [], stream_fees: [],
       top_scorer_prizes: [], fees: [], expired: 0, carried: 0,
-      dropped_ineligible: [], sponsor_results: [],
+      dropped_ineligible: [], sponsor_results: [], carried_budget: [],
     };
 
     // --- 1. リーグ順位賞金（GM1 / GM2）---
@@ -472,9 +476,13 @@ function closeSeason(token, payload) {
     _settleSponsors(token, seasonId, at, report);
 
     // --- 3. シーズン終了手数料（賞金計上後の残高が母数） ---
+    //
+    // **母数はこのシーズンの収支だけ。** 次シーズンに先に入った
+    // 補填金やスポンサー契約金にまで手数料をかけないため。
     var feeRate = Number(getConfig("season_end_fee_rate", 0.1));
     var balances = {};
     getSheetData("BudgetTx").forEach(function (t) {
+      if (_str(t.season_id) !== seasonId) return;
       var tid = _str(t.team_id);
       balances[tid] = (balances[tid] || 0) + _num(t.amount);
     });
@@ -500,6 +508,7 @@ function closeSeason(token, payload) {
     // --- 5. 次シーズンへ引継ぎ ---
     if (nextSeasonId) {
       report.carried = _carryOverRosters(seasonId, nextSeasonId, at, report);
+      _carryOverBudget(seasonId, nextSeasonId, at, report);
     }
 
     // --- 6. 終了 ---
@@ -977,6 +986,50 @@ function _payTopScorers(token, seasonId, twoDivision, at, report) {
         competition: t.competition, team_id: teamId,
         player_id: g.player_id, goals: g.goals, amount: amount,
       });
+    });
+  });
+}
+
+/**
+ * 手数料を引いた後の残高を次シーズンへ移す。
+ *
+ * **前シーズンから −、次シーズンへ + の2行を書く。**
+ * 片方だけにすると、シーズンをまたいで合計したときに二重に数えられる。
+ * 2行に分けておけば、どのシーズンの残高を見ても、
+ * そのシーズンの中で完結した数字になる。
+ *
+ * マイナスの残高もそのまま移す。借金を消してしまうと、
+ * 使い過ぎたチームが次シーズンで得をする。
+ *
+ * @param {string} seasonId
+ * @param {string} nextSeasonId
+ * @param {Date} at
+ * @param {Object} report carried_budget に内訳を記録する
+ */
+function _carryOverBudget(seasonId, nextSeasonId, at, report) {
+  var balances = {};
+  getSheetData("BudgetTx").forEach(function (t) {
+    if (_str(t.season_id) !== seasonId) return;
+    var tid = _str(t.team_id);
+    if (!tid) return;
+    balances[tid] = (balances[tid] || 0) + _num(t.amount);
+  });
+
+  var teamNames = _teamNameMap();
+  if (!report.carried_budget) report.carried_budget = [];
+
+  _activeTeams().forEach(function (t) {
+    var tid = _str(t.team_id);
+    var bal = Math.round(balances[tid] || 0);
+    if (bal === 0) return;
+
+    _addBudgetTx(seasonId, tid, -bal, REASON_CARRY_OUT, nextSeasonId, at);
+    _addBudgetTx(nextSeasonId, tid, bal, REASON_CARRY_IN, seasonId, at);
+
+    report.carried_budget.push({
+      team_id:   tid,
+      team_name: teamNames[tid] || tid,
+      amount:    bal,
     });
   });
 }

@@ -244,10 +244,9 @@ function _pendingTransfers(seasonId) {
  * @returns {{ balance: number, reserved: number, available: number }}
  */
 function _teamAvailableBudget(seasonId, teamId, pending) {
-  var balance = 0;
-  getSheetData("BudgetTx").forEach(function (t) {
-    if (_str(t.team_id) === teamId) balance += _num(t.amount);
-  });
+  // **そのシーズンの取引だけを数える。** 前シーズンぶんは
+  // 終了処理の「次シーズンへ繰越」で1本にまとめて入ってくる（api_season.gs）
+  var balance = _seasonBalance(seasonId, teamId);
 
   var list = pending || _pendingTransfers(seasonId);
   var reserved = 0;

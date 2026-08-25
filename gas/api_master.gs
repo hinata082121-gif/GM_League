@@ -419,7 +419,12 @@ function getTeamSquad(token, payload) {
   if (!auth.ok) return auth;
 
   var teamId = _str(payload.team_id);
-  var seasonId = _str(payload.season_id);
+
+  // シーズンを指定しないと全シーズンの在籍が混ざり、
+  // 同じ選手が何度も並ぶ。スカッドは必ず1シーズン分で見るものなので、
+  // 指定が無ければ最新シーズンに寄せる
+  var seasonId = _str(payload.season_id) || _latestSeasonId();
+
   if (!teamId) return { ok: false, error: "team_id は必須です。" };
 
   var playerMap = {};
@@ -492,7 +497,7 @@ function getMyTeam(token, payload) {
 
   var user = auth.data;
   var teamId = _str(user.team_id) || _str(payload.team_id);
-  var seasonId = _str(payload.season_id);
+  var seasonId = _str(payload.season_id) || _latestSeasonId();
 
   if (!teamId) {
     return {
@@ -504,7 +509,7 @@ function getMyTeam(token, payload) {
   var squadRes = getTeamSquad(token, { team_id: teamId, season_id: seasonId });
   if (!squadRes.ok) return squadRes;
 
-  var budgetRes = getTeamBudget(token, { team_id: teamId, season_id: "" });
+  var budgetRes = getTeamBudget(token, { team_id: teamId, season_id: seasonId });
   if (!budgetRes.ok) return budgetRes;
 
   var team = findRow("Teams", "team_id", teamId);
@@ -548,7 +553,11 @@ function getTeamBudget(token, payload) {
   if (!auth.ok) return auth;
 
   var teamId = _str(payload.team_id);
-  var seasonId = _str(payload.season_id);
+
+  // 予算はシーズン単位。指定が無ければ最新シーズンに寄せる。
+  // 全シーズンを合計すると、繰越と元の残高を二重に数えてしまう
+  var seasonId = _str(payload.season_id) || _latestSeasonId();
+
   if (!teamId) return { ok: false, error: "team_id は必須です。" };
 
   var balance = 0;
@@ -909,4 +918,44 @@ function listConfig(token) {
   var auth = _requireOrganizer(token);
   if (!auth.ok) return auth;
   return { ok: true, data: getAllConfig() };
+}
+
+/**
+ * そのシーズンのそのチームの残高。
+ *
+ * **シーズンをまたいで合計しない。** 前シーズンぶんは終了処理で
+ * 「次シーズンへ繰越」として1本にまとめて入る（api_season.gs）。
+ * 合計してしまうと繰越と元の残高が二重に数えられる。
+ *
+ * @param {string} seasonId
+ * @param {string} teamId
+ * @returns {number}
+ */
+function _seasonBalance(seasonId, teamId) {
+  var sum = 0;
+  getSheetData("BudgetTx").forEach(function (t) {
+    if (_str(t.team_id) !== teamId) return;
+    if (_str(t.season_id) !== seasonId) return;
+    sum += _num(t.amount);
+  });
+  return sum;
+}
+
+/**
+ * 一番新しいシーズンの ID。Seasons の最終行を使う。
+ *
+ * シーズンを指定しない呼び出しの既定値にする。
+ * 「どのシーズンか」を決めずにスカッドや順位を出すと、
+ * 複数シーズンが混ざって意味の無い数字になる。
+ *
+ * @returns {string} シーズンが1つも無ければ空文字
+ */
+function _latestSeasonId() {
+  var rows;
+  try {
+    rows = getSheetData("Seasons").filter(function (s) { return _str(s.season_id); });
+  } catch (e) {
+    return "";
+  }
+  return rows.length > 0 ? _str(rows[rows.length - 1].season_id) : "";
 }

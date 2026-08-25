@@ -3894,6 +3894,8 @@ function renderCloseReport(report) {
       ${list('終了手数料', report.fees, (r) => nameOf(r.team_id) + ' −' + formatMoney(r.fee))}
       ${list('現実移籍で離脱', report.dropped_ineligible || [],
         (r) => nameOf(r.team_id) + ' ' + r.name)}
+      ${list('次シーズンへの繰越', report.carried_budget || [],
+        (r) => r.team_name + ' ' + formatMoney(r.amount))}
       ${list('スポンサーのノルマ', report.sponsor_results || [],
         (r) => r.team_name + ' ' + r.sponsor_name + ' ' + (r.met ? '達成' : '未達（' + r.actual + '）−' + formatMoney(r.penalty)))}
     </div>
