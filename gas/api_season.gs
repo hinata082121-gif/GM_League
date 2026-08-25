@@ -450,6 +450,7 @@ function closeSeason(token, payload) {
       rank_prizes: [], cup_prizes: [], supercup_prizes: [], stream_fees: [],
       top_scorer_prizes: [], fees: [], expired: 0, carried: 0,
       dropped_ineligible: [], sponsor_results: [], carried_budget: [],
+      loans_returned: [],
     };
 
     // --- 1. リーグ順位賞金（GM1 / GM2）---
@@ -508,6 +509,7 @@ function closeSeason(token, payload) {
     // --- 5. 次シーズンへ引継ぎ ---
     if (nextSeasonId) {
       report.carried = _carryOverRosters(seasonId, nextSeasonId, at, report);
+      _returnLoanedPlayers(seasonId, nextSeasonId, at, report);
       _carryOverBudget(seasonId, nextSeasonId, at, report);
     }
 
@@ -1032,4 +1034,95 @@ function _carryOverBudget(seasonId, nextSeasonId, at, report) {
       amount:    bal,
     });
   });
+}
+
+/**
+ * 期限付き移籍で出ていた選手を、貸出元のチームへ戻す。
+ *
+ * **期限付きは「貸している」のであって手放したわけではない。**
+ * 期限が切れた選手をそのまま消すと、元のチームは何も受け取れないまま
+ * 戦力だけを失う。次シーズンの在籍として戻す。
+ *
+ * 戻り先は Transfers の from_team から引く。移籍の記録が無い選手
+ * （移行で取り込んだ在籍など）は戻せないので、そのまま離脱にする。
+ *
+ * 戻すときの獲得種別は「初期」にする。貸出時の金額は
+ * 貸した側が受け取った額であって、戻ってきた選手の獲得額ではない。
+ *
+ * @param {string} seasonId
+ * @param {string} nextSeasonId
+ * @param {Date} at
+ * @param {Object} report loans_returned に記録する
+ */
+function _returnLoanedPlayers(seasonId, nextSeasonId, at, report) {
+  var loanTypes = [METHOD_HALF, METHOD_FULL_TERM];
+
+  // 貸出元を player_id → from_team で引けるようにする。
+  // 同じ選手が何度も動いていた場合は、最後の期限付き移籍を採用する
+  var lentFrom = {};
+  getSheetData("Transfers").forEach(function (t) {
+    if (_str(t.season_id) !== seasonId) return;
+    if (_str(t.status) !== TX_APPROVED) return;
+    if (loanTypes.indexOf(_str(t.method)) === -1) return;
+    var from = _str(t.from_team);
+    if (!from) return;
+    lentFrom[_str(t.player_id)] = from;
+  });
+
+  if (Object.keys(lentFrom).length === 0) return;
+
+  // 次シーズンに既にいる選手は作らない（引継ぎで入っている場合がある）
+  var already = {};
+  getSheetData("Rosters").forEach(function (r) {
+    if (_str(r.season_id) !== nextSeasonId) return;
+    if (_str(r.status) === ROSTER_LEFT) return;
+    already[_str(r.player_id)] = true;
+  });
+
+  var activeTeamIds = {};
+  _activeTeams().forEach(function (t) { activeTeamIds[_str(t.team_id)] = true; });
+
+  var teamNames = _teamNameMap();
+  var playerNames = {};
+  getSheetData("Players").forEach(function (p) {
+    playerNames[_str(p.player_id)] = _str(p.name);
+  });
+
+  var rows = [];
+
+  // 今シーズン期限切れになった行だけを見る
+  getSheetData("Rosters").forEach(function (r) {
+    if (_str(r.season_id) !== seasonId) return;
+    if (_str(r.status) !== ROSTER_LEFT) return;
+    if (loanTypes.indexOf(_str(r.acquisition_type)) === -1) return;
+
+    var pid = _str(r.player_id);
+    var from = lentFrom[pid];
+
+    if (!from || already[pid]) return;
+    if (!activeTeamIds[from]) return;   // 辞退したチームには戻さない
+
+    already[pid] = true;
+
+    rows.push({
+      roster_id:        generateId("rs_"),
+      season_id:        nextSeasonId,
+      team_id:          from,
+      player_id:        pid,
+      status:           ROSTER_ACTIVE,
+      acquisition_type: ACQ_INITIAL,
+      acquired_cost:    0,
+      acquired_at:      at,
+      expires_season:   "",
+    });
+
+    report.loans_returned.push({
+      player_id:   pid,
+      player_name: playerNames[pid] || pid,
+      team_id:     from,
+      team_name:   teamNames[from] || from,
+    });
+  });
+
+  _appendRowsBatch("Rosters", rows);
 }
