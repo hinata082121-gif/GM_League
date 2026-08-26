@@ -11,6 +11,7 @@ const SHEETS = {
   Rosters: ['roster_id','season_id','team_id','player_id','status','acquisition_type','acquired_cost','acquired_at','expires_season'],
   Claims: ['claim_id','season_id','team_id','player_id','reason','base_cost','rate','refund_amount','choice','replacement_id','status','created_at','chosen_at','chosen_by','settled_at'],
   Transfers: ['transfer_id','season_id','window','player_id','from_team','to_team','method','gross_fee','cost_to_buyer','payout_to_seller','registered_at','status'],
+  Protections: ['protection_id','season_id','window','team_id','player_id','tier','fee','set_at'],
   BudgetTx: ['tx_id','season_id','team_id','amount','reason','ref','created_at'],
   Clubs: ['category','club_name','sort_order'],
   Config: ['key','value','note'],

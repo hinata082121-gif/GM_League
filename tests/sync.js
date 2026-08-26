@@ -109,6 +109,30 @@ t('中黒の有無が違っても同じ人とみなす', () => {
   eq(find(e, 'スベンド・ブローダーセン').foreign, true);
 });
 
+t('異体字を同じ人とみなす（髙と高）', () => {
+  const e = env();
+  put(e, '高橋 成海', 'CF');
+
+  const r = e.syncPlayerProfiles('ORG', {
+    players: [{ name: '髙橋 成海', position: 'CF', age: 17, real_club: 'サンフレッチェ広島' }],
+  });
+
+  eq(r.data.created, 0, '別人として作られないこと');
+  eq(find(e, '高橋 成海').age, 17);
+});
+
+t('異体字は逆向きでも揃う（﨑と崎）', () => {
+  const e = env();
+  put(e, '山﨑 凌吾', 'CF');
+
+  const r = e.syncPlayerProfiles('ORG', {
+    players: [{ name: '山崎 凌吾', position: 'CF', age: 34, real_club: 'V・ファーレン長崎' }],
+  });
+
+  eq(r.data.created, 0);
+  eq(find(e, '山﨑 凌吾').real_club, 'V・ファーレン長崎');
+});
+
 t('ヴとブの違いを吸収する', () => {
   const e = env();
   put(e, 'ネタ ラヴィ', 'DMF');
@@ -186,7 +210,7 @@ t('作った選手はすぐ入れ替え候補になる', () => {
 // ポジションの扱い
 // =============================================================================
 
-t('マスタのポジションは上書きしない', () => {
+t('名簿のポジションで上書きする', () => {
   const e = env();
   put(e, '半田 陸', 'RSB');
 
@@ -195,7 +219,33 @@ t('マスタのポジションは上書きしない', () => {
   });
 
   const p = find(e, '半田 陸');
-  eq(p.detail_position, 'RSB', 'エントリーリストで確認済みの値が残ること');
+  eq(p.detail_position, 'RMF', '名簿を正とすること');
+  eq(p.position, 'MF', '大分類も付け替わること');
+});
+
+t('大分類が変わる書き換えもできる', () => {
+  const e = env();
+  put(e, '宇佐美 貴史', 'ST');
+  eq(find(e, '宇佐美 貴史').position, 'FW');
+
+  const r = e.syncPlayerProfiles('ORG', {
+    players: [{ name: '宇佐美 貴史', position: 'OMF', age: 34, real_club: 'ガンバ大阪' }],
+  });
+
+  eq(r.data.updated, 1);
+  const p = find(e, '宇佐美 貴史');
+  eq(p.detail_position, 'OMF');
+  eq(p.position, 'MF');
+});
+
+t('名簿にポジションが無ければ元のまま残す', () => {
+  const e = env();
+  put(e, '半田 陸', 'RSB');
+
+  e.syncPlayerProfiles('ORG', { players: [{ name: '半田 陸', real_club: 'ガンバ大阪' }] });
+
+  const p = find(e, '半田 陸');
+  eq(p.detail_position, 'RSB', '上書きする材料が無いので触らない');
   eq(p.position, 'DF');
 });
 
@@ -208,15 +258,6 @@ t('ポジションが空欄なら名簿で埋める', () => {
     players: [{ name: '半田 陸', position: 'RSB', real_club: 'ガンバ大阪' }],
   });
 
-  eq(find(e, '半田 陸').detail_position, 'RSB');
-});
-
-t('名簿にポジションが無くても通る', () => {
-  const e = env();
-  put(e, '半田 陸', 'RSB');
-
-  const r = e.syncPlayerProfiles('ORG', { players: [{ name: '半田 陸', real_club: 'ガンバ大阪' }] });
-  eq(r.ok, true);
   eq(find(e, '半田 陸').detail_position, 'RSB');
 });
 
