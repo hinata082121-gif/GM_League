@@ -4,17 +4,17 @@
  *   importRoster  — チームのスカッドを名前で一括登録する
  *   adjustBudget  — 予算を任意の理由で増減する
  *
- * ▶ 何のための機能か
+ * 何のための機能か
  *   ツールを使い始める前から続いている大会を取り込むための入口。
  *   通常の在籍データは「エントリー提出 → 承認」か「移籍承認」でしか作られないが、
- *   **過去シーズンのスカッドはそのどちらの手順も踏めない**。
+ *   過去シーズンのスカッドはそのどちらの手順も踏めない。
  *   - エントリーは自クラブの選手に限られるが、過去の移籍で他クラブの選手を持っている
  *   - 新規チームは28名ちょうどだが、実際の人数はそれとは限らない
  *   そこで、主催者が名簿をそのまま流し込める道を用意する。
  *
  * 注意 これは移行用であって、通常運用では使わない。
  *   シーズンが動き出したら、在籍は移籍の承認を通して動かす。
- *   人数制限（22〜35名）も**かけない**。過去の記録をありのまま入れるため。
+ *   人数制限（22〜35名）もかけない。過去の記録をありのまま入れるため。
  *   ただし外れている場合は warnings で知らせる。
  *
  * 注意 設計原則
@@ -35,12 +35,13 @@ var ACQ_INITIAL = "初期";
 /**
  * チームのスカッドを一括登録する。主催者専用。
  *
- * 選手は**名前とポジションで照合**し、選手マスタに無ければ作る。
+ * 選手は名前とポジションで照合し、選手マスタに無ければ作る。
  * 名簿を書き写すだけで済むように、player_id を用意させない。
  *
  * payload: {
  *   season_id, team_id, replace?,
- *   players: [{ name, position, real_club?, acquisition_type?, acquired_cost?, expires_season? }]
+ *   players: [{ name, position, age?, nationality?, real_club?,
+ *               acquisition_type?, acquired_cost?, expires_season? }]
  * }
  *
  * @param {string} token
@@ -86,7 +87,7 @@ function importRoster(token, payload) {
     // 既存の選手マスタを 名前+ポジション で引けるようにする
     var byKey = {};
     getSheetData("Players").forEach(function (p) {
-      byKey[_str(p.name) + "|" + _str(p.position)] = p;
+      byKey[_pairKey(p.name, p.position)] = p;
     });
 
     // 同じシーズンで他チームが持っている選手（入替のときは自チーム分を除く）
@@ -104,7 +105,7 @@ function importRoster(token, payload) {
     var resolved = [];
 
     parsed.forEach(function (row) {
-      var key = row.name + "|" + row.position;
+      var key = _pairKey(row.name, row.position);
       var player = byKey[key];
 
       if (!player) {
@@ -113,6 +114,9 @@ function importRoster(token, payload) {
           player_id: pid,
           name:      row.name,
           position:  row.position,
+          detail_position: row.detail_position,
+          age:         row.age,
+          nationality: row.nationality,
           real_club: row.real_club,
           eligible:  true,
         });
@@ -122,6 +126,25 @@ function importRoster(token, payload) {
       }
 
       var playerId = _str(player.player_id);
+
+      // 既にいる選手で未設定の項目を、名簿の表記で埋める。
+      // 大分類しか入っていない古いデータを、取り込みのたびに育てられる。
+      // 既に値があるものは上書きしない。名簿によって粒度が違うので、
+      // 後から来た薄い名簿で厚いデータを潰さないようにする
+      var fill = {};
+      if (row.detail_position && !_str(player.detail_position)) {
+        fill.detail_position = row.detail_position;
+      }
+      if (row.age && !_num(player.age)) fill.age = row.age;
+      if (row.nationality && !_str(player.nationality)) {
+        fill.nationality = row.nationality;
+      }
+
+      if (Object.keys(fill).length > 0) {
+        updateRow("Players", "player_id", playerId, fill);
+        Object.keys(fill).forEach(function (k) { player[k] = fill[k]; });
+      }
+
       var holder = heldBy[playerId];
 
       if (holder && holder !== teamId) {
@@ -197,16 +220,21 @@ function importRoster(token, payload) {
 function _parseImportRow(raw, index) {
   var no = (index + 1) + "人目";
   var name = _str(raw.name).trim();
-  var position = _str(raw.position).trim().toUpperCase();
 
   if (!name) return { error: no + ": 選手名が空です。" };
 
-  if (POSITIONS.indexOf(position) === -1) {
-    return {
-      error: no + "（" + name + "）: ポジションは " +
-        POSITIONS.join(" / ") + " のいずれかにしてください。",
-    };
-  }
+  // position に LSB や CMF のような詳細が入っていても受ける。
+  // エントリーリストの表記をそのまま渡せるようにするため
+  var rawPos = _str(raw.position);
+  var isDetail = !!_positionOfDetail(rawPos);
+  var pos = _resolvePosition(
+    isDetail ? "" : rawPos,
+    _str(raw.detail_position) || (isDetail ? rawPos : "")
+  );
+
+  if (pos.error) return { error: no + "（" + name + "）: " + pos.error };
+
+  var position = pos.position;
 
   var acq = _str(raw.acquisition_type).trim() || ACQ_INITIAL;
   if (acq !== ACQ_INITIAL && TRANSFER_METHODS.indexOf(acq) === -1) {
@@ -219,9 +247,15 @@ function _parseImportRow(raw, index) {
   var cost = Math.round(_num(raw.acquired_cost));
   if (cost < 0) return { error: no + "（" + name + "）: 獲得額は0以上にしてください。" };
 
+  var age = _parseAge(raw.age);
+  if (age.error) return { error: no + "（" + name + "）: " + age.error };
+
   return {
     name:             name,
     position:         position,
+    detail_position:  pos.detail,
+    age:              age.age,
+    nationality:      _str(raw.nationality).trim(),
     real_club:        _str(raw.real_club).trim(),
     acquisition_type: acq,
     acquired_cost:    cost,
@@ -238,7 +272,7 @@ function _parseImportRow(raw, index) {
 function _findDuplicateNames(rows) {
   var seen = {};
   for (var i = 0; i < rows.length; i++) {
-    var key = rows[i].name + "|" + rows[i].position;
+    var key = _pairKey(rows[i].name, rows[i].position);
     if (seen[key]) return rows[i].name;
     seen[key] = true;
   }
@@ -248,7 +282,7 @@ function _findDuplicateNames(rows) {
 /**
  * 人数がスカッド制約から外れていれば知らせる。
  *
- * **エラーにはしない。** 過去シーズンの記録をそのまま入れるための機能なので、
+ * エラーにはしない。過去シーズンの記録をそのまま入れるための機能なので、
  * 当時の人数が今の制約に収まっているとは限らない。
  *
  * @param {number} count
@@ -273,7 +307,7 @@ function _squadWarnings(count) {
  * 予算を任意の理由で増減する。主催者専用。
  *
  * 前シーズンからの繰越を入れるために使う。
- * **残高を書き換えるのではなく、取引を1本足す**（設計原則3）。
+ * 残高を書き換えるのではなく、取引を1本足す（設計原則3）。
  * 履歴に残るので、後から「なぜこの額なのか」を追える。
  *
  * payload: { season_id, team_id, amount, reason?, note? }

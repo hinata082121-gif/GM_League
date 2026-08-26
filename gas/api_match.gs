@@ -389,7 +389,7 @@ function _validateMatchPayload(p, selfId) {
     }
 
     if (!goal.scorer_id) return "得点者を選んでください。";
-    if (!rosterOf[goal.team_id + "|" + goal.scorer_id]) {
+    if (!rosterOf[_pairKey(goal.team_id, goal.scorer_id)]) {
       return "得点者がそのチームに所属していません。";
     }
     if (goal.assist_id) {
@@ -399,7 +399,7 @@ function _validateMatchPayload(p, selfId) {
       if (goal.assist_id === OWN_GOAL_ID) {
         return "アシストにオウンゴールは指定できません。";
       }
-      if (!rosterOf[goal.team_id + "|" + goal.assist_id]) {
+      if (!rosterOf[_pairKey(goal.team_id, goal.assist_id)]) {
         return "アシスト者がそのチームに所属していません。";
       }
     }
@@ -426,7 +426,7 @@ function _validateMatchPayload(p, selfId) {
       return "GK 統計の team_id が対戦チームのどちらでもありません。";
     }
     if (!gk.gk_player_id) return "起用 GK を選んでください。";
-    if (!rosterOf[gk.team_id + "|" + gk.gk_player_id]) {
+    if (!rosterOf[_pairKey(gk.team_id, gk.gk_player_id)]) {
       return "起用 GK がそのチームに所属していません。";
     }
     if (gk.saves < 0) return "セーブ数に負の数は入力できません。";
@@ -458,7 +458,7 @@ function _rosterMembership(seasonId) {
   var map = {};
   getSheetData("Rosters").forEach(function (r) {
     if (_str(r.season_id) !== seasonId) return;
-    map[_str(r.team_id) + "|" + _str(r.player_id)] = true;
+    map[_pairKey(r.team_id, r.player_id)] = true;
   });
   return map;
 }

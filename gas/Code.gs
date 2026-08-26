@@ -200,6 +200,12 @@ function _route(action, token, payload) {
     case "listConfig":
       return listConfig(token);
 
+    case "getTeamRoster":
+      return getTeamRoster(token, payload);
+
+    case "searchPlayers":
+      return searchPlayers(token, payload);
+
     case "upsertPlayer":
       return upsertPlayer(token, payload);
 
@@ -211,6 +217,9 @@ function _route(action, token, payload) {
 
     case "importPlayersCsv":
       return importPlayersCsv(token, payload);
+
+    case "syncPlayerProfiles":
+      return syncPlayerProfiles(token, payload);
 
     case "setConfig":
       return setConfig(token, payload);

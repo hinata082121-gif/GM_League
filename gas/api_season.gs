@@ -561,7 +561,7 @@ function _carryOverRosters(seasonId, nextSeasonId, at, report) {
   var existing = {};
   getSheetData("Rosters").forEach(function (r) {
     if (_str(r.season_id) !== nextSeasonId) return;
-    existing[_str(r.team_id) + "|" + _str(r.player_id)] = true;
+    existing[_pairKey(r.team_id, r.player_id)] = true;
   });
 
   var rows = [];
@@ -572,7 +572,7 @@ function _carryOverRosters(seasonId, nextSeasonId, at, report) {
     var teamId = _str(r.team_id);
     var playerId = _str(r.player_id);
     if (!activeTeamIds[teamId]) return;
-    if (existing[teamId + "|" + playerId]) return;
+    if (existing[_pairKey(teamId, playerId)]) return;
 
     // 現実移籍で対象外になった選手はここで落とす
     if (ineligible[playerId]) {
@@ -586,7 +586,7 @@ function _carryOverRosters(seasonId, nextSeasonId, at, report) {
       return;
     }
 
-    existing[teamId + "|" + playerId] = true;
+    existing[_pairKey(teamId, playerId)] = true;
 
     rows.push({
       roster_id:        generateId("r_"),

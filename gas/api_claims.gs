@@ -226,6 +226,10 @@ function _replacementCandidates(seasonId, teamId, clubName) {
       player_id: pid,
       name:      _str(p.name),
       position:  _str(p.position),
+      detail_position: _str(p.detail_position),
+      age:         _num(p.age),
+      nationality: _normalizeNationality(p.nationality),
+      foreign:     _isForeign(p.nationality),
       real_club: _str(p.real_club),
     });
   });

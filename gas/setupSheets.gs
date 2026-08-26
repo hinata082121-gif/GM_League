@@ -139,7 +139,10 @@ function _getSheetDefinitions() {
       headers: [
         "player_id",  // string  主キー
         "name",       // string  選手名
-        "position",   // enum    GK / DF / MF / FW
+        "position",   // enum    GK / DF / MF / FW（大分類）
+        "detail_position", // enum GK / LSB / CB / RSB / DMF / CMF / OMF / LMF / RMF / LWG / RWG / ST / CF
+        "age",        // number  年齢（登録時点。0 は未入力）
+        "nationality",// string  国籍。空欄は日本扱い。日本以外なら外国籍
         "real_club",  // string  現実の所属クラブ（大会外移籍で eligible=false 判定）
         "eligible",   // bool    大会エントリー可否
       ],

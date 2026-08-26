@@ -50,8 +50,140 @@ function _requireOrganizer(token) {
 // 値の正規化・検証ヘルパ
 // =============================================================================
 
-/** 許可されるポジション */
+/** 許可されるポジション（大分類） */
 var POSITIONS = ["GK", "DF", "MF", "FW"];
+
+/**
+ * 大分類のなかの詳細ポジション。
+ *
+ * エントリーリストは LSB / CMF / RWG のような細かい表記で届く。
+ * 人数制限や集計は大分類で行い、**表示は届いたままの粒度で出す**。
+ * 大分類だけにすると、どこの選手なのかが読み取れなくなる。
+ */
+var POSITION_DETAILS = {
+  GK: ["GK"],
+  DF: ["LSB", "CB", "RSB"],
+  MF: ["DMF", "CMF", "OMF", "LMF", "RMF"],
+  FW: ["LWG", "RWG", "ST", "CF"],
+};
+
+/**
+ * 詳細ポジションから大分類を引く。
+ *
+ * @param {string} detail
+ * @returns {string} 該当が無ければ空文字
+ */
+function _positionOfDetail(detail) {
+  var d = _str(detail).toUpperCase();
+  for (var i = 0; i < POSITIONS.length; i++) {
+    if (POSITION_DETAILS[POSITIONS[i]].indexOf(d) !== -1) return POSITIONS[i];
+  }
+  return "";
+}
+
+/**
+ * ポジションの指定を大分類と詳細のペアに整える。
+ *
+ * 詳細だけ渡せば大分類は導ける。大分類だけの場合、詳細は空のままにする
+ * （GK は1つしかないので埋める）。
+ *
+ * @param {*} position 大分類。省略可
+ * @param {*} detail 詳細。省略可
+ * @returns {{ position: string, detail: string, error?: string }}
+ */
+function _resolvePosition(position, detail) {
+  var p = _str(position).toUpperCase();
+  var d = _str(detail).toUpperCase();
+
+  if (d) {
+    var from = _positionOfDetail(d);
+    if (!from) {
+      return { position: p, detail: d, error: "詳細ポジションが不正です: " + d };
+    }
+    if (p && p !== from) {
+      return {
+        position: p, detail: d,
+        error: d + " は " + from + " の詳細です（" + p + " と一致しません）",
+      };
+    }
+    return { position: from, detail: d };
+  }
+
+  if (!p) return { position: "", detail: "", error: "ポジションを指定してください。" };
+  if (POSITIONS.indexOf(p) === -1) {
+    return { position: p, detail: "", error: "ポジションが不正です: " + p };
+  }
+
+  return { position: p, detail: p === "GK" ? "GK" : "" };
+}
+
+/**
+ * 2つの値の組を、連想配列の鍵にする。
+ *
+ * 「名前とポジションで選手を引く」「チームと選手で在籍を引く」のように、
+ * 2つ揃って初めて1件を指すものに使う。
+ *
+ * 以前は記号で連結していたが、GAS エディタへ貼り付ける途中で
+ * その記号が壊れる事故が繰り返し起きた。壊れても構文エラーにならないので、
+ * 気づくのは登録がおかしくなった後になる。
+ * 配列を JSON にすれば、区切りの記号をソースに書かずに済む。
+ *
+ * @param {*} a
+ * @param {*} b
+ * @returns {string}
+ */
+function _pairKey(a, b) {
+  return JSON.stringify([_str(a), _str(b)]);
+}
+
+/** 国籍が未入力のときの既定値 */
+var NATIONALITY_DEFAULT = "日本";
+
+/**
+ * 国籍を整える。
+ *
+ * 空欄は「日本」とみなす。名簿の大半は日本人で、
+ * 外国籍だけが △ で示される書式に合わせている。
+ *
+ * @param {*} v
+ * @returns {string}
+ */
+function _normalizeNationality(v) {
+  return _str(v) || NATIONALITY_DEFAULT;
+}
+
+/**
+ * 外国籍かどうか。エントリーリストの △ に対応する。
+ *
+ * 国籍そのものを持っておき、外国籍かどうかは毎回導く。
+ * 真偽値のカラムを別に持つと、国籍と食い違ったときにどちらが正か分からなくなる。
+ *
+ * @param {*} nationality
+ * @returns {boolean}
+ */
+function _isForeign(nationality) {
+  return _normalizeNationality(nationality) !== NATIONALITY_DEFAULT;
+}
+
+/**
+ * 年齢を整える。
+ *
+ * 未入力は 0。負の数や現実的でない値は弾く。
+ * 年齢は登録した時点のもので、時間が経てば実際とずれる。
+ * 誕生日を持たない代わりに、名簿を取り込むたびに上書きしていく運用にする。
+ *
+ * @param {*} v
+ * @returns {{ age: number, error?: string }}
+ */
+function _parseAge(v) {
+  if (v === null || v === undefined || _str(v) === "") return { age: 0 };
+
+  var n = Math.round(_num(v));
+  if (n < 0 || n > 60) {
+    return { age: 0, error: "年齢が不正です: " + _str(v) };
+  }
+  return { age: n };
+}
 
 /** 許可されるロール */
 var ROLES = ["team", "organizer"];
@@ -132,6 +264,10 @@ function listPlayers(token, payload) {
       player_id: _str(r.player_id),
       name:      _str(r.name),
       position:  _str(r.position),
+      detail_position: _str(r.detail_position),
+      age:         _num(r.age),
+      nationality: _normalizeNationality(r.nationality),
+      foreign:     _isForeign(r.nationality),
       real_club: _str(r.real_club),
       eligible:  _toBool(r.eligible),
     };
@@ -162,6 +298,15 @@ function _comparePlayers(a, b) {
   if (ai === -1) ai = POSITIONS.length;
   if (bi === -1) bi = POSITIONS.length;
   if (ai !== bi) return ai - bi;
+
+  // 同じ大分類のなかは詳細の並び（LSB → CB → RSB など）
+  var list = POSITION_DETAILS[a.position] || [];
+  var ad = list.indexOf(_str(a.detail_position));
+  var bd = list.indexOf(_str(b.detail_position));
+  if (ad === -1) ad = list.length;
+  if (bd === -1) bd = list.length;
+  if (ad !== bd) return ad - bd;
+
   return a.name < b.name ? -1 : (a.name > b.name ? 1 : 0);
 }
 
@@ -447,6 +592,10 @@ function getTeamSquad(token, payload) {
       player_id:        pid,
       name:             _str(p.name),
       position:         _str(p.position),
+      detail_position:  _str(p.detail_position),
+      age:              _num(p.age),
+      nationality:      _normalizeNationality(p.nationality),
+      foreign:          _isForeign(p.nationality),
       real_club:        _str(p.real_club),
       eligible:         _toBool(p.eligible),
       acquisition_type: _str(r.acquisition_type),
@@ -459,8 +608,10 @@ function getTeamSquad(token, payload) {
   squad.sort(_comparePlayers);
 
   var counts = { GK: 0, DF: 0, MF: 0, FW: 0 };
+  var foreignCount = 0;
   squad.forEach(function (s) {
     if (counts.hasOwnProperty(s.position)) counts[s.position]++;
+    if (s.foreign) foreignCount++;
   });
 
   var team = findRow("Teams", "team_id", teamId);
@@ -473,6 +624,7 @@ function getTeamSquad(token, payload) {
       season_id: seasonId,
       total: squad.length,
       position_counts: counts,
+      foreign_count: foreignCount,
       squad: squad,
     },
   };
@@ -609,7 +761,7 @@ function getTeamBudget(token, payload) {
  * 選手を新規登録または更新する。
  * player_id が指定され既存行がある場合は更新、それ以外は新規採番して追加。
  *
- * payload: { player_id?, name, position, real_club?, eligible? }
+ * payload: { player_id?, name, position, detail_position?, age?, nationality?, real_club?, eligible? }
  *
  * @param {string} token
  * @param {Object} payload
@@ -620,19 +772,21 @@ function upsertPlayer(token, payload) {
   if (!auth.ok) return auth;
 
   var name = _str(payload.name);
-  var position = _str(payload.position).toUpperCase();
   if (!name) return { ok: false, error: "name は必須です。" };
 
-  try {
-    _assertEnum("position", position, POSITIONS);
-  } catch (e) {
-    return { ok: false, error: e.message };
-  }
+  var pos = _resolvePosition(payload.position, payload.detail_position);
+  if (pos.error) return { ok: false, error: pos.error };
+
+  var age = _parseAge(payload.age);
+  if (age.error) return { ok: false, error: age.error };
 
   var row = {
     player_id: _str(payload.player_id),
     name:      name,
-    position:  position,
+    position:  pos.position,
+    detail_position: pos.detail,
+    age:         age.age,
+    nationality: _normalizeNationality(payload.nationality),
     real_club: _str(payload.real_club),
     eligible:  payload.eligible === undefined ? true : _toBool(payload.eligible),
   };
@@ -642,6 +796,9 @@ function upsertPlayer(token, payload) {
       updateRow("Players", "player_id", row.player_id, {
         name:      row.name,
         position:  row.position,
+        detail_position: row.detail_position,
+        age:         row.age,
+        nationality: row.nationality,
         real_club: row.real_club,
         eligible:  row.eligible,
       });
@@ -771,8 +928,9 @@ function _findUserRowByEmail(email) {
 /**
  * CSV 文字列から Players を一括登録する。
  *
- * 想定ヘッダー: name,position,real_club
- * eligible 列があれば読み取り、なければ true として登録する。
+ * 想定ヘッダー: name,position,age,nationality,real_club
+ * age / nationality / eligible 列があれば読み取る。
+ * 無ければ 年齢0・国籍は日本・eligible=true として登録する。
  * 同名かつ同ポジションの選手が既にいる場合はスキップする。
  *
  * payload: { csv: string }
@@ -801,6 +959,9 @@ function importPlayersCsv(token, payload) {
   var headers = table[0].map(function (h) { return _str(h).toLowerCase(); });
   var iName = headers.indexOf("name");
   var iPos = headers.indexOf("position");
+  var iDetail = headers.indexOf("detail_position");
+  var iAge = headers.indexOf("age");
+  var iNat = headers.indexOf("nationality");
   var iClub = headers.indexOf("real_club");
   var iElig = headers.indexOf("eligible");
 
@@ -811,7 +972,7 @@ function importPlayersCsv(token, payload) {
   return withLock(function () {
     var existing = {};
     getSheetData("Players").forEach(function (p) {
-      existing[_str(p.name) + "|" + _str(p.position)] = true;
+      existing[_pairKey(p.name, p.position)] = true;
     });
 
     var toAppend = [];
@@ -823,23 +984,41 @@ function importPlayersCsv(token, payload) {
       var name = _str(line[iName]);
       if (!name) continue;
 
-      var position = _str(line[iPos]).toUpperCase();
-      if (POSITIONS.indexOf(position) === -1) {
-        errors.push((i + 1) + "行目: position が不正 (" + position + ")");
+      // position 列に LSB や CMF のような詳細が入っていても受ける。
+      // エントリーリストの表記をそのまま貼れるようにするため
+      var rawPos = iPos >= 0 ? line[iPos] : "";
+      var rawDetail = iDetail >= 0 ? line[iDetail] : "";
+      var pos = _resolvePosition(
+        _positionOfDetail(rawPos) ? "" : rawPos,
+        rawDetail || (_positionOfDetail(rawPos) ? rawPos : "")
+      );
+
+      var position = pos.position;
+      if (pos.error) {
+        errors.push((i + 1) + "行目: " + pos.error);
         continue;
       }
 
-      var key = name + "|" + position;
+      var key = _pairKey(name, position);
       if (existing[key]) {
         skipped++;
         continue;
       }
       existing[key] = true;
 
+      var age = _parseAge(iAge === -1 ? "" : line[iAge]);
+      if (age.error) {
+        errors.push((i + 1) + "行目: " + age.error);
+        continue;
+      }
+
       toAppend.push({
         player_id: generateId("p_"),
         name:      name,
         position:  position,
+        detail_position: pos.detail,
+        age:         age.age,
+        nationality: _normalizeNationality(iNat === -1 ? "" : line[iNat]),
         real_club: iClub === -1 ? "" : _str(line[iClub]),
         eligible:  iElig === -1 ? true : _toBool(line[iElig]),
       });
@@ -852,6 +1031,279 @@ function importPlayersCsv(token, payload) {
       data: { added: toAppend.length, skipped: skipped, errors: errors },
     };
   });
+}
+
+// =============================================================================
+// 選手名簿の同期
+// =============================================================================
+
+/**
+ * 照合用に名前を正規化する。
+ *
+ * 名簿ごとに「小川 航基」「小川航基」「ヴィッセル」「ビッセル」のような
+ * 揺れがあるので、空白・中黒・ヴ を吸収してから比べる。
+ *
+ * **保存する名前は正規化しない。** ここで作った文字列は照合にだけ使う。
+ * 表示は届いた表記のままにする。
+ *
+ * @param {*} v
+ * @returns {string}
+ */
+function _normalizeName(v) {
+  // ヴは後ろの小書き文字とセットで1音になる。
+  // 先に「ヴィ→ビ」を処理しないと「ラヴィ」が「ラブィ」になって「ラビ」と揃わない
+  return _str(v)
+    .replace(/[\s　・．.]/g, "")
+    .replace(/ヴァ/g, "バ")
+    .replace(/ヴィ/g, "ビ")
+    .replace(/ヴェ/g, "ベ")
+    .replace(/ヴォ/g, "ボ")
+    .replace(/ヴ/g, "ブ");
+}
+
+/**
+ * eFootball に登録されている選手の名簿で、選手マスタを一括更新する。主催者専用。
+ *
+ * 何のための機能か
+ *   補填の入れ替え候補は「同じ現実クラブの選手」で絞る。
+ *   つまり real_club が空のままだと、誰も候補に出てこない。
+ *   毎シーズン主催者が作る名簿を、そのまま流し込めるようにする。
+ *
+ * 名前で照合し、**見つかった選手は年齢・国籍・現実クラブを上書き**する。
+ * ポジションは上書きしない。マスタ側はエントリーリストで確認済みの値で、
+ * 名簿側より信頼できるため。ただし空欄なら埋める。
+ *
+ * 見つからなかった選手は新しく作る。誰にも保有されていない選手を
+ * マスタに置いておかないと、入れ替えの候補にできない。
+ *
+ * 同姓同名は実際にいる（千葉と長崎のエドゥアルドなど）。
+ * 名前が重なっているときはポジションまで見て見分ける。
+ * それでも決められない場合だけ、触らずに報告する。
+ *
+ * payload: {
+ *   players: [{ name, position?, age?, nationality?, real_club }],
+ *   create_missing?: boolean  既定 true
+ * }
+ *
+ * @param {string} token
+ * @param {Object} payload
+ * @returns {{ ok: boolean, data?: Object, error?: string }}
+ */
+function syncPlayerProfiles(token, payload) {
+  var auth = _requireOrganizer(token);
+  if (!auth.ok) return auth;
+
+  var list = payload.players || [];
+  if (list.length === 0) {
+    return { ok: false, error: "選手が1人も指定されていません。" };
+  }
+
+  var createMissing = payload.create_missing === undefined
+    ? true
+    : _toBool(payload.create_missing);
+
+  // 先に全件を検証する。1件でも駄目なら何も書かない
+  var parsed = [];
+  for (var i = 0; i < list.length; i++) {
+    var row = _parseProfileRow(list[i], i);
+    if (row.error) return { ok: false, error: row.error };
+    parsed.push(row);
+  }
+
+  // 名簿の中に同じ名前が複数あるか。
+  //
+  // 同姓同名は実際にいる（千葉のエドゥアルドと長崎のエドゥアルドなど）。
+  // 一律に飛ばすと片方が永久に登録できないので、
+  // **名前が重なっているものだけ、ポジションまで見て照合する**。
+  var countByName = {};
+  parsed.forEach(function (r) {
+    countByName[r.key] = (countByName[r.key] || 0) + 1;
+  });
+
+  var strict = {};
+  var dupInList = [];
+  parsed.forEach(function (r) {
+    if (countByName[r.key] < 2) return;
+    strict[r.key] = true;
+
+    // ポジションが無いと区別のしようがない。この場合だけ諦める
+    if (!r.detail && dupInList.indexOf(r.name) === -1) dupInList.push(r.name);
+  });
+
+  return withLock(function () {
+    var sheet = getSheet("Players");
+    var values = sheet.getDataRange().getValues();
+    if (values.length < 1) return { ok: false, error: "Players シートが空です。" };
+
+    var headers = values[0].map(function (h) { return _str(h); });
+    var col = {};
+    ["name", "position", "detail_position", "age", "nationality", "real_club"]
+      .forEach(function (k) { col[k] = headers.indexOf(k); });
+
+    if (col.name === -1 || col.real_club === -1) {
+      return { ok: false, error: "Players シートに name / real_club の列がありません。" };
+    }
+
+    // マスタ側を名前で引けるようにする。同名は行番号を貯めておく
+    var rowsByKey = {};
+    for (var r = 1; r < values.length; r++) {
+      var key = _normalizeName(values[r][col.name]);
+      if (!key) continue;
+      (rowsByKey[key] = rowsByKey[key] || []).push(r);
+    }
+
+    var updated = 0;
+    var unchanged = 0;
+    var ambiguous = [];
+    var toCreate = [];
+    var touchedKeys = {};
+
+    parsed.forEach(function (p) {
+      if (dupInList.indexOf(p.name) !== -1) return;
+
+      touchedKeys[p.key] = true;
+      var hits = rowsByKey[p.key] || [];
+
+      // 名前が重なっているときは、ポジションが一致する行だけを相手にする。
+      // 同姓同名の別人を取り違えないため
+      if (strict[p.key] || hits.length > 1) {
+        hits = hits.filter(function (idx) {
+          return _str(values[idx][col.detail_position]) === p.detail;
+        });
+      }
+
+      if (hits.length === 0) {
+        if (createMissing) toCreate.push(p);
+        return;
+      }
+
+      if (hits.length > 1) {
+        ambiguous.push(p.name);
+        return;
+      }
+
+      var idx = hits[0];
+      var changed = false;
+
+      // 年齢・国籍・現実クラブは名簿を正とする
+      changed = _setCell(values, idx, col.age, p.age) || changed;
+      changed = _setCell(values, idx, col.nationality, p.nationality) || changed;
+      changed = _setCell(values, idx, col.real_club, p.real_club) || changed;
+
+      // ポジションは空欄のときだけ埋める。
+      // マスタ側はエントリーリストで確認済みの値なので上書きしない
+      if (p.detail && col.detail_position !== -1 &&
+          !_str(values[idx][col.detail_position])) {
+        values[idx][col.detail_position] = p.detail;
+        if (col.position !== -1 && !_str(values[idx][col.position])) {
+          values[idx][col.position] = p.position;
+        }
+        changed = true;
+      }
+
+      if (changed) updated++; else unchanged++;
+    });
+
+    // 名簿に載っていないマスタの選手。
+    // GM外へ移った人か、eFootball にまだ登録されていない人。
+    // real_club を持たないので入れ替えの候補にはならない
+    var masterOnly = [];
+    for (var m = 1; m < values.length; m++) {
+      var mk = _normalizeName(values[m][col.name]);
+      if (!mk || touchedKeys[mk]) continue;
+      masterOnly.push(_str(values[m][col.name]));
+    }
+
+    if (updated > 0) {
+      sheet.getRange(1, 1, values.length, headers.length).setValues(values);
+    }
+
+    var created = toCreate.map(function (p) {
+      return {
+        player_id:       generateId("p_"),
+        name:            p.name,
+        position:        p.position,
+        detail_position: p.detail,
+        age:             p.age,
+        nationality:     p.nationality,
+        real_club:       p.real_club,
+        eligible:        true,
+      };
+    });
+
+    _appendRowsBatch("Players", created);
+
+    return {
+      ok: true,
+      data: {
+        received:      parsed.length,
+        updated:       updated,
+        unchanged:     unchanged,
+        created:       created.length,
+        created_names: created.map(function (c) { return c.name; }),
+        ambiguous:     ambiguous,
+        duplicated_in_list: dupInList,
+        master_only:   masterOnly,
+      },
+    };
+  });
+}
+
+/**
+ * セルに値を入れる。既に同じ値なら何もしない。
+ *
+ * @param {Array[]} values
+ * @param {number} row
+ * @param {number} col -1 なら列が無いので何もしない
+ * @param {*} value 空なら上書きしない
+ * @returns {boolean} 書き換えたか
+ */
+function _setCell(values, row, col, value) {
+  if (col === -1) return false;
+  if (value === "" || value === 0 || value === null || value === undefined) return false;
+  if (String(values[row][col]) === String(value)) return false;
+
+  values[row][col] = value;
+  return true;
+}
+
+/**
+ * 名簿の1行を検証して整える。
+ *
+ * @param {Object} raw
+ * @param {number} index
+ * @returns {Object} error があれば失敗
+ */
+function _parseProfileRow(raw, index) {
+  var no = (index + 1) + "件目";
+  var name = _str(raw.name);
+  if (!name) return { error: no + ": 選手名が空です。" };
+
+  var age = _parseAge(raw.age);
+  if (age.error) return { error: no + "（" + name + "）: " + age.error };
+
+  // ポジションは任意。名簿に無ければ空のままにする
+  var position = "";
+  var detail = "";
+  var rawPos = _str(raw.position);
+
+  if (rawPos) {
+    var isDetail = !!_positionOfDetail(rawPos);
+    var pos = _resolvePosition(isDetail ? "" : rawPos, isDetail ? rawPos : "");
+    if (pos.error) return { error: no + "（" + name + "）: " + pos.error };
+    position = pos.position;
+    detail = pos.detail;
+  }
+
+  return {
+    name:        name,
+    key:         _normalizeName(name),
+    position:    position,
+    detail:      detail,
+    age:         age.age,
+    nationality: _str(raw.nationality),
+    real_club:   _str(raw.real_club),
+  };
 }
 
 /**
