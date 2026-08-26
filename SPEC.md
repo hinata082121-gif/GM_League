@@ -102,11 +102,37 @@ J リーグ選手のみを使用する eFootball の私設大会を運営する�
 |---|---|---|
 | player_id | string | 主キー |
 | name | string | 選手名 |
-| position | enum | GK / DF / MF / FW |
+| position | enum | GK / DF / MF / FW（**大分類**） |
+| detail_position | enum | GK / LSB / CB / RSB / DMF / CMF / OMF / LMF / RMF / LWG / RWG / ST / CF |
+| age | number | 年齢（登録時点。0 は未入力） |
+| nationality | string | 国籍。**空欄は日本扱い**。日本以外なら外国籍 |
 | real_club | string | 現実の所属クラブ |
 | eligible | bool | 大会エントリー可否（大会外クラブへ移籍したら false） |
 
 > real_club の更新は主催者が手動。eligible=false の選手は翌シーズンのエントリーで弾く。
+>
+> **外国籍のカラムは持たない。** 国籍そのものを持ち、外国籍かどうかは毎回導く。
+> 真偽値を別に持つと国籍と食い違ったときにどちらが正か分からなくなる（設計原則3と同じ考え方）。
+> API は `foreign`（bool）を計算して返すので、画面側で判定しなくてよい。
+>
+> **年齢は登録した時点のもの。** 誕生日は持たないので、時間が経てば実際とずれる。
+> 名簿を取り込むたびに上書きしていく運用にする。`importRoster` は
+> **空欄のときだけ**埋め、既に値があるものは上書きしない（薄い名簿で厚いデータを潰さないため）。
+>
+> **ポジションは2段。** 人数制限・集計・並び順は `position`（大分類）で行い、
+> 表示は `detail_position` を使う。エントリーリストは LSB / CMF / RWG のような
+> 細かい表記で届くので、大分類だけにすると「どこの選手か」が読み取れなくなる。
+>
+> | 大分類 | 詳細 |
+> |---|---|
+> | GK | GK |
+> | DF | LSB / CB / RSB |
+> | MF | DMF / CMF / OMF / LMF / RMF |
+> | FW | LWG / RWG / ST / CF |
+>
+> **詳細だけ渡せば大分類は導ける。** 取り込みや CSV では `position` に
+> `LSB` と書いてもそのまま通る。両方指定した場合は組み合わせを検証し、
+> 食い違えば拒否する。
 
 ### 4.5 Rosters
 | カラム | 型 | 説明 |
