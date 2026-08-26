@@ -175,6 +175,7 @@ function showTab(name) {
 
   if (name === 'dashboard') renderDashboard();
   if (name === 'teams') renderTeamViewer();
+  if (name === 'search') renderPlayerSearch();
   if (name === 'entry') renderEntry();
   if (name === 'transfer') renderTransfer();
   if (name === 'protect') renderProtect();
@@ -238,6 +239,43 @@ function esc(s) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+/**
+ * ポジションのバッジを HTML で返す。
+ *
+ * 詳細（LSB / CMF など）があればそれを出し、無ければ大分類に落とす。
+ * 色分けは大分類でしか行わない。詳細まで色を分けると13色になって
+ * かえって読めなくなるため。
+ *
+ * @param {{ position?: string, detail_position?: string }} p
+ * @returns {string} HTML
+ */
+function posBadge(p) {
+  const big = String((p && p.position) || '');
+  const label = String((p && p.detail_position) || '') || big || '—';
+  const cls = ['GK', 'DF', 'MF', 'FW'].indexOf(big) === -1 ? '' : ' pos-' + big;
+  return '<span class="pos' + cls + '">' + esc(label) + '</span>';
+}
+
+/**
+ * 年齢と国籍の注記を HTML で返す。
+ *
+ * 外国籍だけ △ を付ける。エントリーリストの表記に合わせているので、
+ * 主催者が画像の名簿と画面を見比べたときに同じ形で読める。
+ * 年齢は登録時点のもので、未入力（0）なら出さない。
+ *
+ * @param {{ age?: number, foreign?: boolean, nationality?: string }} p
+ * @returns {string} HTML
+ */
+function playerMeta(p) {
+  if (!p) return '';
+  const out = [];
+
+  if (Number(p.age) > 0) out.push(esc(p.age) + '歳');
+  if (p.foreign) out.push('△' + esc(p.nationality || '外国籍'));
+
+  return out.length === 0 ? '' : '<span class="player-meta">' + out.join(' ') + '</span>';
 }
 
 /**
@@ -598,13 +636,13 @@ async function loadTeamDetail() {
 
   setLoading('tv-body');
 
-  const [squadRes, budgetRes] = await Promise.all([
-    callApi('getTeamSquad', { team_id: teamId, season_id: seasonId }),
+  const [rosterRes, budgetRes] = await Promise.all([
+    callApi('getTeamRoster', { team_id: teamId, season_id: seasonId }),
     callApi('getTeamBudget', { team_id: teamId }),
   ]);
 
-  if (!squadRes.ok) {
-    setError('tv-body', 'スカッドの取得に失敗しました: ' + squadRes.error);
+  if (!rosterRes.ok) {
+    setError('tv-body', 'スカッドの取得に失敗しました: ' + rosterRes.error);
     return;
   }
   if (!budgetRes.ok) {
@@ -612,7 +650,9 @@ async function loadTeamDetail() {
     return;
   }
 
-  const squad = squadRes.data;
+  teamRosterData = rosterRes.data;
+
+  const squad = teamRosterData.entry;
   const budget = budgetRes.data;
   const c = squad.position_counts;
 
@@ -632,19 +672,242 @@ async function loadTeamDetail() {
         <span class="stat-value">${esc(formatMoney(budget.balance))}</span>
       </div>
       <div class="stat">
-        <span class="stat-label">スカッド人数</span>
+        <span class="stat-label">エントリー人数</span>
         <span class="stat-value">${squad.total} 名</span>
       </div>
       <div class="stat">
         <span class="stat-label">内訳</span>
-        <span class="stat-value stat-sm">GK${c.GK} / DF${c.DF} / MF${c.MF} / FW${c.FW}</span>
+        <span class="stat-value stat-sm">
+          GK${c.GK} / DF${c.DF} / MF${c.MF} / FW${c.FW}
+          ${squad.foreign_count ? '<br>外国籍 ' + squad.foreign_count : ''}
+        </span>
       </div>
     </div>
     <h3 class="sub-head">予算の増減（全期間）</h3>
     ${renderBudgetTable(budget)}
-    <h3 class="sub-head">スカッド</h3>
-    ${renderSquadTable(squad.squad)}
+
+    <h3 class="sub-head">選手リスト</h3>
+    <div class="seg-tabs" id="tv-list-tabs">
+      <button class="seg-btn is-active" data-list="entry">
+        エントリーリスト <span class="seg-count">${squad.total}</span>
+      </button>
+      <button class="seg-btn" data-list="outside">
+        エントリー外選手 <span class="seg-count">${teamRosterData.outside_total}</span>
+      </button>
+    </div>
+    <div id="tv-list"></div>
   `;
+
+  document.querySelectorAll('#tv-list-tabs .seg-btn').forEach((btn) => {
+    btn.onclick = () => showTeamList(btn.dataset.list);
+  });
+
+  showTeamList('entry');
+}
+
+/** 直近に取得したチームの選手リスト。表の切り替えで再取得しないために持つ */
+let teamRosterData = null;
+
+/**
+ * エントリーリストとエントリー外を切り替えて描画する。
+ *
+ * @param {string} which - 'entry' | 'outside'
+ */
+function showTeamList(which) {
+  const d = teamRosterData;
+  if (!d) return;
+
+  document.querySelectorAll('#tv-list-tabs .seg-btn').forEach((el) => {
+    el.classList.toggle('is-active', el.dataset.list === which);
+  });
+
+  const box = document.getElementById('tv-list');
+  if (!box) return;
+
+  if (which === 'entry') {
+    box.innerHTML = renderSquadTable(d.entry.squad);
+    return;
+  }
+
+  box.innerHTML = `
+    <p class="muted note-sm">
+      ${esc(d.team_name)} の選手のうち、このチームのエントリーに入っていない人です。
+      未保有 ${d.outside_free} 名 / 他チーム保有 ${d.outside_held} 名。
+    </p>
+    ${renderOutsideTable(d.outside)}
+  `;
+}
+
+/**
+ * エントリー外選手の表を組み立てる。
+ *
+ * 保有チームを必ず出す。「自クラブの選手なのに手が出せない」理由が
+ * その場で分かり、交渉に行くべき相手も同時に見える。
+ *
+ * @param {Object[]} rows
+ * @returns {string}
+ */
+function renderOutsideTable(rows) {
+  if (!rows || rows.length === 0) {
+    return '<p class="muted">エントリー外の選手はいません。</p>';
+  }
+
+  const body = rows
+    .map((p) => {
+      const hold = p.held_by
+        ? '<span class="tag-ng">' + esc(p.held_by_name) + '</span>'
+        : '<span class="tag-ok">未保有</span>';
+
+      return `
+      <tr>
+        <td>${posBadge(p)}</td>
+        <td>${esc(p.name)}${playerMeta(p)}${p.eligible ? '' : ' <span class="tag-ng">対象外</span>'}</td>
+        <td>${hold}</td>
+      </tr>`;
+    })
+    .join('');
+
+  return `
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr><th>Pos</th><th>選手名</th><th>保有</th></tr></thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// 画面2b: 選手検索
+// ---------------------------------------------------------------------------
+
+/**
+ * 選手検索画面の初期化。プルダウンを埋めて操作を結びつける。
+ *
+ * 現実クラブの選択肢は**参加チーム名**から作る。
+ * 使用クラブはチーム名と同じで、Jリーグ60クラブを全部並べても
+ * 参加していないクラブは1件も引っかからないため。
+ */
+async function renderPlayerSearch() {
+  const [teams, seasons] = await Promise.all([loadTeams(), loadSeasons()]);
+
+  const clubs = teams
+    .filter((t) => t.active)
+    .map((t) => ({ value: t.name, label: t.name }));
+
+  fillSelect('ps-club', clubs, 'value', 'label', '指定なし');
+  fillSelect('ps-season', seasons, 'season_id', 'name', '最新シーズン');
+
+  const btn = document.getElementById('ps-run');
+  if (btn && !btn.dataset.bound) {
+    btn.onclick = runPlayerSearch;
+    document.getElementById('ps-clear').onclick = clearPlayerSearch;
+
+    // Enter でも引けるようにする。名前を打って即実行が一番多い使い方
+    document.getElementById('ps-name').onkeydown = (ev) => {
+      if (ev.key === 'Enter') runPlayerSearch();
+    };
+
+    btn.dataset.bound = '1';
+  }
+}
+
+/**
+ * 検索条件を集めて実行する。
+ *
+ * 空の条件は送らない。GAS 側は「キーが無い＝絞らない」と解釈するので、
+ * 空文字を送ると意図しない絞り込みになる余地を残さない。
+ */
+async function runPlayerSearch() {
+  const val = (id) => document.getElementById(id).value.trim();
+
+  const payload = { season_id: val('ps-season') };
+
+  const name = val('ps-name');
+  if (name) payload.name = name;
+
+  // 大分類か詳細かは値の接頭辞で分ける（G:MF / D:CMF）
+  const pos = val('ps-pos');
+  if (pos.indexOf('G:') === 0) payload.position = pos.slice(2);
+  if (pos.indexOf('D:') === 0) payload.detail_position = pos.slice(2);
+
+  const min = val('ps-age-min');
+  const max = val('ps-age-max');
+  if (min !== '') payload.age_min = min;
+  if (max !== '') payload.age_max = max;
+
+  const club = val('ps-club');
+  if (club) payload.real_club = club;
+
+  const hold = val('ps-hold');
+  if (hold) payload.hold_status = hold;
+
+  const foreign = val('ps-foreign');
+  if (foreign !== '') payload.foreign = foreign;
+
+  setLoading('ps-result');
+  const res = await callApi('searchPlayers', payload);
+
+  if (!res.ok) {
+    setError('ps-result', '検索できません: ' + res.error);
+    return;
+  }
+
+  renderSearchResult(res.data);
+}
+
+/** 条件をすべて空に戻す。結果も消す */
+function clearPlayerSearch() {
+  ['ps-name', 'ps-age-min', 'ps-age-max'].forEach((id) => {
+    document.getElementById(id).value = '';
+  });
+  ['ps-pos', 'ps-club', 'ps-hold', 'ps-foreign'].forEach((id) => {
+    document.getElementById(id).value = '';
+  });
+  document.getElementById('ps-result').innerHTML = '';
+}
+
+/**
+ * 検索結果の表を描画する。
+ *
+ * @param {Object} d searchPlayers の戻り
+ */
+function renderSearchResult(d) {
+  const box = document.getElementById('ps-result');
+
+  if (d.total === 0) {
+    box.innerHTML = '<p class="muted">条件に合う選手はいませんでした。</p>';
+    return;
+  }
+
+  const rows = d.players
+    .map((p) => {
+      const hold =
+        p.hold_status === '未保有'
+          ? '<span class="tag-ok">未保有</span>'
+          : '<span class="tag-ng">' + esc(p.held_by_name || p.hold_status) + '</span>';
+
+      return `
+      <tr>
+        <td>${posBadge(p)}</td>
+        <td>${esc(p.name)}${playerMeta(p)}${p.eligible ? '' : ' <span class="tag-ng">対象外</span>'}</td>
+        <td class="muted">${esc(p.real_club || '—')}</td>
+        <td>${hold}</td>
+      </tr>`;
+    })
+    .join('');
+
+  const note = d.truncated
+    ? `<p class="muted note-sm">${d.total} 件のうち ${d.shown} 件を表示しています。条件を足して絞り込んでください。</p>`
+    : `<p class="muted note-sm">${d.total} 件</p>`;
+
+  box.innerHTML = `
+    ${note}
+    <div class="table-wrap table-scroll">
+      <table class="data-table">
+        <thead><tr><th>Pos</th><th>選手名</th><th>現実クラブ</th><th>保有</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
 }
 
 /**
@@ -662,8 +925,8 @@ function renderSquadTable(squad) {
     .map(
       (p) => `
       <tr>
-        <td><span class="pos pos-${esc(p.position)}">${esc(p.position)}</span></td>
-        <td>${esc(p.name)}${p.eligible ? '' : ' <span class="tag-ng">対象外</span>'}</td>
+        <td>${posBadge(p)}</td>
+        <td>${esc(p.name)}${playerMeta(p)}${p.eligible ? '' : ' <span class="tag-ng">対象外</span>'}</td>
         <td class="muted">${esc(p.real_club)}</td>
         <td>${esc(p.acquisition_type)}</td>
         <td class="num">${esc(formatMoney(p.acquired_cost))}</td>
@@ -824,8 +1087,8 @@ async function refreshPlayerList() {
     .map(
       (p) => `
       <tr>
-        <td><span class="pos pos-${esc(p.position)}">${esc(p.position)}</span></td>
-        <td>${esc(p.name)}</td>
+        <td>${posBadge(p)}</td>
+        <td>${esc(p.name)}${playerMeta(p)}</td>
         <td class="muted">${esc(p.real_club)}</td>
         <td>${p.eligible ? '<span class="tag-ok">可</span>' : '<span class="tag-ng">不可</span>'}</td>
       </tr>`
@@ -909,9 +1172,13 @@ async function onSubmitPlayer(e) {
   btn.disabled = true;
   setResult('mp-result', true, '送信中...');
 
+  // ポジションは詳細（CB / CMF など）で選ばせる。
+  // 大分類は GAS 側が詳細から導くので、ここでは送らない
   const res = await callApi('upsertPlayer', {
     name: document.getElementById('mp-name').value.trim(),
-    position: document.getElementById('mp-pos').value,
+    detail_position: document.getElementById('mp-pos').value,
+    age: document.getElementById('mp-age').value,
+    nationality: document.getElementById('mp-nationality').value.trim(),
     real_club: getSelectedClub(),
     eligible: document.getElementById('mp-eligible').checked,
   });
@@ -921,8 +1188,10 @@ async function onSubmitPlayer(e) {
   if (res.ok) {
     setResult('mp-result', true, '登録しました。');
 
-    // 選手名だけクリアする。連続登録しやすいようクラブ選択は残す
+    // 選手名と年齢だけクリアする。
+    // 連続登録しやすいようクラブ・ポジション・国籍の選択は残す
     document.getElementById('mp-name').value = '';
+    document.getElementById('mp-age').value = '';
     document.getElementById('mp-eligible').checked = true;
     document.getElementById('mp-name').focus();
 
@@ -1653,7 +1922,7 @@ function renderTransferPlayerSelect() {
         else if (p.protected) note = ' 🛡';
 
         return '<option value="' + esc(p.player_id) + '"' + disabled + '>' +
-          esc(p.position) + ' ' + esc(p.name) + '（' + esc(p.team_name) + '）' +
+          esc(p.detail_position || p.position) + ' ' + esc(p.name) + '（' + esc(p.team_name) + '）' +
           esc(note) + '</option>';
       })
       .join('');
@@ -1926,7 +2195,7 @@ async function loadTxApprovalList() {
       '<option value="">選手を選択</option>' +
       free
         .map((p) => '<option value="' + esc(p.player_id) + '">' +
-          esc(p.position) + ' ' + esc(p.name) + '</option>')
+          esc(p.detail_position || p.position) + ' ' + esc(p.name) + '</option>')
         .join('');
   }
 
@@ -2224,7 +2493,7 @@ function renderProtectPlayerSelect() {
     '<option value="">選手を選択</option>' +
     list
       .map((p) => '<option value="' + esc(p.player_id) + '">' +
-        esc(p.position) + ' ' + esc(p.name) + '</option>')
+        esc(p.detail_position || p.position) + ' ' + esc(p.name) + '</option>')
       .join('');
 }
 
@@ -2243,7 +2512,7 @@ function renderMyProtections() {
   const rows = d.my_protections
     .map((p) => `
       <tr>
-        <td><span class="pos pos-${esc(p.position)}">${esc(p.position)}</span></td>
+        <td>${posBadge(p)}</td>
         <td>${esc(p.name)}</td>
         <td>${esc(p.tier)}</td>
         <td class="num">${p.fee > 0 ? esc(formatMoney(p.fee)) : '無料'}</td>
@@ -2344,7 +2613,7 @@ async function loadProtectionBoard() {
       <tr>
         <td>第${p.window}次</td>
         <td>${esc(p.team_name)}</td>
-        <td><span class="pos pos-${esc(p.position)}">${esc(p.position)}</span></td>
+        <td>${posBadge(p)}</td>
         <td>${esc(p.name)}${p.still_on_team ? '' : ' <span class="tag-ng">放出済</span>'}</td>
         <td>${esc(p.tier)}</td>
         <td class="num muted">${p.fee > 0 ? esc(formatMoney(p.fee)) : '—'}</td>
@@ -2500,7 +2769,7 @@ function playerOptions(players, withOwnGoal, selected) {
     html +=
       '<option value="' + esc(p.player_id) + '"' +
       (selected === p.player_id ? ' selected' : '') + '>' +
-      esc(p.position) + ' ' + esc(p.name) + esc(mark) + '</option>';
+      esc(p.detail_position || p.position) + ' ' + esc(p.name) + esc(mark) + '</option>';
   });
   return html;
 }
@@ -4051,7 +4320,7 @@ async function loadCompensationPlayers() {
     '<option value="">選手を選択</option>' +
     list
       .map((p) => '<option value="' + esc(p.player_id) + '">' +
-        esc(p.position) + ' ' + esc(p.name) + (p.current ? '' : '（離脱）') + '</option>')
+        esc(p.detail_position || p.position) + ' ' + esc(p.name) + (p.current ? '' : '（離脱）') + '</option>')
       .join('');
 }
 
@@ -4724,9 +4993,19 @@ function renderClaimList() {
     c.status !== '精算済' && c.status !== '無効' &&
     (d.window_open || currentUser.role === 'organizer');
 
+  // 入れ替え候補は同じ現実クラブの選手ばかりなので、名前だけでは選びにくい。
+  // ポジションの詳細・年齢・外国籍を並べて、誰なのか判る形にする
   const options = d.candidates
-    .map((c) => '<option value="' + esc(c.player_id) + '">' +
-      esc(c.position + ' ' + c.name) + '</option>')
+    .map((c) => {
+      const meta = [];
+      if (Number(c.age) > 0) meta.push(c.age + '歳');
+      if (c.foreign) meta.push('△' + (c.nationality || '外国籍'));
+
+      const label = (c.detail_position || c.position) + ' ' + c.name +
+        (meta.length ? '（' + meta.join(' ') + '）' : '');
+
+      return '<option value="' + esc(c.player_id) + '">' + esc(label) + '</option>';
+    })
     .join('');
 
   box.innerHTML = d.claims

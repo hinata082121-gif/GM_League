@@ -94,6 +94,7 @@
       <nav class="tab-nav">
         <button class="tab-btn" data-tab="dashboard">ダッシュボード</button>
         <button class="tab-btn" data-tab="teams">チーム閲覧</button>
+        <button class="tab-btn" data-tab="search">選手検索</button>
         <button class="tab-btn" data-tab="entry">エントリー</button>
         <button class="tab-btn" data-tab="transfer">移籍</button>
         <button class="tab-btn" data-tab="protect">プロテクト</button>
@@ -145,6 +146,94 @@
           <div id="tv-body">
             <p class="muted">チームを選択してください。</p>
           </div>
+        </div>
+      </div>
+
+      <!-- ===== 画面2b: 選手検索 ===== -->
+      <div class="tab-panel" data-panel="search" style="display:none;">
+        <div class="card">
+          <h2>選手検索</h2>
+          <p class="muted note-sm">
+            参加クラブの選手を、エントリーの内外を問わず探せます。
+            条件は1つだけでも、すべて空でも構いません。
+          </p>
+
+          <div class="search-grid">
+            <label>
+              選手名
+              <input type="text" id="ps-name" placeholder="部分一致" />
+            </label>
+            <label>
+              ポジション
+              <select id="ps-pos">
+                <option value="">指定なし</option>
+                <optgroup label="大分類">
+                  <option value="G:GK">GK</option>
+                  <option value="G:DF">DF</option>
+                  <option value="G:MF">MF</option>
+                  <option value="G:FW">FW</option>
+                </optgroup>
+                <optgroup label="DF">
+                  <option value="D:LSB">LSB</option>
+                  <option value="D:CB">CB</option>
+                  <option value="D:RSB">RSB</option>
+                </optgroup>
+                <optgroup label="MF">
+                  <option value="D:DMF">DMF</option>
+                  <option value="D:CMF">CMF</option>
+                  <option value="D:OMF">OMF</option>
+                  <option value="D:LMF">LMF</option>
+                  <option value="D:RMF">RMF</option>
+                </optgroup>
+                <optgroup label="FW">
+                  <option value="D:LWG">LWG</option>
+                  <option value="D:RWG">RWG</option>
+                  <option value="D:ST">ST</option>
+                  <option value="D:CF">CF</option>
+                </optgroup>
+              </select>
+            </label>
+            <label>
+              年齢（下限）
+              <input type="number" id="ps-age-min" min="0" max="60" placeholder="指定なし" />
+            </label>
+            <label>
+              年齢（上限）
+              <input type="number" id="ps-age-max" min="0" max="60" placeholder="指定なし" />
+            </label>
+            <label>
+              現実クラブ
+              <select id="ps-club"></select>
+            </label>
+            <label>
+              保有状況
+              <select id="ps-hold">
+                <option value="">指定なし</option>
+                <option value="未保有">未保有</option>
+                <option value="自チーム">自チーム</option>
+                <option value="他チーム保有">他チーム保有</option>
+              </select>
+            </label>
+            <label>
+              国籍
+              <select id="ps-foreign">
+                <option value="">指定なし</option>
+                <option value="1">外国籍のみ</option>
+                <option value="0">日本国籍のみ</option>
+              </select>
+            </label>
+            <label>
+              シーズン
+              <select id="ps-season"></select>
+            </label>
+          </div>
+
+          <div class="form-actions">
+            <button type="button" class="btn btn-primary" id="ps-run">検索</button>
+            <button type="button" class="btn btn-secondary" id="ps-clear">条件をクリア</button>
+          </div>
+
+          <div id="ps-result"></div>
         </div>
       </div>
 
@@ -1001,11 +1090,36 @@
             <label>
               ポジション
               <select id="mp-pos" required>
-                <option value="GK">GK</option>
-                <option value="DF">DF</option>
-                <option value="MF">MF</option>
-                <option value="FW">FW</option>
+                <optgroup label="GK">
+                  <option value="GK">GK</option>
+                </optgroup>
+                <optgroup label="DF">
+                  <option value="LSB">LSB</option>
+                  <option value="CB">CB</option>
+                  <option value="RSB">RSB</option>
+                </optgroup>
+                <optgroup label="MF">
+                  <option value="DMF">DMF</option>
+                  <option value="CMF">CMF</option>
+                  <option value="OMF">OMF</option>
+                  <option value="LMF">LMF</option>
+                  <option value="RMF">RMF</option>
+                </optgroup>
+                <optgroup label="FW">
+                  <option value="LWG">LWG</option>
+                  <option value="RWG">RWG</option>
+                  <option value="ST">ST</option>
+                  <option value="CF">CF</option>
+                </optgroup>
               </select>
+            </label>
+            <label>
+              年齢
+              <input type="number" id="mp-age" min="0" max="60" placeholder="未入力可" />
+            </label>
+            <label>
+              国籍
+              <input type="text" id="mp-nationality" placeholder="空欄なら日本" />
             </label>
             <label>
               カテゴリー

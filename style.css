@@ -438,6 +438,76 @@ body {
 .pos-MF { background: #1a73e8; }
 .pos-FW { background: #d93025; }
 
+/* ---------- リスト切り替え（エントリー / エントリー外）---------- */
+.seg-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.seg-btn {
+  appearance: none;
+  border: none;
+  background: none;
+  padding: 8px 14px;
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--color-text-sub);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.seg-btn:hover {
+  color: var(--color-text);
+}
+
+.seg-btn.is-active {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+}
+
+.seg-count {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 6px;
+  border-radius: 99px;
+  background: var(--color-border);
+  color: var(--color-text-sub);
+  font-size: 0.72rem;
+}
+
+.seg-btn.is-active .seg-count {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+/* ---------- 選手検索 ---------- */
+.search-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.search-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-text-sub);
+}
+
+/* 年齢・国籍。選手名の脇に小さく添える */
+.player-meta {
+  margin-left: 6px;
+  font-size: 0.72rem;
+  color: var(--color-text-sub);
+  white-space: nowrap;
+}
+
 /* ---------- タグ ---------- */
 .tag-ok,
 .tag-ng {
