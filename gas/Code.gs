@@ -209,6 +209,9 @@ function _route(action, token, payload) {
     case "upsertPlayer":
       return upsertPlayer(token, payload);
 
+    case "deletePlayer":
+      return deletePlayer(token, payload);
+
     case "upsertTeam":
       return upsertTeam(token, payload);
 

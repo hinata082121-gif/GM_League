@@ -1038,10 +1038,26 @@ function importPlayersCsv(token, payload) {
 // =============================================================================
 
 /**
+ * 人名でよく揺れる異体字。左を右に寄せてから比べる。
+ *
+ * 「髙橋」と「高橋」、「山﨑」と「山崎」は同じ人を指す。
+ * 名簿とエントリーリストで書き手が違うので、どちらの字が来るか決まらない。
+ * 畳み込まないと同じ選手が二重に登録される。
+ */
+var NAME_VARIANTS = [
+  ["髙", "高"], ["﨑", "崎"], ["嵜", "崎"], ["濵", "浜"], ["濱", "浜"],
+  ["邊", "辺"], ["邉", "辺"], ["澤", "沢"], ["齊", "斉"], ["齋", "斎"],
+  ["寳", "宝"], ["檜", "桧"], ["德", "徳"], ["冨", "富"], ["賴", "頼"],
+  ["巖", "巌"], ["惠", "恵"], ["眞", "真"], ["藏", "蔵"], ["龍", "竜"],
+  ["彌", "弥"], ["瀨", "瀬"], ["曾", "曽"], ["禮", "礼"], ["圓", "円"],
+  ["會", "会"], ["內", "内"], ["與", "与"],
+];
+
+/**
  * 照合用に名前を正規化する。
  *
- * 名簿ごとに「小川 航基」「小川航基」「ヴィッセル」「ビッセル」のような
- * 揺れがあるので、空白・中黒・ヴ を吸収してから比べる。
+ * 名簿ごとに「小川 航基」「小川航基」「髙橋」「高橋」のような揺れがあるので、
+ * 空白・中黒・ヴ・異体字を吸収してから比べる。
  *
  * **保存する名前は正規化しない。** ここで作った文字列は照合にだけ使う。
  * 表示は届いた表記のままにする。
@@ -1052,13 +1068,86 @@ function importPlayersCsv(token, payload) {
 function _normalizeName(v) {
   // ヴは後ろの小書き文字とセットで1音になる。
   // 先に「ヴィ→ビ」を処理しないと「ラヴィ」が「ラブィ」になって「ラビ」と揃わない
-  return _str(v)
+  var s = _str(v)
     .replace(/[\s　・．.]/g, "")
     .replace(/ヴァ/g, "バ")
     .replace(/ヴィ/g, "ビ")
     .replace(/ヴェ/g, "ベ")
     .replace(/ヴォ/g, "ボ")
     .replace(/ヴ/g, "ブ");
+
+  for (var i = 0; i < NAME_VARIANTS.length; i++) {
+    s = s.split(NAME_VARIANTS[i][0]).join(NAME_VARIANTS[i][1]);
+  }
+  return s;
+}
+
+/**
+ * 選手を削除する。主催者専用。
+ *
+ * 在籍・移籍・補填のどれかで参照されていれば断る。
+ * 参照されている選手を消すと、スカッドや履歴が player_id だけ残った
+ * 読めない行になる。
+ *
+ * 名寄せに失敗して二重に作られた選手を片づけるための機能で、
+ * 通常運用では使わない。
+ *
+ * payload: { player_id }
+ *
+ * @param {string} token
+ * @param {Object} payload
+ * @returns {{ ok: boolean, data?: Object, error?: string }}
+ */
+function deletePlayer(token, payload) {
+  var auth = _requireOrganizer(token);
+  if (!auth.ok) return auth;
+
+  var playerId = _str(payload.player_id);
+  if (!playerId) return { ok: false, error: "player_id は必須です。" };
+
+  return withLock(function () {
+    var row = findRow("Players", "player_id", playerId);
+    if (!row) return { ok: false, error: "選手が見つかりません。" };
+
+    var used = [];
+
+    getSheetData("Rosters").forEach(function (r) {
+      if (_str(r.player_id) === playerId) used.push("在籍");
+    });
+    getSheetData("Transfers").forEach(function (t) {
+      if (_str(t.player_id) === playerId) used.push("移籍");
+    });
+    getSheetData("Claims").forEach(function (c) {
+      if (_str(c.player_id) === playerId || _str(c.replacement_id) === playerId) {
+        used.push("補填");
+      }
+    });
+    getSheetData("Protections").forEach(function (p) {
+      if (_str(p.player_id) === playerId) used.push("プロテクト");
+    });
+
+    if (used.length > 0) {
+      var kinds = [];
+      used.forEach(function (k) { if (kinds.indexOf(k) === -1) kinds.push(k); });
+      return {
+        ok: false,
+        error: _str(row.name) + " は " + kinds.join("・") + " で使われているため削除できません（" +
+          used.length + "件）。",
+      };
+    }
+
+    var sheet = getSheet("Players");
+    var values = sheet.getDataRange().getValues();
+    var iId = values[0].indexOf("player_id");
+
+    for (var i = 1; i < values.length; i++) {
+      if (String(values[i][iId]) !== playerId) continue;
+      sheet.deleteRow(i + 1);
+      return { ok: true, data: { player_id: playerId, name: _str(row.name) } };
+    }
+
+    return { ok: false, error: "選手が見つかりません。" };
+  });
 }
 
 /**
@@ -1069,9 +1158,13 @@ function _normalizeName(v) {
  *   つまり real_club が空のままだと、誰も候補に出てこない。
  *   毎シーズン主催者が作る名簿を、そのまま流し込めるようにする。
  *
- * 名前で照合し、**見つかった選手は年齢・国籍・現実クラブを上書き**する。
- * ポジションは上書きしない。マスタ側はエントリーリストで確認済みの値で、
- * 名簿側より信頼できるため。ただし空欄なら埋める。
+ * 名前で照合し、**見つかった選手は名簿の内容で上書き**する。
+ * 年齢・国籍・現実クラブ・ポジションのすべてで名簿を正とする。
+ *
+ * エントリーリストの表記と食い違うことがあるが、名簿のほうを採る。
+ * エントリーリストは参加者が毎シーズン書くもので表記が揺れる。
+ * 名簿は主催者が eFootball の登録内容を写した一次資料なので、
+ * どちらか一方を正と決めるならこちらになる。
  *
  * 見つからなかった選手は新しく作る。誰にも保有されていない選手を
  * マスタに置いておかないと、入れ替えの候補にできない。
@@ -1185,21 +1278,17 @@ function syncPlayerProfiles(token, payload) {
       var idx = hits[0];
       var changed = false;
 
-      // 年齢・国籍・現実クラブは名簿を正とする
+      // 名簿を正とする。年齢・国籍・現実クラブ・ポジションのすべて。
+      //
+      // エントリーリストの表記と食い違うことがあるが、名簿のほうを採る。
+      // エントリーリストは参加者が毎シーズン書くもので表記が揺れる。
+      // 名簿は主催者が eFootball の登録内容を写した一次資料なので、
+      // どちらか一方を正と決めるならこちらになる。
       changed = _setCell(values, idx, col.age, p.age) || changed;
       changed = _setCell(values, idx, col.nationality, p.nationality) || changed;
       changed = _setCell(values, idx, col.real_club, p.real_club) || changed;
-
-      // ポジションは空欄のときだけ埋める。
-      // マスタ側はエントリーリストで確認済みの値なので上書きしない
-      if (p.detail && col.detail_position !== -1 &&
-          !_str(values[idx][col.detail_position])) {
-        values[idx][col.detail_position] = p.detail;
-        if (col.position !== -1 && !_str(values[idx][col.position])) {
-          values[idx][col.position] = p.position;
-        }
-        changed = true;
-      }
+      changed = _setCell(values, idx, col.detail_position, p.detail) || changed;
+      changed = _setCell(values, idx, col.position, p.position) || changed;
 
       if (changed) updated++; else unchanged++;
     });
