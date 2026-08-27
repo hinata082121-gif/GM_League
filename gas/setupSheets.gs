@@ -261,14 +261,18 @@ function _getSheetDefinitions() {
       ],
     },
     {
-      // §4.12 MatchTeamStats ─ チーム別シュート統計
+      // §4.12 MatchTeamStats ─ チーム別の試合スタッツ
       name: "MatchTeamStats",
       spec: "SPEC.md §4.12",
       headers: [
         "match_id",        // string
         "team_id",         // string
+        "possession",      // number  ボール支配率（%）。両チームの合計は100
         "shots",           // number  シュート数
         "shots_on_target", // number  枠内シュート数（GKセーブ率計算の分母）
+        "passes",          // number  パス数
+        "passes_success",  // number  パス成功数
+        "crosses",         // number  クロス数
       ],
     },
     {

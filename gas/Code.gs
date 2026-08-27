@@ -200,6 +200,15 @@ function _route(action, token, payload) {
     case "listConfig":
       return listConfig(token);
 
+    case "getTeamStats":
+      return getTeamStats(token, payload);
+
+    case "listArchivedSeasons":
+      return listArchivedSeasons(token);
+
+    case "getSeasonArchive":
+      return getSeasonArchive(token, payload);
+
     case "getTeamRoster":
       return getTeamRoster(token, payload);
 

@@ -261,8 +261,12 @@ function getMatchDetail(token, payload) {
     teamStats.push({
       team_id:         _str(s.team_id),
       team_name:       teamNames[_str(s.team_id)] || _str(s.team_id),
+      possession:      _num(s.possession),
       shots:           _num(s.shots),
       shots_on_target: _num(s.shots_on_target),
+      passes:          _num(s.passes),
+      passes_success:  _num(s.passes_success),
+      crosses:         _num(s.crosses),
     });
   });
 
@@ -405,17 +409,28 @@ function _validateMatchPayload(p, selfId) {
     }
   }
 
-  // シュート統計
+  // チームスタッツ
+  //
+  // 支配率の合計が100にならない場合は弾かない。
+  // eFootball の表示は四捨五入で 49/50 のようにずれることがあり、
+  // 入力どおりに残せないと写し取る意味が薄れる。おかしければ画面側で知らせる。
   for (var k = 0; k < p.teamStats.length; k++) {
     var s = p.teamStats[k];
     if (s.team_id !== p.homeTeam && s.team_id !== p.awayTeam) {
-      return "シュート統計の team_id が対戦チームのどちらでもありません。";
+      return "チームスタッツの team_id が対戦チームのどちらでもありません。";
     }
-    if (s.shots < 0 || s.shots_on_target < 0) {
-      return "シュート数に負の数は入力できません。";
+    if (s.shots < 0 || s.shots_on_target < 0 || s.passes < 0 ||
+        s.passes_success < 0 || s.crosses < 0 || s.possession < 0) {
+      return "チームスタッツに負の数は入力できません。";
     }
     if (s.shots_on_target > s.shots) {
       return "枠内シュートがシュート数を上回っています。";
+    }
+    if (s.passes_success > s.passes) {
+      return "パス成功数がパス数を上回っています。";
+    }
+    if (s.possession > 100) {
+      return "ボール支配率は100%以下で入力してください。";
     }
   }
 
@@ -484,8 +499,12 @@ function _normalizeMatchPayload(payload) {
   var teamStats = (payload.team_stats || []).map(function (s) {
     return {
       team_id:         _str(s.team_id),
+      possession:      Math.round(_num(s.possession) * 10) / 10,
       shots:           Math.floor(_num(s.shots)),
       shots_on_target: Math.floor(_num(s.shots_on_target)),
+      passes:          Math.floor(_num(s.passes)),
+      passes_success:  Math.floor(_num(s.passes_success)),
+      crosses:         Math.floor(_num(s.crosses)),
     };
   });
 
@@ -601,8 +620,12 @@ function _writeMatchChildren(matchId, p) {
     return {
       match_id:        matchId,
       team_id:         s.team_id,
+      possession:      s.possession,
       shots:           s.shots,
       shots_on_target: s.shots_on_target,
+      passes:          s.passes,
+      passes_success:  s.passes_success,
+      crosses:         s.crosses,
     };
   });
 

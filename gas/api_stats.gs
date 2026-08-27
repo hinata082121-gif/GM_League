@@ -4,7 +4,11 @@
  * 全ロールが閲覧できる読み取り専用の集計。
  *   getStandings  — リーグ順位表
  *   getTournament — トーナメント表（tie_id で2レグを束ねる）
- *   getRankings   — 得点 / アシスト / セーブ数 / シュートセーブ率
+ *   getTeamStats  — チーム別スタッツ（合計と1試合あたり）
+ *   getRankings   — 得点 / アシスト / セーブ数 / 1試合あたりセーブ / シュートセーブ率
+ *
+ * 平均を出すのは GK のセーブ数だけ。
+ * 得点とアシストは累計で競うものなので平均は添えない。
  *
  * ⚠️ 設計原則5
  *   集計対象は status=承認 の試合のみ。順位表・ランキングはシートに保存せず毎回導出する。
@@ -580,9 +584,29 @@ function getRankings(token, payload) {
     });
   };
 
+  // チーム別の消化試合数。GK の1試合あたりセーブ数の分母に使う。
+  //
+  // 出場記録を持たないので「その選手が何試合出たか」は分からない。
+  // 代わりに所属チームの試合数で割る。控えGKも同じ分母になるが、
+  // 消化数の違うチーム同士を並べられるようにするのが狙い。
+  var teamMatches = {};
+  matches.forEach(function (m) {
+    var h = _str(m.home_team), a = _str(m.away_team);
+    teamMatches[h] = (teamMatches[h] || 0) + 1;
+    teamMatches[a] = (teamMatches[a] || 0) + 1;
+  });
+
   var goalRank = decorate(scorers, "goals");
   var assistRank = decorate(assists, "assists");
   var saveRank = decorate(gkSaves, "saves");
+
+  // 平均を出すのは GK のセーブ数だけ。
+  // 得点とアシストは累計で競うものなので平均は添えない
+  saveRank.forEach(function (r) {
+    var n = teamMatches[r.team_id] || 0;
+    r.team_matches = n;
+    r.saves_avg = n > 0 ? Math.round((r.saves / n) * 10) / 10 : 0;
+  });
 
   goalRank.sort(function (a, b) { return b.goals - a.goals; });
   assistRank.sort(function (a, b) { return b.assists - a.assists; });
@@ -622,6 +646,24 @@ function getRankings(token, payload) {
   });
   _assignSimpleRank(rateRank, "rate");
 
+  // 1試合あたりのセーブ数。累計とは別の並びになるので独立した表にする。
+  // 試合数の少ないチームの GK が埋もれないようにするため
+  var saveAvgRank = saveRank
+    .filter(function (r) { return r.team_matches > 0; })
+    .map(function (r) {
+      return {
+        player_id: r.player_id, name: r.name, position: r.position,
+        team_id: r.team_id, team_name: r.team_name,
+        saves: r.saves, team_matches: r.team_matches, saves_avg: r.saves_avg,
+      };
+    });
+
+  saveAvgRank.sort(function (a, b) {
+    if (b.saves_avg !== a.saves_avg) return b.saves_avg - a.saves_avg;
+    return b.saves - a.saves;
+  });
+  _assignSimpleRank(saveAvgRank, "saves_avg");
+
   return {
     ok: true,
     data: {
@@ -632,7 +674,143 @@ function getRankings(token, payload) {
       goals:       goalRank,
       assists:     assistRank,
       saves:       saveRank,
+      saves_avg:   saveAvgRank,
       save_rate:   rateRank,
+    },
+  };
+}
+
+// =============================================================================
+// チームスタッツ
+// =============================================================================
+
+/**
+ * チーム別の試合スタッツを、合計と1試合あたりの平均で返す。
+ *
+ * 何のための機能か
+ *   順位表は勝敗しか映さない。「勝てていないが押し込んではいる」
+ *   のような内容の差は、支配率やシュート数を並べて初めて見える。
+ *
+ * **試合数が違うチームが混ざる。** 消化数がずれている途中経過では
+ * 合計だけを並べても比べられないので、平均を併記する。
+ * 支配率とパス成功率は割合なので平均しか出さない。
+ *
+ * payload: { season_id: string, competition?: string }
+ *
+ * @param {string} token
+ * @param {Object} payload
+ * @returns {{ ok: boolean, data?: Object, error?: string }}
+ */
+function getTeamStats(token, payload) {
+  if (token !== PUBLIC_ACCESS) {
+    var auth = _requireUser(token);
+    if (!auth.ok) return auth;
+  }
+
+  var seasonId = _str(payload.season_id);
+  if (!seasonId) return { ok: false, error: "season_id は必須です。" };
+
+  var competition = _str(payload.competition);
+  var matches = _matchesOfCompetition(seasonId, competition);
+
+  var approvedIds = {};
+  matches.forEach(function (m) { approvedIds[_str(m.match_id)] = true; });
+
+  var teamNames = _teamNameMap();
+  var acc = {};
+
+  var touch = function (teamId) {
+    if (!acc[teamId]) {
+      acc[teamId] = {
+        team_id: teamId,
+        team_name: teamNames[teamId] || teamId,
+        matches: 0, possession_sum: 0,
+        shots: 0, shots_on_target: 0,
+        passes: 0, passes_success: 0, crosses: 0,
+        goals_for: 0, goals_against: 0,
+      };
+    }
+    return acc[teamId];
+  };
+
+  // 得点は Matches から取る。スタッツ未入力の試合でも試合数に数えたいので、
+  // 先に対戦カードを回してから統計を足し込む
+  matches.forEach(function (m) {
+    var home = _str(m.home_team);
+    var away = _str(m.away_team);
+    var hs = _num(m.home_score);
+    var as = _num(m.away_score);
+
+    var h = touch(home);
+    var a = touch(away);
+    h.matches++; a.matches++;
+    h.goals_for += hs; h.goals_against += as;
+    a.goals_for += as; a.goals_against += hs;
+  });
+
+  getSheetData("MatchTeamStats").forEach(function (s) {
+    if (!approvedIds[_str(s.match_id)]) return;
+    var e = acc[_str(s.team_id)];
+    if (!e) return;
+
+    e.possession_sum  += _num(s.possession);
+    e.shots           += _num(s.shots);
+    e.shots_on_target += _num(s.shots_on_target);
+    e.passes          += _num(s.passes);
+    e.passes_success  += _num(s.passes_success);
+    e.crosses         += _num(s.crosses);
+  });
+
+  var round1 = function (n) { return Math.round(n * 10) / 10; };
+  var pct = function (num, den) {
+    return den > 0 ? Math.round((num / den) * 1000) / 10 : 0;
+  };
+
+  var rows = Object.keys(acc).map(function (tid) {
+    var e = acc[tid];
+    var n = e.matches || 1;
+
+    return {
+      team_id:   e.team_id,
+      team_name: e.team_name,
+      matches:   e.matches,
+
+      goals_for:     e.goals_for,
+      goals_against: e.goals_against,
+
+      possession:      round1(e.possession_sum / n),
+      shots:           e.shots,
+      shots_on_target: e.shots_on_target,
+      passes:          e.passes,
+      passes_success:  e.passes_success,
+      crosses:         e.crosses,
+
+      shots_avg:           round1(e.shots / n),
+      shots_on_target_avg: round1(e.shots_on_target / n),
+      passes_avg:          round1(e.passes / n),
+      passes_success_avg:  round1(e.passes_success / n),
+      crosses_avg:         round1(e.crosses / n),
+      goals_for_avg:       round1(e.goals_for / n),
+      goals_against_avg:   round1(e.goals_against / n),
+
+      // 割合は合計を出しても意味を持たない
+      pass_rate:     pct(e.passes_success, e.passes),
+      shot_accuracy: pct(e.shots_on_target, e.shots),
+    };
+  });
+
+  rows.sort(function (a, b) {
+    if (b.possession !== a.possession) return b.possession - a.possession;
+    return b.shots - a.shots;
+  });
+
+  return {
+    ok: true,
+    data: {
+      season_id:   seasonId,
+      competition: competition || "",
+      match_count: matches.length,
+      teams:       rows,
     },
   };
 }
