@@ -300,6 +300,179 @@ function _squadWarnings(count) {
 }
 
 // =============================================================================
+// 試合結果の取り込み
+// =============================================================================
+
+/**
+ * 過去シーズンの試合結果を一括で取り込む。主催者専用。
+ *
+ * 何のための機能か
+ *   ツールを使う前のシーズンには、順位表の元になる試合が1件も無い。
+ *   順位表は試合から毎回導出する作りなので（設計原則5）、
+ *   表の数字だけを保存する逃げ道は作らず、試合そのものを入れる。
+ *
+ * 通常の申請（submitMatchResult）と分けている理由:
+ *   - 得点者の合計とスコアの一致を求めない。
+ *     移行元に得点者の記録が無くても順位表は作れる
+ *   - シーズンの状態を問わない。終了したシーズンにも入れられる
+ *   - チームを**名前で**指定できる。対戦表をそのまま流し込める
+ *
+ * 注意 これは移行用。シーズンが動き出したら通常の申請・承認を使う。
+ *
+ * payload: {
+ *   season_id, stage?, replace?,
+ *   matches: [{ round, home, away, home_score, away_score, home_pk?, away_pk? }]
+ * }
+ *
+ * @param {string} token
+ * @param {Object} payload
+ * @returns {{ ok: boolean, data?: Object, error?: string }}
+ */
+function importMatches(token, payload) {
+  var auth = _requireOrganizer(token);
+  if (!auth.ok) return auth;
+
+  var seasonId = _str(payload.season_id);
+  var stage = _str(payload.stage) || STAGE_LEAGUE;
+  var list = payload.matches || [];
+
+  if (!seasonId) return { ok: false, error: "season_id は必須です。" };
+  if (list.length === 0) return { ok: false, error: "試合が1件も指定されていません。" };
+  if (MATCH_STAGES.indexOf(stage) === -1) {
+    return { ok: false, error: "stage が不正です: " + stage };
+  }
+  if (!findRow("Seasons", "season_id", seasonId)) {
+    return { ok: false, error: "シーズンが見つかりません。" };
+  }
+
+  // チーム名から ID を引けるようにする。対戦表はチーム名で書かれている
+  var idByName = {};
+  getSheetData("Teams").forEach(function (t) {
+    var name = _str(t.name);
+    if (name) idByName[name] = _str(t.team_id);
+  });
+
+  // 先に全件を検証する。1件でも駄目なら何も書かない
+  var parsed = [];
+  for (var i = 0; i < list.length; i++) {
+    var row = _parseImportMatch(list[i], i, idByName);
+    if (row.error) return { ok: false, error: row.error };
+    parsed.push(row);
+  }
+
+  return withLock(function () {
+    var at = now();
+    var removed = 0;
+
+    if (_toBool(payload.replace)) {
+      removed = _deleteMatchesOf(seasonId, stage);
+    }
+
+    var rows = parsed.map(function (m) {
+      return {
+        match_id:    generateId("m_"),
+        season_id:   seasonId,
+        stage:       stage,
+        round:       m.round,
+        tie_id:      "",
+        leg:         "",
+        home_team:   m.home,
+        away_team:   m.away,
+        home_score:  m.hs,
+        away_score:  m.as,
+        home_pk:     m.hpk,
+        away_pk:     m.apk,
+        status:      MATCH_APPROVED,
+        reported_by: _str(auth.data.user_id),
+        created_at:  at,
+      };
+    });
+
+    _appendRowsBatch("Matches", rows);
+
+    return {
+      ok: true,
+      data: {
+        season_id: seasonId,
+        stage:     stage,
+        added:     rows.length,
+        removed:   removed,
+      },
+    };
+  });
+}
+
+/**
+ * 取り込む試合1件を検証して整える。
+ *
+ * @param {Object} raw
+ * @param {number} index 0起点
+ * @param {Object} idByName チーム名 → team_id
+ * @returns {Object} error があれば失敗
+ */
+function _parseImportMatch(raw, index, idByName) {
+  var no = (index + 1) + "件目";
+
+  var homeName = _str(raw.home);
+  var awayName = _str(raw.away);
+  if (!homeName || !awayName) return { error: no + ": チーム名が空です。" };
+
+  var home = idByName[homeName];
+  var away = idByName[awayName];
+  if (!home) return { error: no + ": チームが見つかりません: " + homeName };
+  if (!away) return { error: no + ": チームが見つかりません: " + awayName };
+  if (home === away) return { error: no + ": 同じチーム同士の対戦になっています: " + homeName };
+
+  var hs = Math.floor(_num(raw.home_score));
+  var as = Math.floor(_num(raw.away_score));
+  if (hs < 0 || as < 0) return { error: no + ": スコアに負の数は入力できません。" };
+
+  return {
+    round: _str(raw.round),
+    home:  home,
+    away:  away,
+    hs:    hs,
+    as:    as,
+    hpk:   _str(raw.home_pk) === "" ? "" : Math.floor(_num(raw.home_pk)),
+    apk:   _str(raw.away_pk) === "" ? "" : Math.floor(_num(raw.away_pk)),
+  };
+}
+
+/**
+ * そのシーズン・その大会の試合を、子テーブルごと削除する。
+ *
+ * 取り込みをやり直せるようにするためのもの。
+ * 通常運用では使わない（試合は訂正で直す）。
+ *
+ * @param {string} seasonId
+ * @param {string} stage
+ * @returns {number} 消した試合数
+ */
+function _deleteMatchesOf(seasonId, stage) {
+  var ids = [];
+  getSheetData("Matches").forEach(function (m) {
+    if (_str(m.season_id) !== seasonId) return;
+    if (_str(m.stage) !== stage) return;
+    ids.push(_str(m.match_id));
+  });
+
+  if (ids.length === 0) return 0;
+
+  ids.forEach(function (id) { _deleteMatchChildren(id); });
+
+  var sheet = getSheet("Matches");
+  var values = sheet.getDataRange().getValues();
+  var iId = values[0].indexOf("match_id");
+
+  // 後ろから消す。前から消すと行がずれる
+  for (var i = values.length - 1; i >= 1; i--) {
+    if (ids.indexOf(String(values[i][iId])) !== -1) sheet.deleteRow(i + 1);
+  }
+
+  return ids.length;
+}
+
+// =============================================================================
 // 予算の調整
 // =============================================================================
 

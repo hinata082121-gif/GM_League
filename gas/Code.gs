@@ -230,6 +230,9 @@ function _route(action, token, payload) {
     case "importPlayersCsv":
       return importPlayersCsv(token, payload);
 
+    case "importMatches":
+      return importMatches(token, payload);
+
     case "syncPlayerProfiles":
       return syncPlayerProfiles(token, payload);
 
