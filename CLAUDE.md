@@ -186,6 +186,7 @@ config.js
 │   ├─ api_sponsor.gs  # スポンサー（契約金・ノルマ・罰則）
 │   ├─ api_import.gs   # 過去シーズンの取り込み（移行用）
 │   ├─ api_search.gs   # エントリー外選手・選手検索（読み取り専用）
+│   ├─ api_archive.gs  # 終了したシーズンの振り返り（読み取り専用）
 │   ├─ api_ui.gs       # 参加者に見せるタブの判定
 │   └─ seed.gs         # テストデータ投入/削除（手動実行）
 ├─ tests/            # Node の vm で .gs を読み込む単体テスト（`node tests/run.js`）

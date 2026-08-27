@@ -80,7 +80,7 @@ function createEnv(sheets, config) {
    'api_protection.gs', 'api_match.gs', 'api_stats.gs', 'api_season.gs', 'api_division.gs',
    'api_signup.gs', 'api_public.gs', 'api_realtransfer.gs', 'api_claims.gs',
    'api_schedule.gs', 'api_manager.gs', 'api_sponsor.gs', 'api_import.gs',
-   'api_search.gs', 'api_ui.gs',
+   'api_search.gs', 'api_archive.gs', 'api_ui.gs',
    'seed.gs', 'Code.gs'].forEach(load);
 
   // トークン検証を差し替える（ネットワークを使わない）

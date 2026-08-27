@@ -253,8 +253,16 @@ J リーグ選手のみを使用する eFootball の私設大会を運営する�
 |---|---|---|
 | match_id | string | |
 | team_id | string | |
+| possession | number | ボール支配率（%）。両チームの合計は100 |
 | shots | number | シュート数 |
 | shots_on_target | number | 枠内シュート数 |
+| passes | number | パス数 |
+| passes_success | number | パス成功数 |
+| crosses | number | クロス数 |
+
+> **支配率の合計が100でなくても弾かない。** eFootball の表示は丸めで
+> 49/50 のようにずれることがある。入力どおりに残せないと写し取る意味が薄れるので、
+> 画面で注意書きを出すだけにする。
 
 ### 4.13 MatchGKStats
 | カラム | 型 | 説明 |
