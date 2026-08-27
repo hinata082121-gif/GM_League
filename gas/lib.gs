@@ -36,13 +36,43 @@ function getSpreadsheet() {
 }
 
 /**
- * シート名からシートオブジェクトを返す。
- * 存在しない場合は例外を投げる。
+ * 1リクエストのあいだ読み取り結果を持っておく入れ物。
+ *
+ * 同じシートを何度も読み直しているのが表示の遅さの主因だった。
+ * 1つの action で Players を5回、Rosters を4回読むような処理が普通にあり、
+ * そのたびに Sheets へ往復していた。
+ *
+ * GAS の実行は1リクエストで終わるので、この変数も毎回空から始まる。
+ * シーズンをまたいで古い値が残ることはない。
+ */
+var _sheetDataCache = {};
+
+/**
+ * シート名からシートオブジェクトを返す。存在しない場合は例外。
+ *
+ * **この関数を呼んだ時点で、そのシートの読み取りキャッシュを捨てる。**
+ * 書き込みは必ずここを通ってシートを取るので、
+ * 各所の setValues や deleteRow を個別に直さなくても
+ * 「書いた直後に読む」処理が古い値を掴まずに済む。
+ *
+ * 読み取りだけの用途で呼んだ場合はキャッシュが効かなくなるが、
+ * 取り違えて壊すよりは無駄に読むほうが安全。
  *
  * @param {string} name - シート名（例: "Users", "Transfers"）
  * @returns {GoogleAppsScript.Spreadsheet.Sheet}
  */
 function getSheet(name) {
+  delete _sheetDataCache[name];
+  return _sheetHandle(name);
+}
+
+/**
+ * シートオブジェクトをキャッシュに触れずに返す。読み取り専用の内部用。
+ *
+ * @param {string} name
+ * @returns {GoogleAppsScript.Spreadsheet.Sheet}
+ */
+function _sheetHandle(name) {
   var sheet = getSpreadsheet().getSheetByName(name);
   if (!sheet) {
     throw new Error("シートが見つかりません: " + name);
@@ -68,10 +98,19 @@ function getSheet(name) {
  *   var users = getSheetData("Users");
  */
 function getSheetData(sheetName) {
-  var sheet = getSheet(sheetName);
+  if (_sheetDataCache.hasOwnProperty(sheetName)) {
+    // 配列は複製して渡す。呼び出し側が sort などで並べ替えても
+    // 次に読む人へ影響しないようにするため
+    return _sheetDataCache[sheetName].slice();
+  }
+
+  var sheet = _sheetHandle(sheetName);
   var values = sheet.getDataRange().getValues();
 
-  if (values.length < 2) return []; // データ行なし
+  if (values.length < 2) {
+    _sheetDataCache[sheetName] = [];
+    return []; // データ行なし
+  }
 
   var headers = values[0]; // 1行目がヘッダー
   var rows = [];
@@ -88,7 +127,8 @@ function getSheetData(sheetName) {
     rows.push(obj);
   }
 
-  return rows;
+  _sheetDataCache[sheetName] = rows;
+  return rows.slice();
 }
 
 /**

@@ -681,8 +681,68 @@ function getMyTeam(token, payload) {
         : null,
       squad: squadRes.data,
       budget: budgetRes.data,
+      standing: _standingOf(seasonId, teamId),
     },
   };
+}
+
+/**
+ * そのシーズンの自チームのディビジョンと順位。
+ *
+ * ダッシュボードで真っ先に知りたいのは「今どのあたりにいるか」なので、
+ * 順位表を開かなくても分かるようにここへ含める。
+ * 別の呼び出しにすると画面表示のたびに往復が1回増える。
+ *
+ * @param {string} seasonId
+ * @param {string} teamId
+ * @returns {Object|null} 順位表がまだ無ければ rank は null
+ */
+function _standingOf(seasonId, teamId) {
+  if (!seasonId || !teamId) return null;
+
+  var division = "";
+  var twoDivision = false;
+
+  try {
+    var d = _divisionsOf(seasonId);
+    division = _divisionOf(d.map, teamId);
+    twoDivision = d.twoDivision;
+  } catch (e) {
+    return null;
+  }
+
+  var result = {
+    division:     division,
+    two_division: twoDivision,
+    // 一部制なら「GM1リーグ」ではなく単に順位として見せたい
+    division_label: twoDivision ? division + "リーグ" : "リーグ",
+    rank:   null,
+    total:  0,
+    points: 0,
+    played: 0,
+  };
+
+  try {
+    var res = getStandings(PUBLIC_ACCESS, { season_id: seasonId, division: division });
+    if (!res.ok || !res.data || !res.data.table) return result;
+
+    result.total = res.data.table.length;
+
+    for (var i = 0; i < res.data.table.length; i++) {
+      var row = res.data.table[i];
+      if (_str(row.team_id) !== teamId) continue;
+
+      result.rank   = row.rank;
+      result.points = row.points;
+      result.played = row.played;
+      result.tied   = !!row.tied;
+      break;
+    }
+  } catch (e) {
+    // 順位表がまだ作れない状態でもダッシュボードは出す
+  }
+
+  return result;
 }
 
 /**
@@ -1482,12 +1542,22 @@ function _seasonBalance(seasonId, teamId) {
   return sum;
 }
 
+/** シーズンが終わっていることを表す status */
+var SEASON_CLOSED = "終了";
+
 /**
- * 一番新しいシーズンの ID。Seasons の最終行を使う。
+ * いま進行しているシーズンの ID。
  *
  * シーズンを指定しない呼び出しの既定値にする。
  * 「どのシーズンか」を決めずにスカッドや順位を出すと、
  * 複数シーズンが混ざって意味の無い数字になる。
+ *
+ * **行の並び順では決めない。** 移行のときに Season15 を先に作り、
+ * あとから Season14 を足したので、最終行は終了済みの Season14 だった。
+ * その結果ダッシュボードが終了シーズンの予算（0円）を表示していた。
+ *
+ * 終了していないシーズンのうち、シートで最も後ろにあるものを採る。
+ * すべて終了しているなら最終行に戻す（過去だけを見ている状態）。
  *
  * @returns {string} シーズンが1つも無ければ空文字
  */
@@ -1498,5 +1568,10 @@ function _latestSeasonId() {
   } catch (e) {
     return "";
   }
-  return rows.length > 0 ? _str(rows[rows.length - 1].season_id) : "";
+  if (rows.length === 0) return "";
+
+  for (var i = rows.length - 1; i >= 0; i--) {
+    if (_str(rows[i].status) !== SEASON_CLOSED) return _str(rows[i].season_id);
+  }
+  return _str(rows[rows.length - 1].season_id);
 }

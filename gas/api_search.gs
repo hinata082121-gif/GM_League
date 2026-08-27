@@ -71,12 +71,23 @@ function getTeamRoster(token, payload) {
   var inEntry = {};
   squadRes.data.squad.forEach(function (s) { inEntry[s.player_id] = true; });
 
+  // エントリーに入れたあと移籍で出した選手。
+  //
+  // 在籍が離脱に変わるので、そのままだと「エントリー外選手」に紛れて
+  // 他チーム保有として出てしまう。**一度自分のエントリーに入れた選手**は
+  // 手放したあともエントリーリスト側に「移籍済」として残すほうが、
+  // そのシーズンに誰を使ったのかを追える。
+  var transferred = _transferredOut(seasonId, teamId, inEntry, teamNames);
+  var leftEntry = {};
+  transferred.forEach(function (t) { leftEntry[t.player_id] = true; });
+
   var outside = [];
   getSheetData("Players").forEach(function (p) {
     var pid = _str(p.player_id);
     if (!pid) return;
     if (_str(p.real_club) !== clubName) return;
     if (inEntry[pid]) return;
+    if (leftEntry[pid]) return;
 
     var holder = held[pid] || "";
 
@@ -109,12 +120,82 @@ function getTeamRoster(token, payload) {
       team_name:       clubName,
       season_id:       seasonId,
       entry:           squadRes.data,
+      transferred:     transferred,
       outside:         outside,
       outside_total:   outside.length,
       outside_free:    freeCount,
       outside_held:    outside.length - freeCount,
     },
   };
+}
+
+/**
+ * このシーズンに一度エントリーへ入れたあと、移籍で出した選手。
+ *
+ * 移籍が承認されると放出側の在籍行は離脱になり、獲得側に在籍行ができる。
+ * その差を見て「今は別のチームが持っている、元うちの選手」を拾う。
+ *
+ * 期限切れやチーム外移籍による離脱は拾わない。
+ * どこも保有していない離脱は移籍ではないため。
+ *
+ * @param {string} seasonId
+ * @param {string} teamId
+ * @param {Object} inEntry 現在の在籍。ここにいる選手は対象外
+ * @param {Object} teamNames
+ * @returns {Object[]}
+ */
+function _transferredOut(seasonId, teamId, inEntry, teamNames) {
+  var players = {};
+  getSheetData("Players").forEach(function (p) {
+    players[_str(p.player_id)] = p;
+  });
+
+  // 同じシーズンに他チームが在籍で持っている選手
+  var heldByOther = {};
+  getSheetData("Rosters").forEach(function (r) {
+    if (_str(r.season_id) !== seasonId) return;
+    if (_str(r.status) !== ROSTER_ACTIVE) return;
+    var tid = _str(r.team_id);
+    if (tid === teamId) return;
+    heldByOther[_str(r.player_id)] = tid;
+  });
+
+  var seen = {};
+  var out = [];
+
+  getSheetData("Rosters").forEach(function (r) {
+    if (_str(r.season_id) !== seasonId) return;
+    if (_str(r.team_id) !== teamId) return;
+    if (_str(r.status) === ROSTER_ACTIVE) return;
+
+    var pid = _str(r.player_id);
+    if (!pid || inEntry[pid] || seen[pid]) return;
+
+    var holder = heldByOther[pid];
+    if (!holder) return;
+
+    seen[pid] = true;
+    var p = players[pid] || {};
+
+    out.push({
+      player_id:        pid,
+      name:             _str(p.name),
+      position:         _str(p.position),
+      detail_position:  _str(p.detail_position),
+      age:              _num(p.age),
+      nationality:      _normalizeNationality(p.nationality),
+      foreign:          _isForeign(p.nationality),
+      real_club:        _str(p.real_club),
+      eligible:         _toBool(p.eligible),
+      acquisition_type: _str(r.acquisition_type),
+      acquired_cost:    _num(r.acquired_cost),
+      moved_to:         holder,
+      moved_to_name:    teamNames[holder] || holder,
+    });
+  });
+
+  out.sort(_comparePlayers);
+  return out;
 }
 
 /**

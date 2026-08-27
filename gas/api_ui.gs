@@ -43,13 +43,9 @@ function getUiState(token, payload) {
   var seasonId = _str(payload.season_id);
   var isOrganizer = _str(user.role) === "organizer";
 
-  // シーズンが指定されていなければ一番下の行（最新）を使う
-  if (!seasonId) {
-    var seasons = getSheetData("Seasons").filter(function (s) {
-      return _str(s.season_id);
-    });
-    if (seasons.length > 0) seasonId = _str(seasons[seasons.length - 1].season_id);
-  }
+  // 指定が無ければ進行中のシーズンを使う。
+  // 行の並びで決めると、あとから足した終了済みシーズンが選ばれてしまう
+  if (!seasonId) seasonId = _latestSeasonId();
 
   var season = seasonId ? findRow("Seasons", "season_id", seasonId) : null;
   var at = now();
