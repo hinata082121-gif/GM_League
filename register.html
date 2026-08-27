@@ -406,8 +406,12 @@ function renderClubSelect(selected) {
     '<option value="">クラブを選択</option>' +
     list
       .map((c) => {
-        // 自分が既に申請しているクラブは taken にならないので選べる
-        const label = c.taken ? c.club_name + '（' + c.taken_reason + '）' : c.club_name;
+        // 自分が既に申請しているクラブは taken にならないので選べる。
+        // continuing は前シーズンから続くチーム。オーナーがまだ決まっていないので選べる
+        let label = c.club_name;
+        if (c.taken) label += '（' + c.taken_reason + '）';
+        else if (c.continuing) label += '（継続チーム）';
+
         return '<option value="' + esc(c.club_name) + '"' +
           (c.taken ? ' disabled' : '') +
           (c.club_name === selected ? ' selected' : '') +

@@ -122,10 +122,30 @@ function _signupClubOptions(selfEmail) {
   allowedList.forEach(function (c) { allowedCategory[c] = true; });
 
   // 使用済み: Teams に登録済み
+  //
+  // ただし**オーナーがいないチームは塞がない**。
+  // 継続参加のチームは主催者が先にスカッドと予算を入れておくので、
+  // 本人が申請する時点で Teams には既に行がある。
+  // そこで塞いでしまうと、継続参加者が自分のクラブを選べなくなる。
+  //
+  // オーナーが決まって初めて「その人のもの」になる。
+  // 承認時に既存のチームへ結び付ける（approveSignup）。
+  //
+  // 判定は owner_user_id が空かどうかだけで行う。
+  // 参照先のユーザーが実在するかまでは見ない。値が入っている時点で
+  // 誰かのものにする意図があったとみなすほうが、取り違えより安全。
   var takenBy = {};
+  var claimable = {};
+
   getSheetData("Teams").forEach(function (t) {
     var name = _str(t.name);
-    if (name) takenBy[name] = "登録済み";
+    if (!name) return;
+
+    if (_str(t.owner_user_id)) {
+      takenBy[name] = "登録済み";
+    } else {
+      claimable[name] = true;
+    }
   });
 
   // 使用済み: 他の人が申請中
@@ -164,7 +184,13 @@ function _signupClubOptions(selfEmail) {
     }
     var taken = takenBy[r.club_name] || "";
     if (!taken) available++;
-    grouped[r.category].push({ club_name: r.club_name, taken: !!taken, taken_reason: taken });
+    grouped[r.category].push({
+      club_name:    r.club_name,
+      taken:        !!taken,
+      taken_reason: taken,
+      // 継続参加のチーム。選べるが、承認すると既存のスカッドと予算を引き継ぐ
+      continuing:   !taken && !!claimable[r.club_name],
+    });
   });
 
   return {
@@ -502,16 +528,35 @@ function approveSignup(token, payload) {
     if (clubError) return { ok: false, error: clubError };
 
     var userId = generateId("u_");
-    var teamId = generateId("t_");
     var at = now();
 
-    appendRow("Teams", {
-      team_id:       teamId,
-      name:          teamName,
-      owner_user_id: userId,
-      kind:          "新規",
-      active:        true,
-    });
+    // 同じ名前のチームが既にあれば、新しく作らずそこへ結び付ける。
+    //
+    // 継続参加のチームは主催者が先にスカッドと予算を入れてある。
+    // 新規に作り直すと、その積み上げが宙に浮いて空のチームが割り当たる。
+    var existing = _unclaimedTeam(teamName);
+    var teamId;
+    var continuing = false;
+
+    if (existing) {
+      teamId = _str(existing.team_id);
+      continuing = true;
+
+      updateRow("Teams", "team_id", teamId, {
+        owner_user_id: userId,
+        kind:          "継続",
+        active:        true,
+      });
+    } else {
+      teamId = generateId("t_");
+      appendRow("Teams", {
+        team_id:       teamId,
+        name:          teamName,
+        owner_user_id: userId,
+        kind:          "新規",
+        active:        true,
+      });
+    }
 
     appendRow("Users", {
       user_id:      userId,
@@ -532,9 +577,35 @@ function approveSignup(token, payload) {
 
     return {
       ok: true,
-      data: { signup_id: signupId, user_id: userId, team_id: teamId, team_name: teamName },
+      data: {
+        signup_id:  signupId,
+        user_id:    userId,
+        team_id:    teamId,
+        team_name:  teamName,
+        continuing: continuing,
+      },
     };
   });
+}
+
+/**
+ * 同じ名前で、まだオーナーがいないチームを探す。
+ *
+ * 継続参加のチームは主催者が先に作ってあり、オーナーだけが空いている。
+ * 承認のときにここへ結び付けると、スカッドと予算をそのまま引き継げる。
+ *
+ * 判定は owner_user_id が空かどうかだけ。_signupClubOptions と揃える。
+ *
+ * @param {string} teamName
+ * @returns {Object|null}
+ */
+function _unclaimedTeam(teamName) {
+  var rows = getSheetData("Teams");
+  for (var i = 0; i < rows.length; i++) {
+    if (_str(rows[i].name) !== teamName) continue;
+    if (!_str(rows[i].owner_user_id)) return rows[i];
+  }
+  return null;
 }
 
 /**
