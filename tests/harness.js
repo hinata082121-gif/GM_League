@@ -93,11 +93,23 @@ function createEnv(sheets, config) {
     getConfigNum = function (key, def) { var v = getConfig(key, def); return Number(v) || 0; };
   `, ctx);
 
+  // テストのヘルパはシートを直接書き換える。
+  // 本番の書き込みは必ず getSheet() を通って読み取りキャッシュを捨てるので、
+  // ヘルパも同じように捨てないと古い値を読んでしまう。
+  const drop = (sheet) => {
+    try { vm.runInContext('delete _sheetDataCache[' + JSON.stringify(sheet) + '];', ctx); }
+    catch (e) { /* lib.gs 未読み込みの環境では何もしない */ }
+  };
+
   ctx.__addRow = (sheet, obj) => {
     const s = store[sheet];
     s.values.push(s.values[0].map((h) => (obj[h] !== undefined ? obj[h] : '')));
+    drop(sheet);
   };
-  ctx.__rows = (sheet) => store[sheet].values;
+
+  // 中身の配列をそのまま渡すので、呼び出し側が書き換える可能性がある
+  ctx.__rows = (sheet) => { drop(sheet); return store[sheet].values; };
+  ctx.__dropCache = drop;
 
   return ctx;
 }

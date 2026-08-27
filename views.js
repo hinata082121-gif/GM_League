@@ -102,10 +102,16 @@ async function initViews(user) {
   bindTabs();
   bindMasterForms();
 
-  // チーム・シーズンは各画面で使い回すので先に取得しておく
-  await Promise.all([loadTeams(), loadSeasons()]);
-
-  await applyTabVisibility();
+  // GAS は1往復ごとに1〜2秒かかる。順番に投げると待ち時間がそのまま積み上がるので、
+  // 依存していないものは束ねて同時に投げる。
+  //
+  // getUiState はシーズンを GAS 側で決めるようにしたので、
+  // チーム・シーズンの取得を待つ必要がなくなった。
+  await Promise.all([
+    loadTeams(),
+    loadSeasons(),
+    applyTabVisibility(),
+  ]);
 
   showTab('dashboard');
 }
@@ -122,11 +128,9 @@ async function initViews(user) {
  *   タブを隠しても API は叩けるので、期間の検証は各 action 側で行っている。
  */
 async function applyTabVisibility() {
-  const seasonId = (cache.seasons && cache.seasons.length)
-    ? cache.seasons[cache.seasons.length - 1].season_id
-    : '';
-
-  const res = await callApi('getUiState', { season_id: seasonId });
+  // シーズンは GAS 側が進行中のものを選ぶ。ここで渡さないことで、
+  // チーム・シーズンの取得を待たずに並行して投げられる
+  const res = await callApi('getUiState', {});
 
   // 取得に失敗したときは何も隠さない。
   // 通信の不調でタブが消えると「機能が無くなった」と誤解されるため
@@ -360,6 +364,23 @@ async function loadSeasons(force) {
 }
 
 /**
+ * 進行中のシーズンだけを返す。
+ *
+ * 終了したシーズンへ申請したり日程を触ったりできてしまうと、
+ * 確定した記録を後から動かせることになる。
+ * 終わったシーズンは「過去シーズン」タブでのみ見る。
+ *
+ * すべて終了している場合だけ全件に戻す。選択肢が空の画面を出さないため。
+ *
+ * @returns {Promise<Object[]>}
+ */
+async function loadActiveSeasons(force) {
+  const all = await loadSeasons(force);
+  const open = all.filter((s) => s.status !== '終了');
+  return open.length > 0 ? open : all;
+}
+
+/**
  * 選手一覧を取得してキャッシュする。
  * @returns {Promise<Object[]>}
  */
@@ -436,8 +457,18 @@ async function renderDashboard() {
     return;
   }
 
-  const { team, squad, budget } = res.data;
+  const { team, squad, budget, standing } = res.data;
   const c = squad.position_counts;
+
+  // 順位はリーグ戦が始まるまで出ない。始まっていなければ枠ごと出さず、
+  // 「—」を並べて意味の無い数字に見せないようにする
+  const rankCell = standing
+    ? (standing.rank
+        ? '<span class="stat-value">' + standing.rank + ' 位' +
+          (standing.tied ? '<span class="tag-none">同</span>' : '') + '</span>' +
+          '<span class="stat-value stat-sm">' + standing.played + '試合 ' + standing.points + '点</span>'
+        : '<span class="stat-value stat-sm">リーグ戦の記録がまだありません</span>')
+    : '';
 
   box.innerHTML = `
     <div class="stat-grid">
@@ -445,6 +476,15 @@ async function renderDashboard() {
         <span class="stat-label">チーム</span>
         <span class="stat-value">${esc(team.name)}</span>
       </div>
+      ${standing ? `
+      <div class="stat">
+        <span class="stat-label">ディビジョン</span>
+        <span class="stat-value">${esc(standing.two_division ? standing.division : '一部制')}</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">${esc(standing.division_label)}順位</span>
+        ${rankCell}
+      </div>` : ''}
       <div class="stat">
         <span class="stat-label">現保有予算</span>
         <span class="stat-value">${esc(formatMoney(budget.balance))}</span>
@@ -596,7 +636,7 @@ async function onSaveProfile() {
  */
 async function renderTeamViewer() {
   const teams = await loadTeams();
-  const seasons = await loadSeasons();
+  const seasons = await loadActiveSeasons();
 
   fillSelect('tv-team', teams, 'team_id', 'name', 'チームを選択');
   fillSelect('tv-season', seasons, 'season_id', 'name', '全シーズン');
@@ -690,7 +730,7 @@ async function loadTeamDetail() {
     <h3 class="sub-head">選手リスト</h3>
     <div class="seg-tabs" id="tv-list-tabs">
       <button class="seg-btn is-active" data-list="entry">
-        エントリーリスト <span class="seg-count">${squad.total}</span>
+        エントリーリスト <span class="seg-count">${squad.total + (teamRosterData.transferred || []).length}</span>
       </button>
       <button class="seg-btn" data-list="outside">
         エントリー外選手 <span class="seg-count">${teamRosterData.outside_total}</span>
@@ -698,6 +738,7 @@ async function loadTeamDetail() {
     </div>
     <div id="tv-list"></div>
   `;
+
 
   document.querySelectorAll('#tv-list-tabs .seg-btn').forEach((btn) => {
     btn.onclick = () => showTeamList(btn.dataset.list);
@@ -726,7 +767,8 @@ function showTeamList(which) {
   if (!box) return;
 
   if (which === 'entry') {
-    box.innerHTML = renderSquadTable(d.entry.squad);
+    // 移籍で出した選手もここに残す。そのシーズンに誰を使ったのかを追えるようにする
+    box.innerHTML = renderSquadTable(d.entry.squad, d.transferred);
     return;
   }
 
@@ -789,7 +831,7 @@ function renderOutsideTable(rows) {
  * 参加していないクラブは1件も引っかからないため。
  */
 async function renderPlayerSearch() {
-  const [teams, seasons] = await Promise.all([loadTeams(), loadSeasons()]);
+  const [teams, seasons] = await Promise.all([loadTeams(), loadActiveSeasons()]);
 
   const clubs = teams
     .filter((t) => t.active)
@@ -1149,23 +1191,26 @@ function renderArchiveTeams(teams) {
  * @param {Object[]} squad
  * @returns {string}
  */
-function renderSquadTable(squad) {
-  if (!squad || squad.length === 0) {
+function renderSquadTable(squad, transferred) {
+  const moved = transferred || [];
+
+  if ((!squad || squad.length === 0) && moved.length === 0) {
     return '<p class="muted">在籍選手がいません。</p>';
   }
 
-  const rows = squad
-    .map(
-      (p) => `
-      <tr>
+  const line = (p, out) => `
+      <tr${out ? ' class="row-left"' : ''}>
         <td>${posBadge(p)}</td>
-        <td>${esc(p.name)}${playerMeta(p)}${p.eligible ? '' : ' <span class="tag-ng">対象外</span>'}</td>
+        <td>${esc(p.name)}${playerMeta(p)}${p.eligible ? '' : ' <span class="tag-ng">対象外</span>'}
+          ${out ? '<span class="tag-ng">移籍済 → ' + esc(p.moved_to_name) + '</span>' : ''}</td>
         <td class="muted">${esc(p.real_club)}</td>
         <td>${esc(p.acquisition_type)}</td>
         <td class="num">${esc(formatMoney(p.acquired_cost))}</td>
-      </tr>`
-    )
-    .join('');
+      </tr>`;
+
+  const rows =
+    (squad || []).map((p) => line(p, false)).join('') +
+    moved.map((p) => line(p, true)).join('');
 
   return `
     <div class="table-wrap">
@@ -1541,7 +1586,7 @@ let entryData = null;
  * 主催者はチームを選べる（代理提出）。team ロールは自チーム固定。
  */
 async function renderEntry() {
-  const seasons = await loadSeasons();
+  const seasons = await loadActiveSeasons();
   fillSelect('en-season', seasons, 'season_id', 'name');
 
   const seasonSel = document.getElementById('en-season');
@@ -1809,7 +1854,7 @@ async function onSubmitEntry() {
 async function renderApproval() {
   if (currentUser.role !== 'organizer') return;
 
-  const seasons = await loadSeasons();
+  const seasons = await loadActiveSeasons();
   fillSelect('ap-season', seasons, 'season_id', 'name');
 
   const sel = document.getElementById('ap-season');
@@ -1977,7 +2022,7 @@ let transferData = null;
  * 移籍画面のシーズン／チーム選択を用意する。
  */
 async function renderTransfer() {
-  const seasons = await loadSeasons();
+  const seasons = await loadActiveSeasons();
   fillSelect('tr-season', seasons, 'season_id', 'name');
 
   const seasonSel = document.getElementById('tr-season');
@@ -2378,7 +2423,7 @@ async function onRespondTransfer(transferId, agree) {
 async function renderTxApproval() {
   if (currentUser.role !== 'organizer') return;
 
-  const seasons = await loadSeasons();
+  const seasons = await loadActiveSeasons();
   fillSelect('ta-season', seasons, 'season_id', 'name');
   fillSelect('au-team', await loadTeams(), 'team_id', 'name', 'チームを選択');
 
@@ -2579,7 +2624,7 @@ let protectData = null;
  * プロテクト画面のシーズン／チーム選択を用意する。
  */
 async function renderProtect() {
-  const seasons = await loadSeasons();
+  const seasons = await loadActiveSeasons();
   fillSelect('pr-season', seasons, 'season_id', 'name');
 
   const seasonSel = document.getElementById('pr-season');
@@ -2880,7 +2925,7 @@ let gkRowSeq = 0;
  * 試合画面を初期化する。
  */
 async function renderMatch() {
-  const seasons = await loadSeasons();
+  const seasons = await loadActiveSeasons();
   fillSelect('mt-season', seasons, 'season_id', 'name');
 
   const teams = await loadTeams();
@@ -3528,7 +3573,7 @@ async function onMatchAction(action, matchId, label) {
  * 集計画面を初期化する。
  */
 async function renderStats() {
-  const seasons = await loadSeasons();
+  const seasons = await loadActiveSeasons();
   fillSelect('st-season', seasons, 'season_id', 'name');
 
   const seasonSel = document.getElementById('st-season');
@@ -3976,7 +4021,7 @@ async function loadSeasonAdmin() {
   renderSeasonStatusBox();
 
   // 引継ぎ先は自分以外のシーズン
-  const seasons = (await loadSeasons()).filter((s) => s.season_id !== seasonId);
+  const seasons = (await loadActiveSeasons()).filter((s) => s.season_id !== seasonId);
   fillSelect('sp-next', seasons, 'season_id', 'name', '引継ぎしない');
 
   renderSponsorInputs(await loadTeams());
@@ -4059,7 +4104,7 @@ async function onCreateSeason() {
  */
 async function loadMarketWindows() {
   const seasonId = document.getElementById('sp-season').value;
-  const season = (await loadSeasons()).find((s) => s.season_id === seasonId);
+  const season = (await loadActiveSeasons()).find((s) => s.season_id === seasonId);
   if (!season) return;
 
   const btn = document.getElementById('mw-save');
@@ -4137,7 +4182,7 @@ function renderMarketDerived() {
  */
 async function onSaveMarketWindows() {
   const seasonId = document.getElementById('sp-season').value;
-  const season = (await loadSeasons()).find((s) => s.season_id === seasonId);
+  const season = (await loadActiveSeasons()).find((s) => s.season_id === seasonId);
   if (!season) return;
 
   const btn = document.getElementById('mw-save');
@@ -5276,7 +5321,7 @@ let myClaimData = null;
  * 補填の選択画面を初期化する。
  */
 async function renderClaims() {
-  const seasons = await loadSeasons();
+  const seasons = await loadActiveSeasons();
   fillSelect('cl-season', seasons, 'season_id', 'name');
 
   const sel = document.getElementById('cl-season');
@@ -5586,7 +5631,7 @@ async function loadClaimAdmin() {
  */
 async function onSaveClaimDeadline() {
   const seasonId = document.getElementById('sp-season').value;
-  const seasons = await loadSeasons();
+  const seasons = await loadActiveSeasons();
   const season = seasons.find((s) => s.season_id === seasonId);
   if (!season) return;
 
@@ -5833,7 +5878,7 @@ async function onSubmitWithdraw() {
  * 日程タブを初期化する。
  */
 async function renderSchedule() {
-  const seasons = await loadSeasons();
+  const seasons = await loadActiveSeasons();
   fillSelect('sd-season', seasons, 'season_id', 'name');
 
   const sel = document.getElementById('sd-season');
@@ -6329,7 +6374,7 @@ let managerData = null;
  * 使用監督タブを初期化する。
  */
 async function renderManager() {
-  const seasons = await loadSeasons();
+  const seasons = await loadActiveSeasons();
   fillSelect('mg-season', seasons, 'season_id', 'name');
 
   const wrap = document.getElementById('mg-team-wrap');
@@ -6843,7 +6888,7 @@ let sponsorData = null;
  * スポンサータブを初期化する。
  */
 async function renderSponsor() {
-  const seasons = await loadSeasons();
+  const seasons = await loadActiveSeasons();
   fillSelect('sn-season', seasons, 'season_id', 'name');
 
   const wrap = document.getElementById('sn-team-wrap');
@@ -7041,7 +7086,7 @@ async function loadSponsorAdmin() {
   if (!seasonId) return;
 
   // 複製元の候補は自分以外のシーズン
-  const seasons = (await loadSeasons()).filter((s) => s.season_id !== seasonId);
+  const seasons = (await loadActiveSeasons()).filter((s) => s.season_id !== seasonId);
   fillSelect('sa-copy-from', seasons, 'season_id', 'name', '複製元を選択');
 
   setLoading('sa-list');
@@ -7054,7 +7099,7 @@ async function loadSponsorAdmin() {
 
   const d = res.data;
   // 解放条件の「判定するシーズン」で前シーズンを選べるようにする
-  d.all_seasons = await loadSeasons();
+  d.all_seasons = await loadActiveSeasons();
   sponsorAdminData = d;
 
   document.getElementById('sa-open').checked = d.open;
