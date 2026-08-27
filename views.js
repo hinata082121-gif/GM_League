@@ -176,6 +176,7 @@ function showTab(name) {
   if (name === 'dashboard') renderDashboard();
   if (name === 'teams') renderTeamViewer();
   if (name === 'search') renderPlayerSearch();
+  if (name === 'archive') renderArchive();
   if (name === 'entry') renderEntry();
   if (name === 'transfer') renderTransfer();
   if (name === 'protect') renderProtect();
@@ -908,6 +909,238 @@ function renderSearchResult(d) {
         <tbody>${rows}</tbody>
       </table>
     </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// 画面2c: 過去シーズン
+// ---------------------------------------------------------------------------
+
+/** 直近に取得したアーカイブ。表の切り替えで再取得しないために持つ */
+let archiveData = null;
+
+/**
+ * 過去シーズン画面の初期化。終了したシーズンだけを選ばせる。
+ */
+async function renderArchive() {
+  const res = await callApi('listArchivedSeasons', {});
+  const box = document.getElementById('ar-body');
+
+  if (!res.ok) {
+    setError('ar-body', '取得に失敗しました: ' + res.error);
+    return;
+  }
+  if (res.data.length === 0) {
+    document.getElementById('ar-season').innerHTML = '';
+    box.innerHTML = '<p class="muted">終了したシーズンがまだありません。</p>';
+    return;
+  }
+
+  fillSelect('ar-season', res.data, 'season_id', 'name');
+
+  const sel = document.getElementById('ar-season');
+  if (!sel.dataset.bound) {
+    sel.onchange = loadArchive;
+    sel.dataset.bound = '1';
+  }
+
+  await loadArchive();
+}
+
+/**
+ * 選択中のシーズンの記録を取得して描画する。
+ *
+ * 順位表・ランキング・チームスタッツ・各チームの予算とスカッドを
+ * 1回の呼び出しでまとめて受け取る。
+ */
+async function loadArchive() {
+  const seasonId = document.getElementById('ar-season').value;
+  if (!seasonId) return;
+
+  setLoading('ar-body');
+  const res = await callApi('getSeasonArchive', { season_id: seasonId });
+
+  if (!res.ok) {
+    setError('ar-body', '取得に失敗しました: ' + res.error);
+    return;
+  }
+
+  archiveData = res.data;
+  const d = res.data;
+
+  document.getElementById('ar-body').innerHTML = `
+    <div class="seg-tabs" id="ar-tabs">
+      <button class="seg-btn is-active" data-view="standings">順位表</button>
+      <button class="seg-btn" data-view="rankings">個人成績</button>
+      <button class="seg-btn" data-view="teams">
+        チーム情報 <span class="seg-count">${d.teams.length}</span>
+      </button>
+    </div>
+    <div id="ar-view"></div>`;
+
+  document.querySelectorAll('#ar-tabs .seg-btn').forEach((b) => {
+    b.onclick = () => showArchiveView(b.dataset.view);
+  });
+  showArchiveView('standings');
+}
+
+/**
+ * アーカイブの表示を切り替える。
+ *
+ * @param {string} which - 'standings' | 'rankings' | 'teams'
+ */
+function showArchiveView(which) {
+  const d = archiveData;
+  if (!d) return;
+
+  document.querySelectorAll('#ar-tabs .seg-btn').forEach((el) => {
+    el.classList.toggle('is-active', el.dataset.view === which);
+  });
+
+  const box = document.getElementById('ar-view');
+
+  if (which === 'standings') {
+    box.innerHTML = renderArchiveStandings(d);
+    return;
+  }
+  if (which === 'rankings') {
+    box.innerHTML = renderArchiveRankings(d.rankings);
+    return;
+  }
+  box.innerHTML = renderArchiveTeams(d.teams);
+}
+
+/**
+ * アーカイブの順位表。
+ *
+ * @param {Object} d
+ * @returns {string}
+ */
+function renderArchiveStandings(d) {
+  const s = d.standings;
+  if (!s || !s.table || s.table.length === 0) {
+    return '<p class="muted">承認済みのリーグ戦がありませんでした。</p>';
+  }
+
+  const rows = s.table.map((r) => `
+    <tr${r.rank <= 2 ? ' class="rank-top"' : ''}>
+      <td class="num">${r.rank}${r.tied ? '<span class="tag-none">同</span>' : ''}</td>
+      <td>${esc(r.team_name)}</td>
+      <td class="num">${r.played}</td>
+      <td class="num">${r.won}</td>
+      <td class="num">${r.drawn}</td>
+      <td class="num">${r.lost}</td>
+      <td class="num">${r.gf}</td>
+      <td class="num">${r.ga}</td>
+      <td class="num">${r.gd >= 0 ? '+' : ''}${r.gd}</td>
+      <td class="num"><strong>${r.points}</strong></td>
+    </tr>`).join('');
+
+  return `
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr>
+          <th>順位</th><th>チーム</th><th class="num">試合</th>
+          <th class="num">勝</th><th class="num">分</th><th class="num">敗</th>
+          <th class="num">得点</th><th class="num">失点</th><th class="num">差</th>
+          <th class="num">勝点</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+/**
+ * アーカイブの個人成績。
+ *
+ * @param {Object} d getRankings の戻り
+ * @returns {string}
+ */
+function renderArchiveRankings(d) {
+  if (!d || d.match_count === 0) {
+    return '<p class="muted">承認済みの試合がありませんでした。</p>';
+  }
+
+  const table = (title, list, key, unit) => {
+    if (!list || list.length === 0) {
+      return '<div><h4 class="rank-title">' + esc(title) + '</h4><p class="muted">該当なし</p></div>';
+    }
+    const rows = list.slice(0, 20).map((r) => `
+      <tr>
+        <td class="num">${r.rank}${r.tied ? '<span class="tag-none">同</span>' : ''}</td>
+        <td><span class="pos pos-${esc(r.position)}">${esc(r.position)}</span> ${esc(r.name)}</td>
+        <td class="muted">${esc(r.team_name)}</td>
+        <td class="num"><strong>${esc(r[key])}</strong>${esc(unit)}</td>
+      </tr>`).join('');
+
+    return '<div><h4 class="rank-title">' + esc(title) + '</h4>' +
+      '<div class="table-wrap"><table class="data-table"><tbody>' + rows +
+      '</tbody></table></div></div>';
+  };
+
+  return `
+    <div class="rank-grid">
+      ${table('得点', d.goals, 'goals', ' 点')}
+      ${table('アシスト', d.assists, 'assists', ' 回')}
+      ${table('セーブ数', d.saves, 'saves', ' 本')}
+      ${table('セーブ数（1試合あたり）', d.saves_avg, 'saves_avg', ' 本')}
+    </div>`;
+}
+
+/**
+ * アーカイブの各チーム情報。予算とスカッドを折りたたんで並べる。
+ *
+ * @param {Object[]} teams
+ * @returns {string}
+ */
+function renderArchiveTeams(teams) {
+  if (!teams || teams.length === 0) return '<p class="muted">チームの記録がありません。</p>';
+
+  return teams.map((t) => {
+    const c = t.position_counts;
+
+    const budget = t.budget_breakdown.length
+      ? t.budget_breakdown
+          .map((b) => '<tr><td>' + esc(b.reason) + '</td><td class="num' +
+            (b.amount < 0 ? ' neg' : '') + '">' + esc(formatMoney(b.amount)) + '</td></tr>')
+          .join('')
+      : '<tr><td colspan="2" class="muted">取引なし</td></tr>';
+
+    const squad = t.squad.length
+      ? t.squad.map((p) => `
+          <tr>
+            <td>${posBadge(p)}</td>
+            <td>${esc(p.name)}${playerMeta(p)}</td>
+            <td class="muted">${esc(p.real_club)}</td>
+            <td>${esc(p.acquisition_type)}</td>
+            <td class="num">${esc(formatMoney(p.acquired_cost))}</td>
+          </tr>`).join('')
+      : '<tr><td colspan="5" class="muted">在籍なし</td></tr>';
+
+    return `
+      <details class="archive-team">
+        <summary>
+          <strong>${esc(t.team_name)}</strong>
+          <span class="muted">
+            ${t.total}名（GK${c.GK}/DF${c.DF}/MF${c.MF}/FW${c.FW}${t.foreign_count ? '・外国籍' + t.foreign_count : ''}）
+            ／ 終了時予算 ${esc(formatMoney(t.budget_total))}
+            ${t.manager ? '／ 監督 ' + esc(t.manager) : ''}
+          </span>
+        </summary>
+        <h4 class="rank-title">予算の内訳</h4>
+        <div class="table-wrap">
+          <table class="data-table"><tbody>${budget}</tbody></table>
+        </div>
+        <h4 class="rank-title">スカッド</h4>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr>
+              <th>Pos</th><th>選手名</th><th>現実クラブ</th><th>獲得形態</th><th class="num">獲得額</th>
+            </tr></thead>
+            <tbody>${squad}</tbody>
+          </table>
+        </div>
+      </details>`;
+  }).join('');
 }
 
 /**
@@ -2842,7 +3075,22 @@ function renderGoalRows() {
 }
 
 /**
- * シュート数の入力欄を組み立てる。
+ * チームスタッツの入力項目。
+ *
+ * kind が payload のキーになる。並び順はそのまま入力欄の並びになるので、
+ * eFootball のリザルト画面を上から書き写せる順にしてある。
+ */
+const TEAM_STAT_FIELDS = [
+  { kind: 'possession',     label: '支配率(%)', step: '0.1' },
+  { kind: 'shots',          label: 'シュート' },
+  { kind: 'shots_on_target',label: '枠内' },
+  { kind: 'passes',         label: 'パス' },
+  { kind: 'passes_success', label: 'パス成功' },
+  { kind: 'crosses',        label: 'クロス' },
+];
+
+/**
+ * チームスタッツの入力欄を組み立てる。
  */
 function renderShotInputs() {
   const t = currentMatchTeams();
@@ -2851,20 +3099,47 @@ function renderShotInputs() {
   const prev = {};
   box.querySelectorAll('.shot-input').forEach((i) => { prev[i.dataset.key] = i.value; });
 
-  const side = (teamId, teamName) => `
-    <div class="shot-side">
-      <span class="goal-team">${esc(teamName)}</span>
-      <label>シュート
-        <input type="number" min="0" class="shot-input" data-key="${esc(teamId)}_shots"
-               data-team="${esc(teamId)}" data-kind="shots" value="${esc(prev[teamId + '_shots'] || 0)}" />
-      </label>
-      <label>枠内
-        <input type="number" min="0" class="shot-input" data-key="${esc(teamId)}_on"
-               data-team="${esc(teamId)}" data-kind="on" value="${esc(prev[teamId + '_on'] || 0)}" />
-      </label>
-    </div>`;
+  const side = (teamId, teamName) => {
+    const inputs = TEAM_STAT_FIELDS.map((f) => {
+      const key = teamId + '_' + f.kind;
+      return `
+      <label>${esc(f.label)}
+        <input type="number" min="0" ${f.step ? 'step="' + f.step + '"' : ''}
+               class="shot-input" data-key="${esc(key)}"
+               data-team="${esc(teamId)}" data-kind="${esc(f.kind)}"
+               value="${esc(prev[key] === undefined ? 0 : prev[key])}" />
+      </label>`;
+    }).join('');
 
-  box.innerHTML = side(t.home, t.homeName) + side(t.away, t.awayName);
+    return '<div class="shot-side"><span class="goal-team">' + esc(teamName) + '</span>' + inputs + '</div>';
+  };
+
+  box.innerHTML =
+    side(t.home, t.homeName) + side(t.away, t.awayName) +
+    '<p class="muted note-sm" id="mt-poss-note"></p>';
+
+  // 支配率の合計は100になるはずだが、eFootball の表示は丸めでずれることがある。
+  // 弾かずに知らせるだけにして、見た数字をそのまま残せるようにする
+  box.querySelectorAll('.shot-input[data-kind="possession"]').forEach((i) => {
+    i.oninput = checkPossession;
+  });
+  checkPossession();
+}
+
+/** 支配率の合計が100から離れていたら注意書きを出す */
+function checkPossession() {
+  const note = document.getElementById('mt-poss-note');
+  if (!note) return;
+
+  const vals = [...document.querySelectorAll('.shot-input[data-kind="possession"]')]
+    .map((i) => Number(i.value) || 0);
+  const sum = vals.reduce((a, b) => a + b, 0);
+
+  if (sum === 0 || Math.abs(sum - 100) <= 1) {
+    note.textContent = '';
+    return;
+  }
+  note.textContent = '支配率の合計が ' + Math.round(sum * 10) / 10 + '% です。入力はこのまま保存できます。';
 }
 
 /**
@@ -2927,9 +3202,11 @@ function collectMatchPayload() {
   const shots = {};
   document.querySelectorAll('.shot-input').forEach((i) => {
     const tid = i.dataset.team;
-    if (!shots[tid]) shots[tid] = { team_id: tid, shots: 0, shots_on_target: 0 };
-    if (i.dataset.kind === 'shots') shots[tid].shots = Number(i.value) || 0;
-    else shots[tid].shots_on_target = Number(i.value) || 0;
+    if (!shots[tid]) {
+      shots[tid] = { team_id: tid };
+      TEAM_STAT_FIELDS.forEach((f) => { shots[tid][f.kind] = 0; });
+    }
+    shots[tid][i.dataset.kind] = Number(i.value) || 0;
   });
 
   const gkStats = [...document.querySelectorAll('.gk-row')]
@@ -3062,13 +3339,14 @@ async function startCorrection(matchId) {
     if (g.assist_id) r.querySelector('.goal-assist').value = g.assist_id;
   });
 
-  // シュートを反映
+  // チームスタッツを反映
   team_stats.forEach((s) => {
-    const a = document.querySelector('.shot-input[data-key="' + s.team_id + '_shots"]');
-    const b = document.querySelector('.shot-input[data-key="' + s.team_id + '_on"]');
-    if (a) a.value = s.shots;
-    if (b) b.value = s.shots_on_target;
+    TEAM_STAT_FIELDS.forEach((f) => {
+      const el = document.querySelector('.shot-input[data-key="' + s.team_id + '_' + f.kind + '"]');
+      if (el) el.value = s[f.kind] === undefined ? 0 : s[f.kind];
+    });
   });
+  checkPossession();
 
   // GK を反映
   document.getElementById('mt-gks').innerHTML = '';
@@ -3202,7 +3480,10 @@ async function toggleMatchDetail(matchId) {
     : '<li class="muted">得点なし</li>';
 
   const shotList = team_stats
-    .map((s) => '<li>' + esc(s.team_name) + ' — ' + s.shots + ' 本（枠内 ' + s.shots_on_target + '）</li>')
+    .map((s) => '<li>' + esc(s.team_name) + ' — 支配率 ' + (s.possession || 0) + '% ／ ' +
+      'シュート ' + s.shots + '（枠内 ' + s.shots_on_target + '） ／ ' +
+      'パス ' + s.passes + '（成功 ' + s.passes_success + '） ／ ' +
+      'クロス ' + s.crosses + '</li>')
     .join('') || '<li class="muted">未入力</li>';
 
   const gkList = gk_stats
@@ -3280,7 +3561,7 @@ async function loadStatsView() {
   // 順位表はディビジョン（GM1/GM2）、個人ランキングは大会単位。
   const divWrap = document.getElementById('st-division-wrap');
   const divSel = document.getElementById('st-division');
-  const showFilter = view === 'standings' || view === 'rankings';
+  const showFilter = view === 'standings' || view === 'rankings' || view === 'teamstats';
   divWrap.style.display = showFilter ? '' : 'none';
 
   if (showFilter) {
@@ -3305,9 +3586,103 @@ async function loadStatsView() {
   const filter = divSel.value;
 
   if (view === 'standings') return renderStandings(seasonId, filter);
+  if (view === 'teamstats') return renderTeamStats(seasonId, filter);
   if (view === 'tournament') return renderTournament(seasonId, 'tournament');
   if (view === 'supercup') return renderTournament(seasonId, 'supercup');
   return renderRankings(seasonId, filter);
+}
+
+/**
+ * チームスタッツを描画する。
+ *
+ * 合計と平均を切り替えて見る。消化試合数が違うチームが混ざるので、
+ * 途中経過を比べたいときは平均のほうが読める。
+ *
+ * @param {string} seasonId
+ * @param {string} competition
+ */
+async function renderTeamStats(seasonId, competition) {
+  const res = await callApi('getTeamStats', { season_id: seasonId, competition: competition || '' });
+  if (!res.ok) {
+    setError('st-body', 'チームスタッツの取得に失敗しました: ' + res.error);
+    return;
+  }
+
+  teamStatsData = res.data;
+  const box = document.getElementById('st-body');
+
+  if (res.data.match_count === 0) {
+    box.innerHTML = '<h3 class="sub-head">チームスタッツ</h3>' +
+      '<p class="muted">承認済みの試合がまだありません。</p>';
+    return;
+  }
+
+  box.innerHTML = `
+    <h3 class="sub-head">チームスタッツ</h3>
+    <div class="seg-tabs" id="ts-mode">
+      <button class="seg-btn is-active" data-mode="total">合計</button>
+      <button class="seg-btn" data-mode="avg">1試合あたり</button>
+    </div>
+    <div id="ts-table"></div>`;
+
+  document.querySelectorAll('#ts-mode .seg-btn').forEach((b) => {
+    b.onclick = () => showTeamStats(b.dataset.mode);
+  });
+  showTeamStats('total');
+}
+
+/** 直近に取得したチームスタッツ。合計と平均の切り替えで再取得しないために持つ */
+let teamStatsData = null;
+
+/**
+ * 合計か平均かを切り替えて表を描く。
+ *
+ * @param {string} mode - 'total' | 'avg'
+ */
+function showTeamStats(mode) {
+  const d = teamStatsData;
+  if (!d) return;
+
+  document.querySelectorAll('#ts-mode .seg-btn').forEach((el) => {
+    el.classList.toggle('is-active', el.dataset.mode === mode);
+  });
+
+  const avg = mode === 'avg';
+
+  // 支配率とパス成功率は割合なので、合計を出しても意味を持たない。
+  // どちらのモードでも同じ値を出す
+  const cols = [
+    ['試合', (r) => r.matches],
+    ['支配率', (r) => r.possession + '%'],
+    ['得点', (r) => (avg ? r.goals_for_avg : r.goals_for)],
+    ['失点', (r) => (avg ? r.goals_against_avg : r.goals_against)],
+    ['シュート', (r) => (avg ? r.shots_avg : r.shots)],
+    ['枠内', (r) => (avg ? r.shots_on_target_avg : r.shots_on_target)],
+    ['枠内率', (r) => r.shot_accuracy + '%'],
+    ['パス', (r) => (avg ? r.passes_avg : r.passes)],
+    ['パス成功', (r) => (avg ? r.passes_success_avg : r.passes_success)],
+    ['成功率', (r) => r.pass_rate + '%'],
+    ['クロス', (r) => (avg ? r.crosses_avg : r.crosses)],
+  ];
+
+  const head = '<tr><th>チーム</th>' +
+    cols.map((c) => '<th class="num">' + esc(c[0]) + '</th>').join('') + '</tr>';
+
+  const rows = d.teams.map((r) =>
+    '<tr><td>' + esc(r.team_name) + '</td>' +
+    cols.map((c) => '<td class="num">' + esc(c[1](r)) + '</td>').join('') +
+    '</tr>').join('');
+
+  document.getElementById('ts-table').innerHTML = `
+    <div class="table-wrap table-scroll">
+      <table class="data-table">
+        <thead>${head}</thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <p class="muted note-sm">
+      支配率・枠内率・成功率は割合なので、どちらの表示でも1試合あたりの値です。
+    </p>`;
 }
 
 /**
@@ -3484,7 +3859,7 @@ async function renderRankings(seasonId, competition) {
   const d = res.data;
   const box = document.getElementById('st-body');
 
-  const rkTitle = '個人ランキング' + (competition ? '（' + competition + '）' : '（全大会）');
+  const rkTitle = '個人成績' + (competition ? '（' + competition + '）' : '（全大会）');
 
   if (d.match_count === 0) {
     box.innerHTML =
@@ -3527,10 +3902,14 @@ async function renderRankings(seasonId, competition) {
       ${table('得点', d.goals, 'goals', ' 点')}
       ${table('アシスト', d.assists, 'assists', ' 回')}
       ${table('セーブ数', d.saves, 'saves', ' 本')}
+      ${table('セーブ数（1試合あたり）', d.saves_avg, 'saves_avg', ' 本', (r) => r.saves + '/' + r.team_matches + '試合')}
       ${table('シュートセーブ率', d.save_rate, 'rate', ' %', (r) => r.saves + '/' + r.faced)}
     </div>
     <p class="muted note-sm">
-      承認済み ${d.match_count} 試合を集計。得点ランキングにオウンゴールは含めません。
+      承認済み ${d.match_count} 試合を集計。得点ランキングにオウンゴールは含めません。<br>
+      <strong>1試合あたりのセーブ数は所属チームの消化試合数で割った値です。</strong>
+      出場記録を持たないため、控え GK も同じ分母になります。
+      得点とアシストは累計で競うものなので平均は出していません。<br>
       シュートセーブ率は ${d.min_matches_for_save_rate} 試合以上出場した GK のみを対象とし、
       分母は出場試合における相手チームの枠内シュート数です。
     </p>`;

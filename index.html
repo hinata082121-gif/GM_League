@@ -95,6 +95,7 @@
         <button class="tab-btn" data-tab="dashboard">ダッシュボード</button>
         <button class="tab-btn" data-tab="teams">チーム閲覧</button>
         <button class="tab-btn" data-tab="search">選手検索</button>
+        <button class="tab-btn" data-tab="archive">過去シーズン</button>
         <button class="tab-btn" data-tab="entry">エントリー</button>
         <button class="tab-btn" data-tab="transfer">移籍</button>
         <button class="tab-btn" data-tab="protect">プロテクト</button>
@@ -234,6 +235,25 @@
           </div>
 
           <div id="ps-result"></div>
+        </div>
+      </div>
+
+      <!-- ===== 画面2c: 過去シーズン ===== -->
+      <div class="tab-panel" data-panel="archive" style="display:none;">
+        <div class="card">
+          <h2>過去シーズン</h2>
+          <p class="muted note-sm">
+            終了したシーズンの記録です。予算とスカッドは終了時点の姿を残しています。
+          </p>
+          <div class="filter-row">
+            <label>
+              シーズン
+              <select id="ar-season"></select>
+            </label>
+          </div>
+          <div id="ar-body">
+            <p class="muted">シーズンを選択してください。</p>
+          </div>
         </div>
       </div>
 
@@ -422,7 +442,7 @@
           <h3 class="sub-head">得点者</h3>
           <div id="mt-goals"></div>
 
-          <h3 class="sub-head">シュート</h3>
+          <h3 class="sub-head">チームスタッツ</h3>
           <div id="mt-shots"></div>
 
           <h3 class="sub-head">起用 GK とセーブ数</h3>
@@ -466,10 +486,11 @@
             <label>
               表示
               <select id="st-view">
-                <option value="standings">リーグ順位表</option>
+                <option value="standings">順位表</option>
+                <option value="teamstats">チームスタッツ</option>
+                <option value="rankings">個人成績</option>
                 <option value="tournament">GMリーグ杯</option>
                 <option value="supercup">GMスーパーカップ</option>
-                <option value="rankings">個人ランキング</option>
               </select>
             </label>
             <label id="st-division-wrap" style="display:none;">

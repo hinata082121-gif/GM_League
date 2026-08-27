@@ -483,6 +483,32 @@ body {
   color: #fff;
 }
 
+/* ---------- 過去シーズン ---------- */
+.archive-team {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  margin-bottom: 8px;
+  padding: 10px 14px;
+}
+
+.archive-team summary {
+  cursor: pointer;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: baseline;
+}
+
+.archive-team summary .muted {
+  font-size: 0.78rem;
+}
+
+.archive-team[open] summary {
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--color-border);
+}
+
 /* ---------- 選手検索 ---------- */
 .search-grid {
   display: grid;
@@ -762,6 +788,15 @@ body {
   font-size: 0.75rem;
   font-weight: 600;
   color: var(--color-text-sub);
+}
+
+/* チームスタッツは6項目あるので、チーム名を1行使って下に入力欄を並べる */
+.shot-side .goal-team {
+  flex-basis: 100%;
+}
+
+.shot-side input {
+  width: 90px;
 }
 
 .goal-team {
