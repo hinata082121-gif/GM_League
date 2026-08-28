@@ -343,12 +343,17 @@ function setResult(id, ok, msg) {
 
 /**
  * チーム一覧を取得してキャッシュする。
+ *
+ * active=false のチームは画面に出さない。テスト稼働で作った行や
+ * 重複登録の残骸が選択肢に並ぶと、参加者がどれを選べばよいか分からなくなる。
+ * データは Sheets 側に残したままで、消すのは表示だけ。
+ *
  * @returns {Promise<Object[]>}
  */
 async function loadTeams(force) {
   if (cache.teams && !force) return cache.teams;
   const res = await callApi('listTeams', {});
-  cache.teams = res.ok ? res.data : [];
+  cache.teams = res.ok ? res.data.filter((t) => t.active) : [];
   return cache.teams;
 }
 
@@ -730,10 +735,13 @@ async function loadTeamDetail() {
     <h3 class="sub-head">選手リスト</h3>
     <div class="seg-tabs" id="tv-list-tabs">
       <button class="seg-btn is-active" data-list="entry">
-        エントリーリスト <span class="seg-count">${squad.total + (teamRosterData.transferred || []).length}</span>
+        エントリーリスト <span class="seg-count">${squad.total}</span>
       </button>
       <button class="seg-btn" data-list="outside">
         エントリー外選手 <span class="seg-count">${teamRosterData.outside_total}</span>
+      </button>
+      <button class="seg-btn" data-list="transferred">
+        移籍済選手 <span class="seg-count">${(teamRosterData.transferred || []).length}</span>
       </button>
     </div>
     <div id="tv-list"></div>
@@ -751,9 +759,9 @@ async function loadTeamDetail() {
 let teamRosterData = null;
 
 /**
- * エントリーリストとエントリー外を切り替えて描画する。
+ * エントリーリスト・エントリー外・移籍済を切り替えて描画する。
  *
- * @param {string} which - 'entry' | 'outside'
+ * @param {string} which - 'entry' | 'outside' | 'transferred'
  */
 function showTeamList(which) {
   const d = teamRosterData;
@@ -767,8 +775,17 @@ function showTeamList(which) {
   if (!box) return;
 
   if (which === 'entry') {
-    // 移籍で出した選手もここに残す。そのシーズンに誰を使ったのかを追えるようにする
-    box.innerHTML = renderSquadTable(d.entry.squad, d.transferred);
+    box.innerHTML = renderSquadTable(d.entry.squad);
+    return;
+  }
+
+  if (which === 'transferred') {
+    box.innerHTML = `
+      <p class="muted note-sm">
+        ${esc(d.team_name)} の選手のうち、リーグ内の移籍で他チームへ渡した人です。
+      </p>
+      ${renderTransferredTable(d.transferred)}
+    `;
     return;
   }
 
@@ -779,6 +796,40 @@ function showTeamList(which) {
     </p>
     ${renderOutsideTable(d.outside)}
   `;
+}
+
+/**
+ * 移籍済選手の表を組み立てる。
+ *
+ * 移籍先を必ず出す。自クラブの誰がどこへ行ったかが一覧で追える。
+ *
+ * @param {Object[]} rows
+ * @returns {string}
+ */
+function renderTransferredTable(rows) {
+  if (!rows || rows.length === 0) {
+    return '<p class="muted">移籍で出した選手はいません。</p>';
+  }
+
+  const body = rows
+    .map(
+      (p) => `
+      <tr>
+        <td>${posBadge(p)}</td>
+        <td>${esc(p.name)}${playerMeta(p)}</td>
+        <td><span class="tag-ng">${esc(p.moved_to_name)}</span></td>
+        <td>${esc(p.acquisition_type)}</td>
+      </tr>`
+    )
+    .join('');
+
+  return `
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr><th>Pos</th><th>選手名</th><th>移籍先</th><th>元の獲得形態</th></tr></thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>`;
 }
 
 /**
@@ -1191,26 +1242,23 @@ function renderArchiveTeams(teams) {
  * @param {Object[]} squad
  * @returns {string}
  */
-function renderSquadTable(squad, transferred) {
-  const moved = transferred || [];
-
-  if ((!squad || squad.length === 0) && moved.length === 0) {
+function renderSquadTable(squad) {
+  if (!squad || squad.length === 0) {
     return '<p class="muted">在籍選手がいません。</p>';
   }
 
-  const line = (p, out) => `
-      <tr${out ? ' class="row-left"' : ''}>
+  const rows = squad
+    .map(
+      (p) => `
+      <tr>
         <td>${posBadge(p)}</td>
-        <td>${esc(p.name)}${playerMeta(p)}${p.eligible ? '' : ' <span class="tag-ng">対象外</span>'}
-          ${out ? '<span class="tag-ng">移籍済 → ' + esc(p.moved_to_name) + '</span>' : ''}</td>
+        <td>${esc(p.name)}${playerMeta(p)}${p.eligible ? '' : ' <span class="tag-ng">対象外</span>'}</td>
         <td class="muted">${esc(p.real_club)}</td>
         <td>${esc(p.acquisition_type)}</td>
         <td class="num">${esc(formatMoney(p.acquired_cost))}</td>
-      </tr>`;
-
-  const rows =
-    (squad || []).map((p) => line(p, false)).join('') +
-    moved.map((p) => line(p, true)).join('');
+      </tr>`
+    )
+    .join('');
 
   return `
     <div class="table-wrap">

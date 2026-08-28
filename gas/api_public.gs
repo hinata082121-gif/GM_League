@@ -7,7 +7,7 @@
  * ログインもコードも要らない代わりに、**読み取り専用**で、
  * 個人を特定できる情報（email）は一切返さない。
  *
- * ⚠️ 設計原則
+ * 設計原則
  *   1. 書き込みはここには置かない。読み取りだけ
  *   5. 集計は status=承認 のデータのみ（既存の集計関数をそのまま使う）
  *
@@ -95,6 +95,9 @@ function getPublicData(payload) {
  *
  * チーム名・オーナーの表示名・X ID のみ。email は含めない。
  *
+ * active=false のチームは返さない。テスト稼働の残骸や重複登録が
+ * 公開ページに並ぶと、外から見て参加チーム数が合わなくなる。
+ *
  * @returns {Object[]}
  */
 function _publicParticipants() {
@@ -108,21 +111,19 @@ function _publicParticipants() {
   });
 
   return getSheetData("Teams")
-    .filter(function (t) { return _str(t.team_id); })
+    .filter(function (t) { return _str(t.team_id) && _toBool(t.active); })
     .map(function (t) {
       var owner = users[_str(t.owner_user_id)] || null;
       return {
         team_id:    _str(t.team_id),
         team_name:  _str(t.name),
         kind:       _str(t.kind),
-        active:     _toBool(t.active),
+        active:     true,
         owner_name: owner ? owner.display_name : "",
         owner_x_id: owner ? owner.x_id : "",
       };
     })
     .sort(function (a, b) {
-      // 参加中を先に、その中は名前順
-      if (a.active !== b.active) return a.active ? -1 : 1;
       return String(a.team_name).localeCompare(String(b.team_name), "ja");
     });
 }

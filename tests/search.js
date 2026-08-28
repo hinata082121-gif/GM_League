@@ -116,6 +116,83 @@ t('team_id が無ければ拒否する', () => {
   eq(e.getTeamRoster('A', {}).ok, false);
 });
 
+// =============================================================================
+// 移籍済選手
+// =============================================================================
+
+/** t_a のエントリーから選手を抜き、t_b の在籍にする（移籍の承認と同じ形） */
+function moveOut(e, name, toTeam) {
+  const pid = idOf(e, name);
+  const rows = e.__rows('Rosters');
+  const col = rows[0];
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i][col.indexOf('player_id')] !== pid) continue;
+    if (rows[i][col.indexOf('team_id')] !== 't_a') continue;
+    rows[i][col.indexOf('status')] = '離脱';
+  }
+  e.__addRow('Rosters', {
+    roster_id: 'r_' + pid, season_id: 's2', team_id: toTeam || 't_b',
+    player_id: pid, status: '在籍', acquisition_type: '移籍', acquired_cost: 0,
+  });
+}
+
+t('移籍で出した選手が別の欄で返る', () => {
+  const e = world();
+  enter(e, 't_a', ['宇佐美 貴史', '半田 陸', '一森 純']);
+  moveOut(e, '半田 陸');
+
+  const d = e.getTeamRoster('A', { team_id: 't_a', season_id: 's2' }).data;
+  eq(d.entry.total, 2, 'エントリーからは外れる');
+  eq(d.transferred.length, 1);
+  eq(d.transferred_total, 1);
+  eq(d.transferred[0].name, '半田 陸');
+  eq(d.transferred[0].moved_to_name, '柏レイソル');
+});
+
+t('移籍済はエントリー外に二重で出ない', () => {
+  const e = world();
+  enter(e, 't_a', ['宇佐美 貴史', '半田 陸']);
+  moveOut(e, '半田 陸');
+
+  const d = e.getTeamRoster('A', { team_id: 't_a', season_id: 's2' }).data;
+  ok(d.outside.every((o) => o.name !== '半田 陸'), 'エントリー外には出さない');
+});
+
+t('現実クラブが自クラブでない選手は移籍済に出さない', () => {
+  const e = world();
+  // ガンバが柏の細谷を一度取り、それをまた手放した形
+  enter(e, 't_a', ['宇佐美 貴史', '細谷 真大']);
+  moveOut(e, '細谷 真大');
+
+  const d = e.getTeamRoster('A', { team_id: 't_a', season_id: 's2' }).data;
+  eq(d.transferred.length, 0, '自クラブの選手だけを並べる');
+});
+
+t('どこも保有していない離脱は移籍済に出さない', () => {
+  const e = world();
+  enter(e, 't_a', ['宇佐美 貴史', '半田 陸']);
+
+  const pid = idOf(e, '半田 陸');
+  const rows = e.__rows('Rosters');
+  const col = rows[0];
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i][col.indexOf('player_id')] === pid) rows[i][col.indexOf('status')] = '離脱';
+  }
+  e.__dropCache('Rosters');
+
+  const d = e.getTeamRoster('A', { team_id: 't_a', season_id: 's2' }).data;
+  eq(d.transferred.length, 0);
+});
+
+t('移籍が無ければ空で返る', () => {
+  const e = world();
+  enter(e, 't_a', ['宇佐美 貴史']);
+
+  const d = e.getTeamRoster('A', { team_id: 't_a', season_id: 's2' }).data;
+  eq(d.transferred, []);
+  eq(d.transferred_total, 0);
+});
+
 t('シーズンを省くと最新シーズンで見る', () => {
   const e = world();
   enter(e, 't_a', ['宇佐美 貴史']);

@@ -11,6 +11,7 @@
  *
  *   エントリーリスト   = そのシーズンに登録されている在籍選手
  *   エントリー外選手   = 同じ現実クラブの選手で、そのチームの登録に入っていない人
+ *   移籍済選手         = 自クラブの選手で、リーグ内の移籍で他チームへ渡した人
  *
  * 注意 ここは読み取り専用。書き込みは一切しない。
  *   ただし公開エンドポイント（getPublicData）には足さない。
@@ -35,7 +36,7 @@ var HOLD_FREE = "未保有";
 // =============================================================================
 
 /**
- * チームのエントリーリストとエントリー外選手を分けて返す。
+ * チームのエントリーリスト・エントリー外選手・移籍済選手を分けて返す。
  *
  * エントリー外選手には保有チーム名を添える。
  * 「自クラブなのに他のGMに押さえられている」ことが分かると、
@@ -75,9 +76,9 @@ function getTeamRoster(token, payload) {
   //
   // 在籍が離脱に変わるので、そのままだと「エントリー外選手」に紛れて
   // 他チーム保有として出てしまう。**一度自分のエントリーに入れた選手**は
-  // 手放したあともエントリーリスト側に「移籍済」として残すほうが、
-  // そのシーズンに誰を使ったのかを追える。
-  var transferred = _transferredOut(seasonId, teamId, inEntry, teamNames);
+  // 独立した「移籍済選手」として分けて返す。
+  // そのシーズンに誰を手放したのかが一覧で見える。
+  var transferred = _transferredOut(seasonId, teamId, inEntry, teamNames, clubName);
   var leftEntry = {};
   transferred.forEach(function (t) { leftEntry[t.player_id] = true; });
 
@@ -116,15 +117,16 @@ function getTeamRoster(token, payload) {
   return {
     ok: true,
     data: {
-      team_id:         teamId,
-      team_name:       clubName,
-      season_id:       seasonId,
-      entry:           squadRes.data,
-      transferred:     transferred,
-      outside:         outside,
-      outside_total:   outside.length,
-      outside_free:    freeCount,
-      outside_held:    outside.length - freeCount,
+      team_id:           teamId,
+      team_name:         clubName,
+      season_id:         seasonId,
+      entry:             squadRes.data,
+      transferred:       transferred,
+      transferred_total: transferred.length,
+      outside:           outside,
+      outside_total:     outside.length,
+      outside_free:      freeCount,
+      outside_held:      outside.length - freeCount,
     },
   };
 }
@@ -138,13 +140,19 @@ function getTeamRoster(token, payload) {
  * 期限切れやチーム外移籍による離脱は拾わない。
  * どこも保有していない離脱は移籍ではないため。
  *
+ * 現実クラブが自クラブの選手だけを返す。
+ * オークションなどで一時的に預かった他クラブの選手まで並べると、
+ * 「自分のクラブの誰を手放したか」という本来の問いがぼやける。
+ * clubName を渡さなければ従来どおり全部返す。
+ *
  * @param {string} seasonId
  * @param {string} teamId
  * @param {Object} inEntry 現在の在籍。ここにいる選手は対象外
  * @param {Object} teamNames
+ * @param {string} [clubName] 自クラブ名。指定すると現実クラブで絞る
  * @returns {Object[]}
  */
-function _transferredOut(seasonId, teamId, inEntry, teamNames) {
+function _transferredOut(seasonId, teamId, inEntry, teamNames, clubName) {
   var players = {};
   getSheetData("Players").forEach(function (p) {
     players[_str(p.player_id)] = p;
@@ -174,8 +182,10 @@ function _transferredOut(seasonId, teamId, inEntry, teamNames) {
     var holder = heldByOther[pid];
     if (!holder) return;
 
-    seen[pid] = true;
     var p = players[pid] || {};
+    if (clubName && _str(p.real_club) !== clubName) return;
+
+    seen[pid] = true;
 
     out.push({
       player_id:        pid,

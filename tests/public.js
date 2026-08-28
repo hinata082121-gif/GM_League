@@ -100,13 +100,19 @@ t('X ID 未設定のオーナーは空文字', () => {
   eq(c.owner_x_id, '');
 });
 
-t('参加中のチームが先に並ぶ', () => {
+t('停止中のチームは出さない', () => {
   const e = env();
   e.__addRow('Users', { user_id: 'u_Z', email: 'z@example.com', display_name: 'オーナーZ', role: 'team', team_id: 't_Z', x_id: '' });
   e.__addRow('Teams', { team_id: 't_Z', name: 'あいうえおFC', owner_user_id: 'u_Z', kind: '新規', active: false });
   const list = e.getPublicData({}).data.participants;
-  eq(list[list.length - 1].team_name, 'あいうえおFC');
-  eq(list[list.length - 1].active, false);
+  ok(list.every((p) => p.team_name !== 'あいうえおFC'), 'テストの残骸は公開しない');
+  ok(list.every((p) => p.active === true));
+});
+
+t('名前順に並ぶ', () => {
+  const e = env();
+  const names = e.getPublicData({}).data.participants.map((p) => p.team_name);
+  eq(names.join(','), names.slice().sort((a, b) => a.localeCompare(b, 'ja')).join(','));
 });
 
 t('主催者だけのアカウントはチーム一覧に出ない', () => {
