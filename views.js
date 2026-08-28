@@ -1117,7 +1117,7 @@ function renderArchiveStandings(d) {
   const rows = s.table.map((r) => `
     <tr${r.rank <= 2 ? ' class="rank-top"' : ''}>
       <td class="num">${r.rank}${r.tied ? '<span class="tag-none">同</span>' : ''}</td>
-      <td>${esc(r.team_name)}</td>
+      <td>${esc(r.team_name)}${r.owner_memo ? '<span class="muted note-sm"> (' + esc(r.owner_memo) + ')</span>' : ''}</td>
       <td class="num">${r.played}</td>
       <td class="num">${r.won}</td>
       <td class="num">${r.drawn}</td>

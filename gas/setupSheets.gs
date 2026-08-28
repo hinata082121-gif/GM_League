@@ -299,12 +299,17 @@ function _getSheetDefinitions() {
     {
       // §4.16 SeasonTeams ─ シーズンごとのチーム所属ディビジョン
       // 参加チーム数で一部制/二部制が変わるため、Teams ではなくシーズン単位で持つ
+      //
+      // 「そのシーズンに誰が出ていたか」の名簿も兼ねる。
+      // 過去シーズンには今いないチームがいて、今のチームはいない。
+      // active だけで決めると、出ていないチームが 0試合 で順位表に並ぶ
       name: "SeasonTeams",
       spec: "SPEC.md §4.16",
       headers: [
-        "season_id",  // string
-        "team_id",    // string
-        "division",   // enum  GM1 / GM2
+        "season_id",   // string
+        "team_id",     // string
+        "division",    // enum    GM1 / GM2
+        "owner_memo",  // string  当時のGM名。表示用のメモで、ログインとは無関係
       ],
     },
     {

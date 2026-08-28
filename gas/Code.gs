@@ -11,7 +11,7 @@
  *   成功: { ok: true,  data: any }
  *   失敗: { ok: false, error: string }
  *
- * ⚠️ 設計原則（SPEC.md §3）を必ず守ること:
+ * 設計原則（SPEC.md §3）を必ず守ること:
  *   1. 書き込みは必ずここを通す（クライアントから Sheets 直書き禁止）
  *   2. 時刻判定はこのサーバー側で new Date() を使う
  *   3. 予算残高は BudgetTx の SUM で算出（残高カラム禁止）
@@ -232,6 +232,9 @@ function _route(action, token, payload) {
 
     case "importMatches":
       return importMatches(token, payload);
+
+    case "importSeasonTeams":
+      return importSeasonTeams(token, payload);
 
     case "syncPlayerProfiles":
       return syncPlayerProfiles(token, payload);

@@ -12,7 +12,7 @@ const SHEETS = {
   MatchGoals: ['goal_id','match_id','team_id','scorer_id','assist_id'],
   MatchTeamStats: ['id','match_id','team_id','possession','shots','shots_on_target','passes','passes_success','crosses'],
   MatchGKStats: ['id','match_id','team_id','gk_player_id','saves'],
-  SeasonTeams: ['season_id','team_id','division'],
+  SeasonTeams: ['season_id','team_id','division','owner_memo'],
   BudgetTx: ['tx_id','season_id','team_id','amount','reason','ref','created_at'],
   Managers: ['manager_id','name','club','category','active'],
   ManagerPicks: ['pick_id','season_id','team_id','round','manager_id','status','created_at','decided_at'],

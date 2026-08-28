@@ -42,21 +42,33 @@ var COMP_SUPERCUP = "GMスーパーカップ";
  * 未設定のチームは GM1 として扱う。一部制のシーズンでは全チームが GM1 になるので、
  * 割り当てを一切しなくても一部制として成立する。
  *
+ * 行が1つでもあれば、それが**そのシーズンの参加チーム名簿**でもある。
+ * 呼ぶ側は roster を見て「出ていたチームだけ」を並べられる。
+ * 行が無いシーズンは名簿が無いという意味で、その場合は
+ * 今 active なチームで代用する（従来どおり）。
+ *
  * @param {string} seasonId
- * @returns {{ map: Object, twoDivision: boolean }}
+ * @returns {{ map: Object, memo: Object, roster: string[], twoDivision: boolean }}
  */
 function _divisionsOf(seasonId) {
   var map = {};
+  var memo = {};
+  var roster = [];
   var twoDivision = false;
 
   getSheetData("SeasonTeams").forEach(function (r) {
     if (_str(r.season_id) !== seasonId) return;
+    var tid = _str(r.team_id);
+    if (!tid) return;
+
     var div = _str(r.division) === DIVISION_GM2 ? DIVISION_GM2 : DIVISION_GM1;
-    map[_str(r.team_id)] = div;
+    if (!map.hasOwnProperty(tid)) roster.push(tid);
+    map[tid] = div;
+    memo[tid] = _str(r.owner_memo);
     if (div === DIVISION_GM2) twoDivision = true;
   });
 
-  return { map: map, twoDivision: twoDivision };
+  return { map: map, memo: memo, roster: roster, twoDivision: twoDivision };
 }
 
 /**
@@ -178,10 +190,18 @@ function setSeasonDivisions(token, payload) {
   }
 
   return withLock(function () {
+    // 当時のGM名は割り当てとは無関係なので、消さずに持ち越す
+    var memo = _divisionsOf(seasonId).memo;
+
     _deleteSeasonTeamRows(seasonId);
 
     var rows = normalized.map(function (a) {
-      return { season_id: seasonId, team_id: a.team_id, division: a.division };
+      return {
+        season_id:  seasonId,
+        team_id:    a.team_id,
+        division:   a.division,
+        owner_memo: memo[a.team_id] || "",
+      };
     });
     _appendRowsBatch("SeasonTeams", rows);
 

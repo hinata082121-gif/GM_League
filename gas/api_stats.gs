@@ -10,7 +10,7 @@
  * 平均を出すのは GK のセーブ数だけ。
  * 得点とアシストは累計で競うものなので平均は添えない。
  *
- * ⚠️ 設計原則5
+ * 設計原則5
  *   集計対象は status=承認 の試合のみ。順位表・ランキングはシートに保存せず毎回導出する。
  *
  * 確定仕様（SPEC.md §10）
@@ -110,13 +110,14 @@ function getStandings(token, payload) {
     return inDivision(_str(m.home_team)) && inDivision(_str(m.away_team));
   });
 
-  // 参加チーム（active なチームは0試合でも表に出す）
+  // 参加チーム（0試合でも表に出す）
   var rows = {};
   var ensure = function (tid) {
     if (!rows[tid]) {
       rows[tid] = {
         team_id: tid,
         team_name: teamNames[tid] || tid,
+        owner_memo: d.memo[tid] || "",
         played: 0, won: 0, drawn: 0, lost: 0,
         gf: 0, ga: 0, gd: 0, points: 0,
       };
@@ -124,10 +125,20 @@ function getStandings(token, payload) {
     return rows[tid];
   };
 
-  getSheetData("Teams").forEach(function (t) {
-    var tid = _str(t.team_id);
-    if (_toBool(t.active) && inDivision(tid)) ensure(tid);
-  });
+  // 誰が出ていたかは SeasonTeams に名簿があればそれで決める。
+  // 過去シーズンには今いないチームがいて、今のチームはいない。
+  // active だけで決めると、出ていないチームが 0試合 で並んでしまう。
+  // 名簿が無いシーズンは従来どおり active なチームで代用する。
+  if (d.roster.length > 0) {
+    d.roster.forEach(function (tid) {
+      if (inDivision(tid)) ensure(tid);
+    });
+  } else {
+    getSheetData("Teams").forEach(function (t) {
+      var tid = _str(t.team_id);
+      if (_toBool(t.active) && inDivision(tid)) ensure(tid);
+    });
+  }
 
   matches.forEach(function (m) {
     var home = _str(m.home_team);

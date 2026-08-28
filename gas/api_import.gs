@@ -1,8 +1,10 @@
 /**
  * api_import.gs — 過去シーズンのチームを取り込む（主催者専用）
  *
- *   importRoster  — チームのスカッドを名前で一括登録する
- *   adjustBudget  — 予算を任意の理由で増減する
+ *   importRoster       — チームのスカッドを名前で一括登録する
+ *   importMatches      — 対戦表をそのまま流し込む
+ *   importSeasonTeams  — そのシーズンの参加チームと当時のGM名を入れる
+ *   adjustBudget       — 予算を任意の理由で増減する
  *
  * 何のための機能か
  *   ツールを使い始める前から続いている大会を取り込むための入口。
@@ -470,6 +472,107 @@ function _deleteMatchesOf(seasonId, stage) {
   }
 
   return ids.length;
+}
+
+// =============================================================================
+// 参加チーム名簿の取り込み
+// =============================================================================
+
+/**
+ * 過去シーズンの参加チーム名簿を入れる。主催者専用。
+ *
+ * 何のための機能か
+ *   順位表は「今 active なチーム」を0試合でも並べる。今のシーズンでは
+ *   それでいいが、過去シーズンでは**出ていないチームが混ざる**。
+ *   S13 にいた栃木シティは今いないし、今いる千葉は S13 にいない。
+ *   SeasonTeams に名簿を入れると、順位表がその名簿だけで組まれる。
+ *
+ *   あわせて当時のGM名を owner_memo に入れられる。GMは移り変わる
+ *   （S13 のセレッソのGMが、いまは札幌のGM）ので、Teams 側では持てない。
+ *   これは表示だけのメモで、ログインや権限とは一切つながらない。
+ *
+ * 注意 これは移行用。動いているシーズンの割り当ては setSeasonDivisions を使う。
+ *
+ * payload: {
+ *   season_id,
+ *   teams: [{ name | team_id, division?, owner_memo? }]
+ * }
+ *
+ * @param {string} token
+ * @param {Object} payload
+ * @returns {{ ok: boolean, data?: Object, error?: string }}
+ */
+function importSeasonTeams(token, payload) {
+  var auth = _requireOrganizer(token);
+  if (!auth.ok) return auth;
+
+  var seasonId = _str(payload.season_id);
+  var list = payload.teams || [];
+
+  if (!seasonId) return { ok: false, error: "season_id は必須です。" };
+  if (list.length === 0) return { ok: false, error: "チームが1件も指定されていません。" };
+  if (!findRow("Seasons", "season_id", seasonId)) {
+    return { ok: false, error: "シーズンが見つかりません。" };
+  }
+
+  var idByName = {};
+  getSheetData("Teams").forEach(function (t) {
+    var name = _str(t.name);
+    if (name) idByName[name] = _str(t.team_id);
+  });
+
+  // 先に全件を検証する。1件でも駄目なら何も書かない
+  var rows = [];
+  var seen = {};
+
+  for (var i = 0; i < list.length; i++) {
+    var no = (i + 1) + "件目";
+    var raw = list[i] || {};
+
+    var tid = _str(raw.team_id);
+    if (!tid) {
+      var name = _str(raw.name);
+      if (!name) return { ok: false, error: no + ": name か team_id が必要です。" };
+      tid = idByName[name];
+      if (!tid) return { ok: false, error: no + ": チームが見つかりません: " + name };
+    } else if (!findRow("Teams", "team_id", tid)) {
+      return { ok: false, error: no + ": チームが見つかりません: " + tid };
+    }
+
+    if (seen[tid]) return { ok: false, error: no + ": チームが重複しています。" };
+    seen[tid] = true;
+
+    var div = _str(raw.division) || DIVISION_GM1;
+    if (DIVISIONS.indexOf(div) === -1) {
+      return { ok: false, error: no + ": division が不正です: " + div };
+    }
+
+    rows.push({
+      season_id:  seasonId,
+      team_id:    tid,
+      division:   div,
+      owner_memo: _str(raw.owner_memo),
+    });
+  }
+
+  return withLock(function () {
+    var removed = _deleteSeasonTeamRows(seasonId);
+    _appendRowsBatch("SeasonTeams", rows);
+
+    var counts = { GM1: 0, GM2: 0 };
+    rows.forEach(function (r) { counts[r.division]++; });
+
+    return {
+      ok: true,
+      data: {
+        season_id:    seasonId,
+        added:        rows.length,
+        removed:      removed,
+        counts:       counts,
+        two_division: counts.GM2 > 0,
+      },
+    };
+  });
 }
 
 // =============================================================================
