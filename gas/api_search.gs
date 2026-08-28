@@ -1,7 +1,7 @@
 /**
  * api_search.gs — 選手を探すための読み取り API
  *
- *   getTeamRoster  — チームのエントリーリストとエントリー外選手を分けて返す
+ *   getTeamRoster  — チームの選手を「登録済み / 移籍済 / 未保有」に分けて返す
  *   searchPlayers  — 参加13クラブの選手を条件で絞り込む
  *
  * 何のための機能か
@@ -9,9 +9,12 @@
  *   補填で誰を取るか決めるとき——いずれも「あのクラブに誰がいるか」を
  *   一覧で見たい。スカッドだけを出す画面ではその半分しか見えない。
  *
- *   エントリーリスト   = そのシーズンに登録されている在籍選手
- *   エントリー外選手   = 同じ現実クラブの選手で、そのチームの登録に入っていない人
- *   移籍済選手         = 自クラブの選手で、リーグ内の移籍で他チームへ渡した人
+ * 3つの欄はすべて「現実でそのクラブに在籍している選手」だけを並べる。
+ * 他クラブから獲ってきた選手はエントリーリストにだけ出る。
+ *
+ *   エントリーリスト   = 自分が登録している選手
+ *   移籍済選手         = 自クラブの選手で、いま他のGMが持っている人
+ *   エントリー外選手   = 自クラブの選手で、まだ誰のものでもない人
  *
  * 注意 ここは読み取り専用。書き込みは一切しない。
  *   ただし公開エンドポイント（getPublicData）には足さない。
@@ -38,8 +41,8 @@ var HOLD_FREE = "未保有";
 /**
  * チームのエントリーリスト・エントリー外選手・移籍済選手を分けて返す。
  *
- * エントリー外選手には保有チーム名を添える。
- * 「自クラブなのに他のGMに押さえられている」ことが分かると、
+ * 移籍済選手には保有チーム名を添える。
+ * 「自クラブなのに他のGMが持っている」ことが分かると、
  * 交渉に行くべき相手がその場で見える。
  *
  * payload: { team_id: string, season_id?: string }
@@ -66,33 +69,33 @@ function getTeamRoster(token, payload) {
   // 使用クラブはチーム名と同じ。参加者は現実のクラブ名でチームを持つ
   var clubName = _str(team.name);
 
-  var held = _heldPlayerMap(seasonId);
+  var held = _heldPlayerMap(seasonId);        // 在籍 + 申請中
+  var owners = _activeOwnerMap(seasonId);     // 在籍のみ。獲得の経緯つき
   var teamNames = _teamNameMap();
 
   var inEntry = {};
   squadRes.data.squad.forEach(function (s) { inEntry[s.player_id] = true; });
 
-  // エントリーに入れたあと移籍で出した選手。
+  // 現実で自クラブにいる選手を、今どうなっているかで3つに分ける。
   //
-  // 在籍が離脱に変わるので、そのままだと「エントリー外選手」に紛れて
-  // 他チーム保有として出てしまう。**一度自分のエントリーに入れた選手**は
-  // 独立した「移籍済選手」として分けて返す。
-  // そのシーズンに誰を手放したのかが一覧で見える。
-  var transferred = _transferredOut(seasonId, teamId, inEntry, teamNames, clubName);
-  var leftEntry = {};
-  transferred.forEach(function (t) { leftEntry[t.player_id] = true; });
-
+  //   エントリーリスト — 自分が登録している（getTeamSquad が返す）
+  //   移籍済選手       — 他のGMが在籍で持っている
+  //   エントリー外選手 — まだ誰のものでもない
+  //
+  // 「一度自分のエントリーに入れたか」では分けない。
+  // 移行で入れた過去シーズンぶんには離脱の行が残っておらず、
+  // それを条件にすると league 内で動いた選手がまるごと
+  // エントリー外へ落ちる（実際に13クラブすべてで落ちていた）。
+  var transferred = [];
   var outside = [];
+
   getSheetData("Players").forEach(function (p) {
     var pid = _str(p.player_id);
     if (!pid) return;
     if (_str(p.real_club) !== clubName) return;
     if (inEntry[pid]) return;
-    if (leftEntry[pid]) return;
 
-    var holder = held[pid] || "";
-
-    outside.push({
+    var common = {
       player_id:       pid,
       name:            _str(p.name),
       position:        _str(p.position),
@@ -102,12 +105,33 @@ function getTeamRoster(token, payload) {
       foreign:         _isForeign(p.nationality),
       real_club:       _str(p.real_club),
       eligible:        _toBool(p.eligible),
-      held_by:         holder,
-      held_by_name:    holder ? (teamNames[holder] || holder) : "",
-      hold_status:     holder ? HOLD_OTHER : HOLD_FREE,
-    });
+    };
+
+    var own = owners[pid];
+    if (own && own.team_id !== teamId) {
+      transferred.push(_extend(common, {
+        moved_to:         own.team_id,
+        moved_to_name:    teamNames[own.team_id] || own.team_id,
+        acquisition_type: own.acquisition_type,
+        acquired_cost:    own.acquired_cost,
+      }));
+      return;
+    }
+
+    // 申請中はまだ移籍が成立していないので、こちらに残す。
+    // 「空いているように見えて実は取られかけている」を隠さないため
+    var pending = held[pid] || "";
+    if (pending === teamId) pending = "";
+
+    outside.push(_extend(common, {
+      held_by:      pending,
+      held_by_name: pending ? (teamNames[pending] || pending) : "",
+      hold_status:  pending ? HOLD_OTHER : HOLD_FREE,
+      pending:      !!pending,
+    }));
   });
 
+  transferred.sort(_comparePlayers);
   outside.sort(_comparePlayers);
 
   var freeCount = outside.filter(function (o) {
@@ -132,80 +156,39 @@ function getTeamRoster(token, payload) {
 }
 
 /**
- * このシーズンに一度エントリーへ入れたあと、移籍で出した選手。
+ * 浅いコピーに項目を足す。GAS は Object.assign を持たない。
  *
- * 移籍が承認されると放出側の在籍行は離脱になり、獲得側に在籍行ができる。
- * その差を見て「今は別のチームが持っている、元うちの選手」を拾う。
+ * @param {Object} base
+ * @param {Object} more
+ * @returns {Object}
+ */
+function _extend(base, more) {
+  var out = {};
+  Object.keys(base).forEach(function (k) { out[k] = base[k]; });
+  Object.keys(more).forEach(function (k) { out[k] = more[k]; });
+  return out;
+}
+
+/**
+ * そのシーズンに**在籍**で保有されている選手 → 保有チームと獲得の経緯。
  *
- * 期限切れやチーム外移籍による離脱は拾わない。
- * どこも保有していない離脱は移籍ではないため。
- *
- * 現実クラブが自クラブの選手だけを返す。
- * オークションなどで一時的に預かった他クラブの選手まで並べると、
- * 「自分のクラブの誰を手放したか」という本来の問いがぼやける。
- * clubName を渡さなければ従来どおり全部返す。
+ * 申請中は含めない。まだ移籍が成立していないため。
  *
  * @param {string} seasonId
- * @param {string} teamId
- * @param {Object} inEntry 現在の在籍。ここにいる選手は対象外
- * @param {Object} teamNames
- * @param {string} [clubName] 自クラブ名。指定すると現実クラブで絞る
- * @returns {Object[]}
+ * @returns {Object} player_id → { team_id, acquisition_type, acquired_cost }
  */
-function _transferredOut(seasonId, teamId, inEntry, teamNames, clubName) {
-  var players = {};
-  getSheetData("Players").forEach(function (p) {
-    players[_str(p.player_id)] = p;
-  });
-
-  // 同じシーズンに他チームが在籍で持っている選手
-  var heldByOther = {};
+function _activeOwnerMap(seasonId) {
+  var map = {};
   getSheetData("Rosters").forEach(function (r) {
     if (_str(r.season_id) !== seasonId) return;
     if (_str(r.status) !== ROSTER_ACTIVE) return;
-    var tid = _str(r.team_id);
-    if (tid === teamId) return;
-    heldByOther[_str(r.player_id)] = tid;
-  });
-
-  var seen = {};
-  var out = [];
-
-  getSheetData("Rosters").forEach(function (r) {
-    if (_str(r.season_id) !== seasonId) return;
-    if (_str(r.team_id) !== teamId) return;
-    if (_str(r.status) === ROSTER_ACTIVE) return;
-
-    var pid = _str(r.player_id);
-    if (!pid || inEntry[pid] || seen[pid]) return;
-
-    var holder = heldByOther[pid];
-    if (!holder) return;
-
-    var p = players[pid] || {};
-    if (clubName && _str(p.real_club) !== clubName) return;
-
-    seen[pid] = true;
-
-    out.push({
-      player_id:        pid,
-      name:             _str(p.name),
-      position:         _str(p.position),
-      detail_position:  _str(p.detail_position),
-      age:              _num(p.age),
-      nationality:      _normalizeNationality(p.nationality),
-      foreign:          _isForeign(p.nationality),
-      real_club:        _str(p.real_club),
-      eligible:         _toBool(p.eligible),
+    map[_str(r.player_id)] = {
+      team_id:          _str(r.team_id),
       acquisition_type: _str(r.acquisition_type),
       acquired_cost:    _num(r.acquired_cost),
-      moved_to:         holder,
-      moved_to_name:    teamNames[holder] || holder,
-    });
+    };
   });
-
-  out.sort(_comparePlayers);
-  return out;
+  return map;
 }
 
 /**

@@ -68,27 +68,28 @@ t('他クラブの選手はエントリー外に混ざらない', () => {
   ok(names.indexOf('細谷 真大') === -1, '柏の選手が出ていないこと');
 });
 
-t('他チームが保有していれば保有チーム名が付く', () => {
+t('他チームが在籍で持っていれば移籍済に出る', () => {
   const e = world();
   enter(e, 't_a', ['宇佐美 貴史']);
   enter(e, 't_b', ['フアンぺ']);   // 柏がガンバの選手を保有
 
-  const r = e.getTeamRoster('A', { team_id: 't_a', season_id: 's2' });
-  const juanpe = r.data.outside.filter((o) => o.name === 'フアンぺ')[0];
+  const d = e.getTeamRoster('A', { team_id: 't_a', season_id: 's2' }).data;
 
-  eq(juanpe.hold_status, '他チーム保有');
-  eq(juanpe.held_by_name, '柏レイソル');
+  ok(d.outside.every((o) => o.name !== 'フアンぺ'), 'エントリー外には出さない');
+  const juanpe = d.transferred.filter((o) => o.name === 'フアンぺ')[0];
+  eq(juanpe.moved_to_name, '柏レイソル');
 });
 
-t('未保有と保有済みの人数を数える', () => {
+t('エントリー外は未保有だけを数える', () => {
   const e = world();
   enter(e, 't_a', ['宇佐美 貴史', '半田 陸']);
   enter(e, 't_b', ['フアンぺ']);
 
   const d = e.getTeamRoster('A', { team_id: 't_a', season_id: 's2' }).data;
-  eq(d.outside_total, 4);
-  eq(d.outside_held, 1);
+  eq(d.outside_total, 3, 'フアンぺは移籍済へ移る');
+  eq(d.outside_held, 0);
   eq(d.outside_free, 3);
+  eq(d.transferred_total, 1);
 });
 
 t('エントリー外にも年齢と国籍が乗る', () => {

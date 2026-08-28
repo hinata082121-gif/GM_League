@@ -782,7 +782,7 @@ function showTeamList(which) {
   if (which === 'transferred') {
     box.innerHTML = `
       <p class="muted note-sm">
-        ${esc(d.team_name)} の選手のうち、リーグ内の移籍で他チームへ渡した人です。
+        ${esc(d.team_name)} の選手のうち、いま他のGMが保有している人です。
       </p>
       ${renderTransferredTable(d.transferred)}
     `;
@@ -791,8 +791,8 @@ function showTeamList(which) {
 
   box.innerHTML = `
     <p class="muted note-sm">
-      ${esc(d.team_name)} の選手のうち、このチームのエントリーに入っていない人です。
-      未保有 ${d.outside_free} 名 / 他チーム保有 ${d.outside_held} 名。
+      ${esc(d.team_name)} の選手のうち、まだ誰も保有していない人です。
+      ${d.outside_held ? '申請中 ' + d.outside_held + ' 名を含みます。' : ''}
     </p>
     ${renderOutsideTable(d.outside)}
   `;
@@ -848,8 +848,10 @@ function renderOutsideTable(rows) {
 
   const body = rows
     .map((p) => {
+      // ここに残るのは未保有か、他チームが申請中の選手だけ。
+      // 移籍が成立した選手は「移籍済選手」の欄へ移してある
       const hold = p.held_by
-        ? '<span class="tag-ng">' + esc(p.held_by_name) + '</span>'
+        ? '<span class="tag-ng">申請中 ' + esc(p.held_by_name) + '</span>'
         : '<span class="tag-ok">未保有</span>';
 
       return `
