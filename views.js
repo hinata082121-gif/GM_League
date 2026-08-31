@@ -5493,18 +5493,20 @@ function renderClaimList() {
           ? '<span class="tag-ok">' + esc(c.choice) + ' で確定</span>'
           : '<span class="tag-wait">未選択</span>';
 
+      // 獲得額0円の選手は払い戻す原資が無い。入れ替えだけを出す
       const swapArea = canEdit(c)
         ? `
           <div class="claim-actions">
+            ${c.swap_only ? '' : `
             <button type="button" class="btn btn-primary btn-sm cl-refund" data-id="${esc(c.claim_id)}">
               払い戻し ${esc(formatMoney(c.refund_amount))}
             </button>
-            <span class="muted">または</span>
+            <span class="muted">または</span>`}
             <select class="cl-swap-select" data-id="${esc(c.claim_id)}">
               <option value="">入れ替える選手を選択</option>
               ${options}
             </select>
-            <button type="button" class="btn btn-secondary btn-sm cl-swap" data-id="${esc(c.claim_id)}">
+            <button type="button" class="btn btn-primary btn-sm cl-swap" data-id="${esc(c.claim_id)}">
               入れ替える
             </button>
           </div>`
@@ -5519,8 +5521,10 @@ function renderClaimList() {
           </div>
           <p class="muted note-sm">
             理由: ${esc(c.reason)}
-            ／ 獲得額 ${esc(formatMoney(c.base_cost))} × ${Math.round(c.rate * 100)}%
-            ＝ 払い戻し ${esc(formatMoney(c.refund_amount))}
+            ${c.swap_only
+              ? '／ 獲得額が0円のため、入れ替えのみ選べます'
+              : '／ 獲得額 ' + esc(formatMoney(c.base_cost)) + ' × ' + Math.round(c.rate * 100) + '%'
+                + ' ＝ 払い戻し ' + esc(formatMoney(c.refund_amount))}
             ${c.replacement_name ? '／ 入れ替え先: <strong>' + esc(c.replacement_name) + '</strong>' : ''}
           </p>
           ${swapArea}

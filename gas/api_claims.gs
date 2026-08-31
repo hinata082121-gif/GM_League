@@ -23,6 +23,11 @@
  *   入れ替え — **自分の使用クラブ**の選手で、誰も保有していない人と交換する
  *              受け取った選手の獲得額は 0 として記録する
  *
+ *   **獲得額が0円の選手は入れ替えしか選べない。**
+ *   移行で入れた「初期」の選手など、一度も移籍で獲っていない選手には
+ *   払い戻す原資が無い。0円を受け取る選択肢を出しても意味がないうえ、
+ *   選んだ本人は補填を受けたつもりになってしまう。
+ *
  * ▶ いつ入金されるか
  *   Seasons.claim_deadline_at が選択の期限。**期限の翌日に主催者が精算**し、
  *   新シーズンの移籍市場が開く前に入金が終わっている状態にする。
@@ -47,6 +52,19 @@ var CLAIM_CHOICE_NONE = "未選択";
 var CLAIM_CHOICE_REFUND = "払い戻し";
 var CLAIM_CHOICE_SWAP = "入れ替え";
 var CLAIM_CHOICES = [CLAIM_CHOICE_REFUND, CLAIM_CHOICE_SWAP];
+
+/**
+ * 払い戻す原資が無い請求かどうか。
+ *
+ * 獲得額が0円なら、補填率を掛けても0円にしかならない。
+ * 入れ替えだけを認める。
+ *
+ * @param {Object} claim
+ * @returns {boolean}
+ */
+function _isSwapOnly(claim) {
+  return _num(claim.refund_amount) <= 0;
+}
 
 var CLAIM_WAITING = "選択待ち";
 var CLAIM_FIXED = "確定";
@@ -308,6 +326,14 @@ function _applyChoice(claim, choice, replacementId, user) {
   var seasonId = _str(claim.season_id);
   var teamId = _str(claim.team_id);
 
+  // 獲得額0円の選手は払い戻す原資が無い。入れ替えだけを通す
+  if (choice === CLAIM_CHOICE_REFUND && _isSwapOnly(claim)) {
+    return {
+      ok: false,
+      error: "この選手は獲得額が0円のため払い戻しはできません。入れ替えを選んでください。",
+    };
+  }
+
   var updates = {
     choice:    choice,
     status:    CLAIM_FIXED,
@@ -553,16 +579,38 @@ function settleClaims(token, payload) {
       var teamId = _str(c.team_id);
       var choice = _str(c.choice);
 
+      // 獲得額0円の請求は入れ替えしか道が無い。既定が払い戻しでも倒さない
+      var swapOnly = _isSwapOnly(c);
+
       if (choice !== CLAIM_CHOICE_REFUND && choice !== CLAIM_CHOICE_SWAP) {
-        choice = defaultChoice;
+        choice = swapOnly ? CLAIM_CHOICE_SWAP : defaultChoice;
+      }
+      if (choice === CLAIM_CHOICE_REFUND && swapOnly) {
+        choice = CLAIM_CHOICE_SWAP;
       }
 
       if (choice === CLAIM_CHOICE_SWAP) {
         var rid = _str(c.replacement_id);
 
         // 入れ替え先が無い／既に埋まっている場合は払い戻しに倒す。
-        // 精算を止めるより、金額で補償して先に進めるほうが運用が回る
+        // 精算を止めるより、金額で補償して先に進めるほうが運用が回る。
+        //
+        // ただし獲得額0円の請求は倒せない。倒すと0円で精算済みになり、
+        // 補填を受けたことになって請求が消える。主催者が入れ替え先を
+        // 決められるよう、未精算のまま残して報告する
         if (!rid || claimedNow[rid]) {
+          if (swapOnly) {
+            failed.push({
+              claim_id: claimId,
+              team_name: teamNames[teamId] || teamId,
+              reason: rid
+                ? "入れ替え先が既に保有されています（獲得額0円のため払い戻しにできません）"
+                : "入れ替え先が未指定です（獲得額0円のため払い戻しにできません）",
+              unsettled: true,
+            });
+            return;
+          }
+
           failed.push({
             claim_id: claimId,
             team_name: teamNames[teamId] || teamId,
@@ -689,6 +737,8 @@ function _claimView(c, playerNames) {
     rate:            _num(c.rate),
     refund_amount:   _num(c.refund_amount),
     choice:          _str(c.choice) || CLAIM_CHOICE_NONE,
+    // 獲得額0円なら払い戻す原資が無いので、画面で払い戻しを出さない
+    swap_only:       _isSwapOnly(c),
     replacement_id:  rid,
     replacement_name: r ? r.name : "",
     status:          _str(c.status),

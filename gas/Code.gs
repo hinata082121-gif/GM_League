@@ -359,6 +359,9 @@ function _route(action, token, payload) {
     case "applyRealTransfers":
       return applyRealTransfers(token, payload);
 
+    case "releaseToLeagueClub":
+      return releaseToLeagueClub(token, payload);
+
     case "restorePlayerEligible":
       return restorePlayerEligible(token, payload);
 

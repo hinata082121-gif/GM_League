@@ -2,7 +2,8 @@
  * api_realtransfer.gs — 現実の移籍の反映（主催者専用）
  *
  *   getRealTransferTargets — 反映対象にできる選手と、影響を受けるチームの状況
- *   applyRealTransfers     — 選手を大会対象外にし、補填金をその場で計上する
+ *   applyRealTransfers     — 大会の外へ出た選手を対象外にし、補填の請求を立てる
+ *   releaseToLeagueClub    — 参加クラブ間の移籍。手放させるが選手は大会に残る
  *   restorePlayerEligible  — 誤って外した選手を戻す
  *
  * ▶ 何をする機能か
@@ -246,9 +247,11 @@ function applyRealTransfers(token, payload) {
 
         if (acqType === METHOD_AUCTION) {
           entry.reason = "オークション獲得のため補填なし";
-        } else if (cost <= 0) {
-          entry.reason = "獲得額が0のため補填なし";
         } else {
+          // 獲得額が0でも請求は立てる。払い戻す原資は無いが、
+          // 入れ替えは認める（移行で入れた「初期」の選手がこれにあたる）。
+          // 請求を立てないと、手放しただけで何も受け取れない
+          //
           // ここでは入金しない。参加者が払い戻しか入れ替えかを選ぶための請求を立てる
           var claim = _createClaim(
             seasonId, teamId, pid, CLAIM_REASON_TRANSFER, cost, rate, at
@@ -297,6 +300,170 @@ function applyRealTransfers(token, payload) {
         note:           "補填はまだ入金されていません。参加者の選択後、期限の翌日に精算してください。",
         skipped:        skipped,
         rate:           rate,
+      },
+    };
+  });
+}
+
+/**
+ * 参加クラブ間の現実移籍を反映する。主催者専用。
+ *
+ * ▶ applyRealTransfers との違い
+ *   あちらは**大会の外へ出た**選手が対象で、eligible=false にする。
+ *   こちらは移った先も参加クラブなので、選手は大会に残る。
+ *   変わるのは「誰が使えるか」だけ。
+ *
+ *   例: 三國 ケネディエブスが名古屋からアビスパ福岡へ移り、
+ *       その福岡が新しくリーグへ参加した場合。
+ *       名古屋は手放すが、福岡のGMは自分のクラブの選手として登録できる。
+ *
+ * ▶ すること
+ *   1. 今の保有チームの在籍を離脱にする（すぐ空く）
+ *   2. そのチームに補填の請求を立てる
+ *   3. eligible はそのまま。移籍先クラブのGMが登録できる
+ *
+ * ⚠️ 先に名簿を同期しておくこと。
+ *   移籍先が参加クラブかどうかは Players.real_club で判定する。
+ *   古いままだと弾かれる。
+ *
+ * payload: { season_id, player_ids: string[] }
+ *
+ * @param {string} token
+ * @param {Object} payload
+ * @returns {{ ok: boolean, data?: Object, error?: string }}
+ */
+function releaseToLeagueClub(token, payload) {
+  var auth = _requireOrganizer(token);
+  if (!auth.ok) return auth;
+
+  var seasonId = _str(payload.season_id);
+  if (!seasonId) return { ok: false, error: "season_id は必須です。" };
+  if (!findRow("Seasons", "season_id", seasonId)) {
+    return { ok: false, error: "シーズンが見つかりません。" };
+  }
+
+  var ids = (payload.player_ids || [])
+    .map(function (v) { return _str(v); })
+    .filter(function (v) { return v; });
+
+  if (ids.length === 0) return { ok: false, error: "対象の選手を選んでください。" };
+
+  var seen = {};
+  ids = ids.filter(function (id) {
+    if (seen[id]) return false;
+    seen[id] = true;
+    return true;
+  });
+
+  return withLock(function () {
+    var rate = Number(getConfig("claim_rate_real_transfer", 0.8));
+    var at = now();
+    var teamNames = _teamNameMap();
+
+    // 移った先が参加クラブであることを確かめるための一覧
+    var clubToTeam = {};
+    _activeTeams().forEach(function (t) {
+      clubToTeam[_str(t.name)] = _str(t.team_id);
+    });
+
+    var rosterOf = {};
+    getSheetData("Rosters").forEach(function (r) {
+      if (_str(r.season_id) !== seasonId) return;
+      if (_str(r.status) !== ROSTER_ACTIVE) return;
+      rosterOf[_str(r.player_id)] = r;
+    });
+
+    var released = [];
+    var claims = [];
+    var skipped = [];
+
+    for (var i = 0; i < ids.length; i++) {
+      var pid = ids[i];
+      var player = findRow("Players", "player_id", pid);
+
+      if (!player) {
+        skipped.push({ player_id: pid, reason: "選手が見つかりません" });
+        continue;
+      }
+
+      var club = _str(player.real_club);
+      var newTeamId = clubToTeam[club];
+
+      if (!newTeamId) {
+        skipped.push({
+          player_id: pid, name: _str(player.name),
+          reason: "現実クラブ「" + (club || "未設定") + "」は参加クラブではありません。" +
+                  "大会の外へ出た選手は applyRealTransfers を使ってください。",
+        });
+        continue;
+      }
+
+      var roster = rosterOf[pid];
+
+      if (!roster) {
+        // 誰も持っていないなら、そのまま移籍先クラブのGMが登録できる
+        skipped.push({
+          player_id: pid, name: _str(player.name),
+          reason: "どのチームも保有していないため、そのまま登録できます",
+        });
+        continue;
+      }
+
+      var teamId = _str(roster.team_id);
+
+      if (teamId === newTeamId) {
+        skipped.push({
+          player_id: pid, name: _str(player.name),
+          reason: "既に移籍先のチームが保有しています",
+        });
+        continue;
+      }
+
+      updateRow("Rosters", "roster_id", _str(roster.roster_id), {
+        status: ROSTER_LEFT,
+      });
+
+      released.push({
+        player_id: pid,
+        name:      _str(player.name),
+        position:  _str(player.position),
+        from_team: teamId,
+        from_name: teamNames[teamId] || teamId,
+        to_club:   club,
+        to_team:   newTeamId,
+      });
+
+      // オークションで預かっていた選手は補填の対象外。
+      // どのみちシーズン終了で離脱するため
+      if (_str(roster.acquisition_type) === METHOD_AUCTION) continue;
+
+      var cost = _num(roster.acquired_cost);
+      var claim = _createClaim(
+        seasonId, teamId, pid, CLAIM_REASON_TRANSFER, cost, rate, at
+      );
+
+      if (claim) {
+        claims.push({
+          claim_id:      claim.claim_id,
+          team_id:       teamId,
+          team_name:     teamNames[teamId] || teamId,
+          player_name:   _str(player.name),
+          acquired_cost: cost,
+          refund_amount: claim.refund_amount,
+          swap_only:     claim.refund_amount <= 0,
+        });
+      }
+    }
+
+    return {
+      ok: true,
+      data: {
+        season_id: seasonId,
+        released:  released,
+        claims:    claims,
+        skipped:   skipped,
+        rate:      rate,
+        note: "補填はまだ入金されていません。獲得額が0円の請求は入れ替えのみ選べます。",
       },
     };
   });

@@ -80,9 +80,15 @@ t('補填の請求が立つが、この時点では入金しない', () => {
 t('補填の合計が返る', () => {
   const e = env();
   const r = e.applyRealTransfers('ORG', { season_id: 's1', player_ids: ['p1','p2','p3'] });
+
   eq(r.data.total_amount, 80000000);
   eq(r.data.applied_count, 3);
-  eq(r.data.compensations.length, 1);
+
+  // p1 は1億で獲得したので払い戻しあり。
+  // p3 は獲得額0なので金額は0だが、入れ替えを選べるよう請求は立てる。
+  // p2 はオークションなので対象外
+  eq(r.data.compensations.length, 2);
+  eq(r.data.compensations.filter((c) => c.amount > 0).length, 1);
 });
 
 t('オークション選手は請求が立たないが対象外にはなる', () => {

@@ -21,10 +21,34 @@ t('請求が立った時点では入金しない', () => {
   eq(balance(e, 't_a'), 0);
 });
 
-t('獲得額0の選手には請求が立たない', () => {
+t('獲得額0でも請求は立つ。ただし入れ替えのみ', () => {
   const e = env();
   e.applyRealTransfers('ORG', { season_id: 's1', player_ids: ['k1'] });
-  eq(claimsOf(e).length, 0);
+
+  const c = claimsOf(e);
+  eq(c.length, 1, '手放したのに何も受け取れないのはおかしい');
+
+  const mine = e.getMyClaims('A', { season_id: 's1' }).data.claims;
+  eq(mine.length, 1);
+  eq(mine[0].refund_amount, 0);
+});
+
+t('獲得額0の請求は払い戻しを拒む', () => {
+  const e = env();
+  e.applyRealTransfers('ORG', { season_id: 's1', player_ids: ['k1'] });
+  const id = e.getMyClaims('A', { season_id: 's1' }).data.claims[0].claim_id;
+
+  const r = e.chooseClaim('A', { claim_id: id, choice: '払い戻し' });
+  eq(r.ok, false);
+  ok(r.error.indexOf('0円') !== -1, r.error);
+});
+
+t('獲得額0の請求は swap_only で返る', () => {
+  const e = env();
+  e.applyRealTransfers('ORG', { season_id: 's1', player_ids: ['k1'] });
+
+  const mine = e.getMyClaims('A', { season_id: 's1' }).data.claims;
+  eq(mine.filter((c) => c.swap_only).length, 1);
 });
 
 t('同じ選手で二重に請求は立たない', () => {
