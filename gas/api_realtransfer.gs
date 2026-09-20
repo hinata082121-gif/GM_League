@@ -322,6 +322,16 @@ function applyRealTransfers(token, payload) {
  *   2. そのチームに補填の請求を立てる
  *   3. eligible はそのまま。移籍先クラブのGMが登録できる
  *
+ * ⚠️ **移籍先が新規参加クラブのときだけ使う。**
+ *   継続参加者どうしの現実移籍では何もしない。リーグ内で誰が持っているかは
+ *   現実の移籍とは別の話だからである。町田の選手が神戸へ移っても、
+ *   その選手をFC東京が持っているならFC東京の在籍のまま。
+ *   手放させるのは、新しく入ったクラブのGMが自分のクラブの選手を
+ *   1人も登録できない、という場合に限る。
+ *
+ *   判定は「移籍先が 新規 のチームで、まだこのシーズンの在籍を
+ *   1人も持っていないこと」。スカッドを組み終えたあとは対象外になる。
+ *
  * ⚠️ 先に名簿を同期しておくこと。
  *   移籍先が参加クラブかどうかは Players.real_club で判定する。
  *   古いままだと弾かれる。
@@ -362,15 +372,20 @@ function releaseToLeagueClub(token, payload) {
 
     // 移った先が参加クラブであることを確かめるための一覧
     var clubToTeam = {};
+    var teamKind = {};
     _activeTeams().forEach(function (t) {
       clubToTeam[_str(t.name)] = _str(t.team_id);
+      teamKind[_str(t.team_id)] = _str(t.kind);
     });
 
     var rosterOf = {};
+    var squadCount = {};
     getSheetData("Rosters").forEach(function (r) {
       if (_str(r.season_id) !== seasonId) return;
       if (_str(r.status) !== ROSTER_ACTIVE) return;
       rosterOf[_str(r.player_id)] = r;
+      var tid = _str(r.team_id);
+      squadCount[tid] = (squadCount[tid] || 0) + 1;
     });
 
     var released = [];
@@ -394,6 +409,28 @@ function releaseToLeagueClub(token, payload) {
           player_id: pid, name: _str(player.name),
           reason: "現実クラブ「" + (club || "未設定") + "」は参加クラブではありません。" +
                   "大会の外へ出た選手は applyRealTransfers を使ってください。",
+        });
+        continue;
+      }
+
+      // 継続参加者どうしの移籍では手放させない。
+      // リーグ内で誰が持っているかは現実の移籍とは別の話で、
+      // 保有GMから取り上げる理由がない。手放させるのは、新しく入った
+      // クラブのGMが自分のクラブの選手を登録できるようにするためだけ
+      if (teamKind[newTeamId] !== TEAM_KIND_NEW) {
+        skipped.push({
+          player_id: pid, name: _str(player.name),
+          reason: "移籍先の" + (teamNames[newTeamId] || club) +
+                  "は継続参加です。継続参加者どうしの現実移籍では保有は動きません。",
+        });
+        continue;
+      }
+
+      if ((squadCount[newTeamId] || 0) > 0) {
+        skipped.push({
+          player_id: pid, name: _str(player.name),
+          reason: (teamNames[newTeamId] || club) +
+                  "は既にスカッドを組んでいます。新規参加の初回登録のときだけ使えます。",
         });
         continue;
       }

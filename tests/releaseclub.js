@@ -1,12 +1,22 @@
 const { t, eq, ok, report } = require('./harness');
 const { env, claimsOf, rostersOf } = require('./cl-fixture');
 
-// 参加クラブ間の現実移籍。
+// 現実の移籍先が**新規参加クラブ**のときだけ、保有GMに手放させる。
 //
-// 大会の外へ出たのではないので、選手は使えるまま。
-// 変わるのは「誰が使えるか」だけ。手放した側には補填の請求が立つ。
+// 新しく入ったクラブのGMが、自分のクラブの選手を1人も登録できない
+// 状態を避けるための特例。継続参加者どうしの現実移籍では何もしない。
+// リーグ内で誰が持っているかは、現実の移籍とは別の話だからである。
 //
 // A=鹿島 が u1（浦和の選手・1億で獲得）と k1（自クラブ・0円）を持っている。
+// B=浦和 は継続参加。N=新規参加のクラブを必要に応じて足す。
+
+/** 新規参加のクラブを足す。まだスカッドは組んでいない */
+function addNewClub(e, name) {
+  e.__addRow('Teams', { team_id: 't_n', name, owner_user_id: 'u_n', kind: '新規', active: true });
+  e.__addRow('Users', { user_id: 'u_n', email: 'n@example.com', display_name: 'GM新規', role: 'team', team_id: 't_n' });
+  e.__tokens['N'] = 'n@example.com';
+  return e;
+}
 
 /** 選手の現実クラブを付け替える。名簿の同期が済んだ状態を作る */
 function moveClub(e, playerId, club) {
@@ -34,24 +44,27 @@ const call = (e, ids) =>
 // =============================================================================
 
 t('保有チームの在籍から外れる', () => {
-  const e = env();
-  moveClub(e, 'u1', '浦和レッズ');   // A が持っている浦和の選手はそのまま
+  const e = addNewClub(env(), '川崎フロンターレ');
+  moveClub(e, 'u1', '川崎フロンターレ');
   const r = call(e, ['u1']);
 
   eq(r.ok, true, r.error);
   eq(r.data.released.length, 1);
   eq(r.data.released[0].from_name, '鹿島アントラーズ');
+  eq(r.data.released[0].to_club, '川崎フロンターレ');
   ok(rostersOf(e, 's1', 't_a').every((x) => x[3] !== 'u1'), 'A の在籍から消える');
 });
 
 t('選手は大会に残る', () => {
-  const e = env();
+  const e = addNewClub(env(), '川崎フロンターレ');
+  moveClub(e, 'u1', '川崎フロンターレ');
   call(e, ['u1']);
   eq(eligibleOf(e, 'u1'), true, '大会の外へ出たわけではない');
 });
 
 t('手放した側に補填の請求が立つ', () => {
-  const e = env();
+  const e = addNewClub(env(), '川崎フロンターレ');
+  moveClub(e, 'u1', '川崎フロンターレ');
   call(e, ['u1']);
 
   const c = e.getMyClaims('A', { season_id: 's1' }).data.claims;
@@ -61,9 +74,9 @@ t('手放した側に補填の請求が立つ', () => {
 });
 
 t('獲得額0円なら入れ替えのみの請求になる', () => {
-  const e = env();
-  // 鹿島の k1 が浦和へ移った形。A は k1 を0円で持っていた
-  moveClub(e, 'k1', '浦和レッズ');
+  const e = addNewClub(env(), '川崎フロンターレ');
+  // 鹿島の k1 が新規参加の川崎へ移った形。A は k1 を0円で持っていた
+  moveClub(e, 'k1', '川崎フロンターレ');
   call(e, ['k1']);
 
   const c = e.getMyClaims('A', { season_id: 's1' }).data.claims;
@@ -73,18 +86,20 @@ t('獲得額0円なら入れ替えのみの請求になる', () => {
 });
 
 t('外した選手は移籍先クラブの未保有になる', () => {
-  const e = env();
+  const e = addNewClub(env(), '川崎フロンターレ');
+  moveClub(e, 'u1', '川崎フロンターレ');
   call(e, ['u1']);
 
-  // 浦和から見ると、自クラブの選手で誰も持っていない状態
-  const d = e.getTeamRoster('B', { team_id: 't_b', season_id: 's1' }).data;
+  // 川崎から見ると、自クラブの選手で誰も持っていない状態
+  const d = e.getTeamRoster('N', { team_id: 't_n', season_id: 's1' }).data;
   ok(d.outside.some((o) => o.player_id === 'u1'), 'エントリー外に出る');
   ok(d.transferred.every((o) => o.player_id !== 'u1'), '移籍済には出ない');
 });
 
 t('まとめて外せる', () => {
-  const e = env();
-  moveClub(e, 'k1', '浦和レッズ');
+  const e = addNewClub(env(), '川崎フロンターレ');
+  moveClub(e, 'u1', '川崎フロンターレ');
+  moveClub(e, 'k1', '川崎フロンターレ');
   const r = call(e, ['u1', 'k1']);
 
   eq(r.data.released.length, 2);
@@ -106,7 +121,8 @@ t('参加クラブでなければ弾く', () => {
 });
 
 t('誰も持っていない選手は何もしない', () => {
-  const e = env();
+  const e = addNewClub(env(), '川崎フロンターレ');
+  moveClub(e, 'u4', '川崎フロンターレ');
   const r = call(e, ['u4']);
 
   eq(r.data.released.length, 0);
@@ -114,16 +130,30 @@ t('誰も持っていない選手は何もしない', () => {
   ok(r.data.skipped[0].reason.indexOf('そのまま登録できます') !== -1);
 });
 
-t('既に移籍先が持っていれば何もしない', () => {
+t('継続参加者どうしの移籍では手放させない', () => {
   const e = env();
-  const r = call(e, ['u2']);   // u2 は浦和の選手で、浦和が持っている
+  // u1（浦和の選手）を A=鹿島 が保有。浦和は継続参加
+  const r = call(e, ['u1']);
 
+  eq(r.data.released.length, 0, '保有はそのまま');
+  ok(r.data.skipped[0].reason.indexOf('継続参加') !== -1, r.data.skipped[0].reason);
+  eq(rostersOf(e, 's1', 't_a').filter((x) => x[3] === 'u1').length, 1);
+});
+
+t('新規参加でもスカッドを組んだ後は手放させない', () => {
+  const e = addNewClub(env(), '川崎フロンターレ');
+  moveClub(e, 'u1', '川崎フロンターレ');
+  // 川崎が既に1人登録している
+  e.__addRow('Rosters', { roster_id: 'rn1', season_id: 's1', team_id: 't_n', player_id: 'u4', status: '在籍', acquisition_type: 'エントリー', acquired_cost: 0 });
+
+  const r = call(e, ['u1']);
   eq(r.data.released.length, 0);
-  ok(r.data.skipped[0].reason.indexOf('既に移籍先') !== -1);
+  ok(r.data.skipped[0].reason.indexOf('既にスカッド') !== -1, r.data.skipped[0].reason);
 });
 
 t('オークションの選手には請求を立てない', () => {
-  const e = env();
+  const e = addNewClub(env(), '川崎フロンターレ');
+  moveClub(e, 'u1', '川崎フロンターレ');
   const rows = e.__rows('Rosters');
   const col = rows[0];
   rows.find((x) => x[col.indexOf('roster_id')] === 'r3')[col.indexOf('acquisition_type')] = 'オークション';
@@ -135,7 +165,8 @@ t('オークションの選手には請求を立てない', () => {
 });
 
 t('同じ選手を2回指定しても1回だけ', () => {
-  const e = env();
+  const e = addNewClub(env(), '川崎フロンターレ');
+  moveClub(e, 'u1', '川崎フロンターレ');
   const r = call(e, ['u1', 'u1']);
   eq(r.data.released.length, 1);
   eq(claimsOf(e).length, 1);

@@ -189,7 +189,9 @@ function _parseAge(v) {
 var ROLES = ["team", "organizer"];
 
 /** 許可されるチーム種別 */
-var TEAM_KINDS = ["新規", "継続"];
+var TEAM_KIND_NEW = "新規";
+var TEAM_KIND_CONTINUE = "継続";
+var TEAM_KINDS = [TEAM_KIND_NEW, TEAM_KIND_CONTINUE];
 
 /**
  * シートの真偽値表現を JS の boolean に正規化する。
