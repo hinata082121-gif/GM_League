@@ -188,7 +188,13 @@ function _parseAge(v) {
 /** 許可されるロール */
 var ROLES = ["team", "organizer"];
 
-/** 許可されるチーム種別 */
+/**
+ * 許可されるチーム種別。
+ *
+ * 新規 と 継続 の違いは、現実移籍の反映で効く。
+ * 新規参加のクラブへ移った選手だけは、保有GMに手放してもらう
+ * （api_realtransfer.gs の releaseToLeagueClub）。
+ */
 var TEAM_KIND_NEW = "新規";
 var TEAM_KIND_CONTINUE = "継続";
 var TEAM_KINDS = [TEAM_KIND_NEW, TEAM_KIND_CONTINUE];
@@ -889,7 +895,7 @@ function upsertTeam(token, payload) {
   var name = _str(payload.name);
   if (!name) return { ok: false, error: "name は必須です。" };
 
-  var kind = _str(payload.kind) || "新規";
+  var kind = _str(payload.kind) || TEAM_KIND_NEW;
   try {
     _assertEnum("kind", kind, TEAM_KINDS);
   } catch (e) {
