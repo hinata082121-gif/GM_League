@@ -297,10 +297,20 @@ function _teamSquadCount(seasonId, teamId, pending) {
 /**
  * 当該シーズンに、その選手がどの形態で動いたかを集める。
  *
- * 承認済みの移籍履歴と、今の在籍の獲得形態の両方を見る。
- * 履歴だけだと主催者が取り込みで直接入れた在籍を取りこぼし、
- * 在籍だけだと「第1次で特別、第2次で完全移籍」のように
- * 後から上書きされた経緯が消えるため。
+ * 正は**承認済みの移籍記録**。シーズンで区切られているので、
+ * 「今シーズン動いたか」をそのまま判定できる。
+ *
+ * ⚠️ 在籍の acquisition_type は「今シーズン動いた証拠」にならない。
+ *   引継ぎ（_carryOverRosters）が acquisition_type を次シーズンへ保持するため
+ *   （補填金の母数になるので意図的にそうしている）。
+ *   前シーズンに特別ルールで獲った選手は、翌シーズンの在籍にも
+ *   acquisition_type=特別 のまま残る。これを「今シーズン動いた」と読むと、
+ *   一度強奪された選手が永久に強奪されなくなってしまう。
+ *
+ *   期限付き・オークションだけは在籍からも拾う。
+ *   この3形態はシーズン末に必ず離脱するので引継ぎに残りようがなく、
+ *   在籍に出ているなら今シーズン作られた行だと確定できる。
+ *   移行で取り込んだ在籍のように移籍記録が無いものを拾うのが狙い。
  *
  * @param {string} seasonId
  * @returns {Object} player_id → { 形態: true }
@@ -323,7 +333,10 @@ function _seasonMethodMap(seasonId) {
   getSheetData("Rosters").forEach(function (r) {
     if (_str(r.season_id) !== seasonId) return;
     if (_str(r.status) !== ROSTER_ACTIVE) return;
-    mark(_str(r.player_id), _str(r.acquisition_type));
+
+    var type = _str(r.acquisition_type);
+    if (EXPIRING_METHODS.indexOf(type) === -1) return;
+    mark(_str(r.player_id), type);
   });
 
   return map;
