@@ -304,6 +304,22 @@ function _route(action, token, payload) {
     case "getProtections":
       return getProtections(token, payload);
 
+    // ---- 対戦表 ----
+    case "getFixtures":
+      return getFixtures(token, payload);
+
+    case "generateFixtures":
+      return generateFixtures(token, payload);
+
+    case "upsertFixture":
+      return upsertFixture(token, payload);
+
+    case "swapFixtureSides":
+      return swapFixtureSides(token, payload);
+
+    case "deleteFixture":
+      return deleteFixture(token, payload);
+
     // ---- Phase 5: 試合集計 ----
     case "getMatchOptions":
       return getMatchOptions(token, payload);

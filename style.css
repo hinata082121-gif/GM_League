@@ -725,6 +725,194 @@ body {
   margin-top: 2px;
 }
 
+/* ---------- 試合結果の入力（4画面） ---------- */
+
+/* 今どこにいて、あと何が残っているかを常に出す。
+   4画面に分けると、途中で全体像が見えなくなるため */
+.wizard-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+}
+
+.wizard-steps li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 140px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-text-sub);
+  background: var(--color-bg);
+}
+
+.wizard-steps li.is-active {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: var(--color-surface);
+}
+
+.wizard-steps li.is-done {
+  color: var(--color-success);
+  border-color: var(--color-success);
+}
+
+.wizard-no {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: currentColor;
+  color: var(--color-surface);
+  font-size: 0.7rem;
+  flex-shrink: 0;
+}
+
+.wizard-steps li.is-active .wizard-no,
+.wizard-steps li.is-done .wizard-no {
+  color: #fff;
+}
+
+/* 対戦カード。自動入力された相手が合っているかを、
+   スコアを入れる前に目で確かめてもらう */
+.match-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  text-align: center;
+}
+
+.match-card-round {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--color-text-sub);
+  margin-bottom: 6px;
+}
+
+.match-card-teams {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.match-card-side {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
+.match-card-side em {
+  font-style: normal;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--color-text-sub);
+}
+
+.match-card-vs,
+.match-card-score {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--color-text-sub);
+}
+
+.chip-mine {
+  display: inline-block;
+  margin-top: 2px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 700;
+}
+
+/* 得点者は「区分 → 選手」の2段。横に並べて1行に収める */
+.goal-pick {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.goal-pick-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-sub);
+  min-width: 56px;
+}
+
+.goal-scorer-pos,
+.goal-assist-pos,
+.gk-pos {
+  width: 80px;
+  flex-shrink: 0;
+}
+
+.goal-team em {
+  display: block;
+  font-style: normal;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--color-text-sub);
+}
+
+/* ---------- 対戦表（主催者） ---------- */
+.fixture-round {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  background: var(--color-surface);
+}
+
+.fixture-round h4 {
+  font-size: 0.85rem;
+  color: var(--color-text-sub);
+  margin-bottom: 6px;
+}
+
+.fixture-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 4px 0;
+  border-top: 1px solid var(--color-bg);
+}
+
+.fixture-home,
+.fixture-away {
+  font-weight: 600;
+  min-width: 150px;
+}
+
+.fixture-away {
+  text-align: left;
+}
+
+.chip-div {
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--color-text-sub);
+}
+
 /* ---------- 試合結果の入力 ---------- */
 .score-row {
   display: flex;

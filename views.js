@@ -3093,6 +3093,20 @@ let correctingMatchId = null;
 /** GK 入力欄の行数（チームごと） */
 let gkRowSeq = 0;
 
+/** 今開いている入力画面（1〜4） */
+let matchStep = 1;
+
+/** getFixtures の結果。節から対戦相手を引くのに使う */
+let matchFixtures = null;
+
+/**
+ * ポジションの大区分。**FW を先頭にする。**
+ *
+ * 得点者を選ぶ場面では FW・MF を探すことがほとんどなので、
+ * GK から並べると毎回下までスクロールすることになる。
+ */
+const POSITION_GROUPS = ['FW', 'MF', 'DF', 'GK'];
+
 /**
  * 試合画面を初期化する。
  */
@@ -3103,16 +3117,35 @@ async function renderMatch() {
   const teams = await loadTeams();
   fillSelect('mt-home', teams, 'team_id', 'name', 'チームを選択');
   fillSelect('mt-away', teams, 'team_id', 'name', 'チームを選択');
+  fillSelect('mt-report-team', teams, 'team_id', 'name', 'チームを選択');
 
   const seasonSel = document.getElementById('mt-season');
   if (!seasonSel.dataset.bound) {
-    seasonSel.onchange = () => { loadMatchOptions(); loadMatchList(); };
-    document.getElementById('mt-stage').onchange = onMatchStageChange;
+    // 対戦表より先に getMatchOptions を呼ぶ。
+    // 節の一覧は「自分のチームが出る節」に絞るので、先に自分が誰かを知る必要がある
+    seasonSel.onchange = async () => {
+      await loadMatchOptions();
+      await loadFixtures();
+      await loadMatchList();
+    };
+    document.getElementById('mt-stage').onchange = async () => {
+      onMatchStageChange();
+      await loadFixtures();
+      renderMatchCard();
+    };
+    document.getElementById('mt-report-team').onchange = () => {
+      fillRoundSelect();
+      applyFixtureToForm();
+    };
+    document.getElementById('mt-round-select').onchange = applyFixtureToForm;
+    document.getElementById('mt-round').oninput = renderMatchCard;
     document.getElementById('mt-home').onchange = loadMatchOptions;
     document.getElementById('mt-away').onchange = loadMatchOptions;
     document.getElementById('mt-home-score').oninput = renderGoalRows;
     document.getElementById('mt-away-score').oninput = renderGoalRows;
     document.getElementById('mt-add-gk').onclick = () => addGkRow();
+    document.getElementById('mt-back').onclick = () => goMatchStep(matchStep - 1);
+    document.getElementById('mt-next').onclick = onMatchNext;
     document.getElementById('mt-submit').onclick = onSubmitMatch;
     document.getElementById('mt-cancel').onclick = exitCorrectionMode;
     document.getElementById('mt-filter').onchange = loadMatchList;
@@ -3121,7 +3154,102 @@ async function renderMatch() {
 
   onMatchStageChange();
   await loadMatchOptions();
+  await loadFixtures();
+  goMatchStep(1);
   await loadMatchList();
+}
+
+// ---------------------------------------------------------------------------
+// 画面の切り替え
+// ---------------------------------------------------------------------------
+
+/**
+ * 指定の入力画面を開く。
+ *
+ * 4画面に分けているのは、1画面に全部並べると入力漏れに気づきにくいため。
+ * スコアが決まってから得点者の枠を出すことで、件数の不一致が構造的に起きない。
+ *
+ * @param {number} step 1〜4
+ */
+function goMatchStep(step) {
+  matchStep = Math.max(1, Math.min(4, step));
+
+  document.querySelectorAll('#mt-steps li').forEach((li) => {
+    const n = Number(li.dataset.step);
+    li.classList.toggle('is-active', n === matchStep);
+    li.classList.toggle('is-done', n < matchStep);
+  });
+
+  document.querySelectorAll('.wizard-pane').forEach((pane) => {
+    pane.style.display = Number(pane.dataset.step) === matchStep ? 'block' : 'none';
+  });
+
+  const last = matchStep === 4;
+  document.getElementById('mt-back').style.display = matchStep === 1 ? 'none' : 'inline-block';
+  document.getElementById('mt-next').style.display = last ? 'none' : 'inline-block';
+  document.getElementById('mt-submit').style.display = last ? 'inline-block' : 'none';
+
+  if (matchStep === 4) renderMatchReview();
+}
+
+/**
+ * 「次へ」。今の画面を検証してから進む。
+ *
+ * 進めないときは理由を出す。最後まで行ってから戻されるより、
+ * その場で気づけるほうが直しやすい。
+ */
+function onMatchNext() {
+  const err = validateMatchStep(matchStep);
+  if (err) {
+    setResult('mt-result', false, err);
+    return;
+  }
+
+  setResult('mt-result', true, '');
+
+  // スコアが決まってから枠を組み直す
+  if (matchStep === 1) {
+    renderGoalRows();
+    ensureGkRows();
+  }
+  if (matchStep === 2) renderShotInputs();
+
+  goMatchStep(matchStep + 1);
+}
+
+/**
+ * 画面ごとの入力チェック。問題なければ空文字。
+ *
+ * @param {number} step
+ * @returns {string}
+ */
+function validateMatchStep(step) {
+  if (step === 1) {
+    const t = currentMatchTeams();
+    if (!document.getElementById('mt-season').value) return 'シーズンを選んでください。';
+    if (!currentRoundValue()) return '節を選んでください。';
+    if (!t.home || !t.away) return '対戦チームを選んでください。';
+    if (t.home === t.away) return '同じチーム同士の試合は登録できません。';
+
+    const hs = Number(document.getElementById('mt-home-score').value);
+    const as = Number(document.getElementById('mt-away-score').value);
+    if (!(hs >= 0) || !(as >= 0)) return 'スコアを入力してください。';
+    return '';
+  }
+
+  if (step === 2) {
+    const rows = [...document.querySelectorAll('.goal-row')];
+    if (rows.some((r) => !r.querySelector('.goal-scorer').value)) {
+      return '得点者が選ばれていない枠があります。';
+    }
+    const gk = [...document.querySelectorAll('.gk-row')];
+    if (gk.some((r) => !r.querySelector('.gk-player').value)) {
+      return '起用GKが選ばれていない行があります。使わない行は削除してください。';
+    }
+    return '';
+  }
+
+  return '';
 }
 
 /**
@@ -3147,6 +3275,148 @@ function onMatchStageChange() {
   document.getElementById('mt-pk-row').style.display = isKnockout ? 'flex' : 'none';
 }
 
+// ---------------------------------------------------------------------------
+// 対戦表からの自動入力
+// ---------------------------------------------------------------------------
+
+/**
+ * 対戦表を取得して、節のプルダウンを組む。
+ *
+ * 対戦表が無い大会では従来どおり節を手で入力する。
+ * 表が無いからといって報告できなくなるのは困るため。
+ */
+async function loadFixtures() {
+  const seasonId = document.getElementById('mt-season').value;
+  const stage = document.getElementById('mt-stage').value;
+  if (!seasonId) return;
+
+  const res = await callApi('getFixtures', { season_id: seasonId, stage });
+  matchFixtures = res.ok ? res.data : null;
+
+  fillRoundSelect();
+  applyFixtureToForm();
+}
+
+/**
+ * 報告者のチームを返す。
+ *
+ * 参加者は自分のチーム。主催者はチームを持たないので、
+ * 画面で選んだ「報告するチーム」を使う。
+ *
+ * @returns {string} team_id
+ */
+function reporterTeamId() {
+  if (matchOptions && matchOptions.my_team) return matchOptions.my_team;
+  return document.getElementById('mt-report-team').value;
+}
+
+/**
+ * 節のプルダウンを組み直す。
+ *
+ * 自分のチームが出る節だけを並べる。全節を並べても、
+ * 自分と関係ない節を選ぶ意味がない。
+ */
+function fillRoundSelect() {
+  const wrapSel = document.getElementById('mt-round-select-wrap');
+  const wrapText = document.getElementById('mt-round-wrap');
+  const sel = document.getElementById('mt-round-select');
+
+  const me = reporterTeamId();
+  const mine = (matchFixtures ? matchFixtures.fixtures : [])
+    .filter((f) => f.home_team === me || f.away_team === me);
+
+  if (!me || mine.length === 0) {
+    wrapSel.style.display = 'none';
+    wrapText.style.display = '';
+    return;
+  }
+
+  const prev = sel.value;
+  sel.innerHTML =
+    '<option value="">節を選択</option>' +
+    mine.map((f) => {
+      const other = f.home_team === me ? f.away_team_name : f.home_team_name;
+      const side = f.home_team === me ? 'H' : 'A';
+      return '<option value="' + esc(f.fixture_id) + '">' +
+        esc(f.round) + '　vs ' + esc(other) + '（' + side + '）</option>';
+    }).join('') +
+    '<option value="__free__">— 対戦表にない試合 —</option>';
+
+  if (prev && [...sel.options].some((o) => o.value === prev)) sel.value = prev;
+
+  wrapSel.style.display = '';
+  wrapText.style.display = sel.value === '__free__' ? '' : 'none';
+}
+
+/**
+ * 選んだ節の対戦を、節名・ホーム・アウェイに流し込む。
+ *
+ * チームを手で選び直すこともできる。対戦表と違う相手と
+ * 対戦した場合に報告できなくなると困るため、上書きは妨げない。
+ */
+function applyFixtureToForm() {
+  const sel = document.getElementById('mt-round-select');
+  const wrapText = document.getElementById('mt-round-wrap');
+
+  if (sel.value === '__free__') {
+    wrapText.style.display = '';
+    renderMatchCard();
+    return;
+  }
+
+  const f = (matchFixtures ? matchFixtures.fixtures : [])
+    .find((x) => x.fixture_id === sel.value);
+
+  if (!f) {
+    renderMatchCard();
+    return;
+  }
+
+  document.getElementById('mt-round').value = f.round;
+  document.getElementById('mt-home').value = f.home_team;
+  document.getElementById('mt-away').value = f.away_team;
+
+  loadMatchOptions();
+}
+
+/**
+ * 今の節の値。プルダウンを使っていても最終的にはここを見る。
+ *
+ * @returns {string}
+ */
+function currentRoundValue() {
+  return document.getElementById('mt-round').value.trim();
+}
+
+/**
+ * 対戦カードを大きく出す。
+ *
+ * 自動入力された相手が合っているかを、スコアを入れる前に確かめてもらう。
+ */
+function renderMatchCard() {
+  const box = document.getElementById('mt-card');
+  if (!box) return;
+
+  const t = currentMatchTeams();
+  const round = currentRoundValue();
+
+  if (!t.home || !t.away) {
+    box.innerHTML = '<p class="muted">節を選ぶと対戦カードが出ます。</p>';
+    return;
+  }
+
+  const me = reporterTeamId();
+  const mark = (id) => (id && id === me ? '<span class="chip-mine">自チーム</span>' : '');
+
+  box.innerHTML = `
+    <div class="match-card-round">${esc(round || '節が未入力です')}</div>
+    <div class="match-card-teams">
+      <span class="match-card-side">${esc(t.homeName)}${mark(t.home)}<em>ホーム</em></span>
+      <span class="match-card-vs">vs</span>
+      <span class="match-card-side">${esc(t.awayName)}${mark(t.away)}<em>アウェイ</em></span>
+    </div>`;
+}
+
 /**
  * 両軍の選手一覧を取得し、得点者・GK のプルダウンを組み直す。
  */
@@ -3170,19 +3440,30 @@ async function loadMatchOptions() {
 
   matchOptions = res.data;
 
-  // team ロールは自チームを自動で埋める
-  if (!home && !away && matchOptions.my_team) {
-    document.getElementById('mt-home').value = matchOptions.my_team;
-    return loadMatchOptions();
-  }
+  // 主催者はチームを持たないので、誰の代理で報告するかを選んでもらう。
+  // 対戦表から相手を引くのに報告者のチームが要る
+  document.getElementById('mt-team-wrap').style.display =
+    matchOptions.my_team ? 'none' : '';
 
+  renderMatchCard();
   renderGoalRows();
   renderShotInputs();
-  if (document.querySelectorAll('.gk-row').length === 0) {
-    const t = currentMatchTeams();
-    if (t.home) addGkRow(t.home);
-    if (t.away) addGkRow(t.away);
-  }
+  ensureGkRows();
+}
+
+/**
+ * 両チームぶんの GK 入力欄を用意する。
+ *
+ * 起用GKは必ず両チーム1人ずついるので、最初から枠を出しておく。
+ * 交代などで2人目が要るときだけ「GK を追加」を押してもらう。
+ */
+function ensureGkRows() {
+  const box = document.getElementById('mt-gks');
+  if (!box || box.querySelectorAll('.gk-row').length > 0) return;
+
+  const t = currentMatchTeams();
+  if (t.home) addGkRow(t.home);
+  if (t.away) addGkRow(t.away);
 }
 
 /**
@@ -3193,11 +3474,19 @@ async function loadMatchOptions() {
 function currentMatchTeams() {
   const homeSel = document.getElementById('mt-home');
   const awaySel = document.getElementById('mt-away');
+
+  // 対戦表から流し込んだチームが一覧に無いと selectedIndex が -1 になる。
+  // 辞退したチームの試合を後から訂正する場合などに起きる
+  const label = (sel, fallback) => {
+    const opt = sel.options[sel.selectedIndex];
+    return sel.value && opt ? opt.text : fallback;
+  };
+
   return {
     home: homeSel.value,
     away: awaySel.value,
-    homeName: homeSel.value ? homeSel.options[homeSel.selectedIndex].text : 'ホーム',
-    awayName: awaySel.value ? awaySel.options[awaySel.selectedIndex].text : 'アウェイ',
+    homeName: label(homeSel, 'ホーム'),
+    awayName: label(awaySel, 'アウェイ'),
   };
 }
 
@@ -3214,7 +3503,7 @@ function playerOptions(players, withOwnGoal, selected) {
   if (withOwnGoal) {
     html += '<option value="' + esc(matchOptions.own_goal_id) + '">— オウンゴール —</option>';
   }
-  (players || []).forEach((p) => {
+  sortByPositionGroup(players).forEach((p) => {
     const mark = p.current ? '' : '（離脱）';
     html +=
       '<option value="' + esc(p.player_id) + '"' +
@@ -3222,6 +3511,70 @@ function playerOptions(players, withOwnGoal, selected) {
       esc(p.detail_position || p.position) + ' ' + esc(p.name) + esc(mark) + '</option>';
   });
   return html;
+}
+
+/**
+ * 選手を FW → MF → DF → GK の順に並べる。
+ *
+ * サーバーは GK から並べて返す（スカッド表示はその順が読みやすい）が、
+ * 得点者を選ぶ場面では逆で、FW と MF が上にあってほしい。
+ *
+ * @param {Object[]} players
+ * @returns {Object[]} 元の配列は変えない
+ */
+function sortByPositionGroup(players) {
+  return (players || []).slice().sort((a, b) => {
+    const ia = POSITION_GROUPS.indexOf(a.position);
+    const ib = POSITION_GROUPS.indexOf(b.position);
+    if (ia !== ib) return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+    return String(a.name).localeCompare(String(b.name), 'ja');
+  });
+}
+
+/**
+ * ポジション大区分のプルダウン。
+ *
+ * @param {string} [selected]
+ * @returns {string}
+ */
+function positionGroupOptions(selected) {
+  return '<option value="">すべて</option>' +
+    POSITION_GROUPS.map((g) =>
+      '<option value="' + g + '"' + (selected === g ? ' selected' : '') + '>' + g + '</option>'
+    ).join('');
+}
+
+/**
+ * 大区分の選択に合わせて選手プルダウンを絞り込む。
+ *
+ * 13チームぶんのスカッドから1人を探すのは長い。先に FW・MF などを
+ * 選べば候補が数人に減る。大区分を選ばなければ全員が FW 順で並ぶので、
+ * 絞り込まずに探すこともできる。
+ *
+ * @param {HTMLSelectElement} groupSel
+ * @param {HTMLSelectElement} playerSel
+ * @param {Object[]} players
+ * @param {boolean} withOwnGoal
+ */
+function bindPositionFilter(groupSel, playerSel, players, withOwnGoal, initial) {
+  // 絞り込みを変えるたびに option を作り直すので、選ばれていた選手を覚えておく。
+  // 覚えないと、区分を見比べて戻ってきたときに選択が消える
+  let desired = initial || '';
+
+  const refill = () => {
+    const g = groupSel.value;
+    const list = g ? (players || []).filter((p) => p.position === g) : players;
+
+    playerSel.innerHTML = playerOptions(list, withOwnGoal, desired);
+
+    // 絞り込みで候補から外れたら空に戻す
+    if (playerSel.value !== desired) playerSel.value = '';
+    playerSel.dispatchEvent(new Event('change'));
+  };
+
+  playerSel.addEventListener('change', () => { desired = playerSel.value; });
+  groupSel.onchange = refill;
+  refill();
 }
 
 /**
@@ -3256,37 +3609,53 @@ function renderGoalRows() {
   }
 
   let html = '';
-  const build = (teamId, teamName, players, count) => {
+  const build = (teamId, teamName, count) => {
     for (let i = 0; i < count; i++) {
-      const p = pick(teamId, i);
       html += `
         <div class="goal-row" data-team="${esc(teamId)}">
-          <span class="goal-team">${esc(teamName)}</span>
-          <label>得点者
-            <select class="goal-scorer">${playerOptions(players, true, p.scorer)}</select>
-          </label>
-          <label>アシスト
-            <select class="goal-assist">${playerOptions(players, false, p.assist)}</select>
-          </label>
+          <span class="goal-team">${esc(teamName)}<em>${i + 1}点目</em></span>
+          <div class="goal-pick">
+            <span class="goal-pick-label">得点者</span>
+            <select class="goal-scorer-pos">${positionGroupOptions()}</select>
+            <select class="goal-scorer"></select>
+          </div>
+          <div class="goal-pick">
+            <span class="goal-pick-label">アシスト</span>
+            <select class="goal-assist-pos">${positionGroupOptions()}</select>
+            <select class="goal-assist"></select>
+          </div>
         </div>`;
     }
   };
 
-  build(t.home, t.homeName, matchOptions.home_players, homeScore);
-  build(t.away, t.awayName, matchOptions.away_players, awayScore);
+  build(t.home, t.homeName, homeScore);
+  build(t.away, t.awayName, awayScore);
 
   box.innerHTML = html;
 
-  // オウンゴールを選んだらアシストを無効にする
+  // 選手プルダウンの中身は大区分の選択に連動させる。
+  // ここで初期値の復元も済ませる
+  const counter = {};
   box.querySelectorAll('.goal-row').forEach((row) => {
+    const teamId = row.dataset.team;
+    counter[teamId] = counter[teamId] || 0;
+    const p = pick(teamId, counter[teamId]++);
+
+    const players = teamId === t.home ? matchOptions.home_players : matchOptions.away_players;
     const scorer = row.querySelector('.goal-scorer');
     const assist = row.querySelector('.goal-assist');
+
+    bindPositionFilter(row.querySelector('.goal-scorer-pos'), scorer, players, true, p.scorer);
+    bindPositionFilter(row.querySelector('.goal-assist-pos'), assist, players, false, p.assist);
+
+    // オウンゴールにアシストは付けられない
     const sync = () => {
       const isOg = scorer.value === matchOptions.own_goal_id;
       assist.disabled = isOg;
+      row.querySelector('.goal-assist-pos').disabled = isOg;
       if (isOg) assist.value = '';
     };
-    scorer.onchange = sync;
+    scorer.addEventListener('change', sync);
     sync();
   });
 }
@@ -3381,6 +3750,7 @@ function addGkRow(teamId, playerId, saves) {
         <option value="${esc(t.away)}">${esc(t.awayName)}</option>
       </select>
     </label>
+    <label>区分<select class="gk-pos">${positionGroupOptions('GK')}</select></label>
     <label>起用GK<select class="gk-player"></select></label>
     <label>セーブ<input type="number" min="0" class="gk-saves" value="${esc(saves || 0)}" /></label>
     <button type="button" class="btn btn-secondary btn-sm gk-remove">削除</button>`;
@@ -3390,10 +3760,13 @@ function addGkRow(teamId, playerId, saves) {
   const teamSel = row.querySelector('.gk-team');
   if (teamId) teamSel.value = teamId;
 
+  // 区分は GK で始める。特例で GK 登録でない選手が守った場合に備えて
+  // 区分を変えれば他のポジションからも選べる（サーバー側も GK 必須にしていない）
   const fillPlayers = () => {
     const isHome = teamSel.value === t.home;
     const players = isHome ? matchOptions.home_players : matchOptions.away_players;
-    row.querySelector('.gk-player').innerHTML = playerOptions(players, false, playerId);
+    bindPositionFilter(row.querySelector('.gk-pos'), row.querySelector('.gk-player'),
+      players, false, playerId);
   };
 
   teamSel.onchange = fillPlayers;
@@ -3458,6 +3831,86 @@ function collectMatchPayload() {
 }
 
 /**
+ * 第4画面。申請する内容をそのまま並べて見せる。
+ *
+ * 入力欄のままだと、4画面ぶんを見返すのに行き来が要る。
+ * 送る直前に一枚で見えると、チーム違い・スコア違いに気づける。
+ */
+function renderMatchReview() {
+  const box = document.getElementById('mt-review');
+  if (!box) return;
+
+  const p = collectMatchPayload();
+  const t = currentMatchTeams();
+  const nameOf = (teamId, playerId) => {
+    if (!playerId) return '';
+    if (playerId === (matchOptions && matchOptions.own_goal_id)) return 'オウンゴール';
+    const players = teamId === t.home ? matchOptions.home_players : matchOptions.away_players;
+    const hit = (players || []).find((x) => x.player_id === playerId);
+    return hit ? hit.name : playerId;
+  };
+
+  const goalRows = p.goals.map((g) => {
+    const team = g.team_id === t.home ? t.homeName : t.awayName;
+    const assist = nameOf(g.team_id, g.assist_id);
+    return `<tr>
+      <td>${esc(team)}</td>
+      <td>${esc(nameOf(g.team_id, g.scorer_id) || '未選択')}</td>
+      <td>${assist ? esc(assist) : '<span class="muted">—</span>'}</td>
+    </tr>`;
+  }).join('');
+
+  const statRow = (f) => {
+    const cell = (teamId) => {
+      const s = p.team_stats.find((x) => x.team_id === teamId);
+      return s ? s[f.kind] : 0;
+    };
+    return `<tr><td>${esc(f.label)}</td><td class="num">${esc(cell(t.home))}</td>
+            <td class="num">${esc(cell(t.away))}</td></tr>`;
+  };
+
+  const gkRows = p.gk_stats.map((g) => {
+    const team = g.team_id === t.home ? t.homeName : t.awayName;
+    return `<tr><td>${esc(team)}</td><td>${esc(nameOf(g.team_id, g.gk_player_id))}</td>
+            <td class="num">${esc(g.saves)}</td></tr>`;
+  }).join('');
+
+  const pk = (p.home_pk !== undefined && p.home_pk !== '' && p.away_pk !== '')
+    ? `<p class="muted">PK ${esc(p.home_pk)} — ${esc(p.away_pk)}</p>` : '';
+
+  box.innerHTML = `
+    <div class="match-card">
+      <div class="match-card-round">${esc(p.round)}</div>
+      <div class="match-card-teams">
+        <span class="match-card-side">${esc(t.homeName)}<em>ホーム</em></span>
+        <span class="match-card-score">${esc(p.home_score)} — ${esc(p.away_score)}</span>
+        <span class="match-card-side">${esc(t.awayName)}<em>アウェイ</em></span>
+      </div>
+      ${pk}
+    </div>
+
+    <h4 class="sub-head">得点者</h4>
+    ${p.goals.length === 0 ? '<p class="muted">スコアレスドローです。</p>' : `
+    <div class="table-wrap"><table class="data-table">
+      <thead><tr><th>チーム</th><th>得点者</th><th>アシスト</th></tr></thead>
+      <tbody>${goalRows}</tbody>
+    </table></div>`}
+
+    <h4 class="sub-head">起用 GK</h4>
+    ${p.gk_stats.length === 0 ? '<p class="muted">入力なし</p>' : `
+    <div class="table-wrap"><table class="data-table">
+      <thead><tr><th>チーム</th><th>GK</th><th>セーブ</th></tr></thead>
+      <tbody>${gkRows}</tbody>
+    </table></div>`}
+
+    <h4 class="sub-head">チームスタッツ</h4>
+    <div class="table-wrap"><table class="data-table">
+      <thead><tr><th>項目</th><th>${esc(t.homeName)}</th><th>${esc(t.awayName)}</th></tr></thead>
+      <tbody>${TEAM_STAT_FIELDS.map(statRow).join('')}</tbody>
+    </table></div>`;
+}
+
+/**
  * 試合を申請、または訂正モードなら訂正する。
  */
 async function onSubmitMatch() {
@@ -3468,6 +3921,7 @@ async function onSubmitMatch() {
   const missing = payload.goals.some((g) => !g.scorer_id);
   if (missing) {
     setResult('mt-result', false, '得点者が選ばれていない行があります。');
+    goMatchStep(2);
     return;
   }
 
@@ -3491,10 +3945,34 @@ async function onSubmitMatch() {
       correctingMatchId ? '訂正しました。' : '申請しました。主催者の承認をお待ちください。'
     );
     if (correctingMatchId) exitCorrectionMode();
+    else resetMatchForm();
     await loadMatchList();
   } else {
     setResult('mt-result', false, (correctingMatchId ? '訂正' : '申請') + 'できません: ' + res.error);
   }
+}
+
+/**
+ * 申請が通ったあと、次の試合を入れられる状態に戻す。
+ *
+ * スコアと得点者を残したまま第1画面に戻ると、次の試合の入力に
+ * 前の試合の得点者が紛れ込む。節とチームも選び直してもらう。
+ */
+function resetMatchForm() {
+  document.getElementById('mt-home-score').value = 0;
+  document.getElementById('mt-away-score').value = 0;
+  document.getElementById('mt-home-pk').value = '';
+  document.getElementById('mt-away-pk').value = '';
+  document.getElementById('mt-goals').innerHTML = '';
+  document.getElementById('mt-gks').innerHTML = '';
+  document.querySelectorAll('.shot-input').forEach((i) => { i.value = 0; });
+
+  const sel = document.getElementById('mt-round-select');
+  if (sel) sel.value = '';
+
+  ensureGkRows();
+  renderGoalRows();
+  goMatchStep(1);
 }
 
 /**
@@ -3506,6 +3984,7 @@ function exitCorrectionMode() {
   document.getElementById('mt-submit').textContent = '申請する';
   document.getElementById('mt-cancel').style.display = 'none';
   setResult('mt-result', true, '');
+  resetMatchForm();
 }
 
 /**
@@ -3538,6 +4017,15 @@ async function startCorrection(matchId) {
 
   await loadMatchOptions();
 
+  // 訂正では節を直せるようにしておく。
+  // 対戦表のプルダウンに合う節とは限らない（訂正の理由がそこにある場合もある）
+  const roundSel = document.getElementById('mt-round-select');
+  if (roundSel && [...roundSel.options].some((o) => o.value === '__free__')) {
+    roundSel.value = '__free__';
+  }
+  document.getElementById('mt-round-wrap').style.display = '';
+  document.getElementById('mt-round').value = match.round;
+
   // 得点者を反映
   const rows = [...document.querySelectorAll('.goal-row')];
   const byTeam = {};
@@ -3551,9 +4039,19 @@ async function startCorrection(matchId) {
     used[tid] = (used[tid] || 0);
     const g = (byTeam[tid] || [])[used[tid]++];
     if (!g) return;
-    r.querySelector('.goal-scorer').value = g.scorer_id;
-    r.querySelector('.goal-scorer').dispatchEvent(new Event('change'));
-    if (g.assist_id) r.querySelector('.goal-assist').value = g.assist_id;
+
+    // 区分は「すべて」のままなので全員が候補に並んでいる。
+    // change を飛ばして、絞り込み側にも選択を覚えさせる
+    const scorer = r.querySelector('.goal-scorer');
+    const assist = r.querySelector('.goal-assist');
+
+    scorer.value = g.scorer_id;
+    scorer.dispatchEvent(new Event('change'));
+
+    if (g.assist_id) {
+      assist.value = g.assist_id;
+      assist.dispatchEvent(new Event('change'));
+    }
   });
 
   // チームスタッツを反映
@@ -3574,7 +4072,10 @@ async function startCorrection(matchId) {
   document.getElementById('mt-form-title').textContent = '試合結果の訂正';
   document.getElementById('mt-submit').textContent = 'この内容で訂正する';
   document.getElementById('mt-cancel').style.display = 'inline-block';
-  setResult('mt-result', true, '訂正モードです。内容を書き換えて「訂正する」を押してください。');
+  setResult('mt-result', true, '訂正モードです。第1画面から順に見直して、最後に「訂正する」を押してください。');
+
+  renderMatchCard();
+  goMatchStep(1);
 
   document.getElementById('mt-form-title').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
@@ -4167,11 +4668,111 @@ async function renderSeasonAdmin() {
     document.getElementById('dv-save').onclick = onSaveDivisions;
     document.getElementById('dv-all-gm1').onclick = onAllGm1;
     document.getElementById('sc-save').onclick = onSaveSuperCup;
+    document.getElementById('fx-generate').onclick = onGenerateFixtures;
+    document.getElementById('fx-stage').onchange = loadFixtureAdmin;
     bindMoneyEcho('pn-amount', 'pn-amount-echo');
     sel.dataset.bound = '1';
   }
 
   await loadSeasonAdmin();
+}
+
+// ---------------------------------------------------------------------------
+// 対戦表（主催者）
+// ---------------------------------------------------------------------------
+
+/**
+ * 対戦表を作る。既にあれば上書きの確認を求める。
+ */
+async function onGenerateFixtures() {
+  const btn = document.getElementById('fx-generate');
+  const legs = document.getElementById('fx-legs').value;
+  const replace = document.getElementById('fx-replace').checked;
+
+  if (replace && !confirm('今ある対戦表を消して作り直します。よろしいですか？')) return;
+
+  btn.disabled = true;
+  setResult('fx-result', true, '作成中...');
+
+  const payload = {
+    season_id: document.getElementById('sp-season').value,
+    stage: document.getElementById('fx-stage').value,
+    replace,
+  };
+  if (legs) payload.legs = Number(legs);
+
+  const res = await callApi('generateFixtures', payload);
+  btn.disabled = false;
+
+  if (res.ok) {
+    const d = res.data;
+    setResult('fx-result', true,
+      d.rounds + '節・' + d.added + '試合を作りました' +
+      (d.divisions > 1 ? '（' + d.divisions + 'ディビジョン）' : '') + '。');
+    document.getElementById('fx-replace').checked = false;
+    await loadFixtureAdmin();
+  } else {
+    setResult('fx-result', false, '作れません: ' + res.error);
+  }
+}
+
+/**
+ * 今の対戦表を節ごとに並べる。ホームとアウェイはその場で入れ替えられる。
+ */
+async function loadFixtureAdmin() {
+  const seasonId = document.getElementById('sp-season').value;
+  if (!seasonId) return;
+
+  setLoading('fx-list');
+
+  const res = await callApi('getFixtures', {
+    season_id: seasonId,
+    stage: document.getElementById('fx-stage').value,
+  });
+
+  if (!res.ok) {
+    setError('fx-list', '対戦表を取得できませんでした: ' + res.error);
+    return;
+  }
+
+  const rows = res.data.fixtures;
+  const box = document.getElementById('fx-list');
+
+  if (rows.length === 0) {
+    box.innerHTML = '<p class="muted">まだ対戦表がありません。</p>';
+    return;
+  }
+
+  // 節ごとにまとめる。節をまたいで並べると、どこが1節分か読めない
+  const byRound = [];
+  rows.forEach((f) => {
+    let g = byRound.find((x) => x.round === f.round);
+    if (!g) { g = { round: f.round, items: [] }; byRound.push(g); }
+    g.items.push(f);
+  });
+
+  box.innerHTML = byRound.map((g) => `
+    <div class="fixture-round">
+      <h4>${esc(g.round)}</h4>
+      ${g.items.map((f) => `
+        <div class="fixture-row">
+          ${f.division ? '<span class="chip-div">' + esc(f.division) + '</span>' : ''}
+          <span class="fixture-home">${esc(f.home_team_name)}</span>
+          <span class="muted">vs</span>
+          <span class="fixture-away">${esc(f.away_team_name)}</span>
+          <button type="button" class="btn btn-sm btn-secondary fx-swap"
+                  data-id="${esc(f.fixture_id)}">H/A 入替</button>
+        </div>`).join('')}
+    </div>`).join('');
+
+  box.querySelectorAll('.fx-swap').forEach((b) => {
+    b.onclick = async () => {
+      b.disabled = true;
+      const r = await callApi('swapFixtureSides', { fixture_id: b.dataset.id });
+      if (r.ok) await loadFixtureAdmin();
+      else { b.disabled = false; setResult('fx-result', false, '入れ替えできません: ' + r.error); }
+    };
+  });
 }
 
 /**
@@ -4204,6 +4805,7 @@ async function loadSeasonAdmin() {
   await loadClaimAdmin();
   await loadWithdraw();
   await loadMarketWindows();
+  await loadFixtureAdmin();
   await loadScheduleAdmin();
   await loadManagerAdmin();
   await loadSponsorAdmin();

@@ -250,6 +250,30 @@ function _getSheetDefinitions() {
       ],
     },
     {
+      // §4.18 Fixtures ─ 対戦表（誰と誰がいつ当たるか）
+      //
+      // Matches とは別に持つ。Matches は「実際に行われた試合」で、
+      // 申請されて初めて作られる。こちらは試合の**予定**で、
+      // 開幕前に全節ぶんが並ぶ。
+      //
+      // 1つの表にまとめて status で分けると、未実施の行が
+      // 順位表に混ざる事故が起きる。順位表は status=承認 の
+      // Matches だけを見るので、予定はそもそも別の場所に置く。
+      name: "Fixtures",
+      spec: "SPEC.md §4.18",
+      headers: [
+        "fixture_id", // string  主キー
+        "season_id",  // string
+        "stage",      // enum    league / tournament / supercup
+        "division",   // enum    GM1 / GM2（リーグ戦以外は空）
+        "round",      // string  節 / ラウンド名
+        "sort_order", // number  節の並び順。"第10節" を文字列で並べると10が2の前に来る
+        "home_team",  // string  チームID
+        "away_team",  // string  チームID
+        "note",       // string  備考
+      ],
+    },
+    {
       // §4.11 MatchGoals ─ 得点・アシスト記録
       name: "MatchGoals",
       spec: "SPEC.md §4.11",

@@ -420,69 +420,112 @@
       <div class="tab-panel" data-panel="match" style="display:none;">
         <div class="card">
           <h2 id="mt-form-title">試合結果の申請</h2>
-          <div class="filter-row">
-            <label>
-              シーズン
-              <select id="mt-season"></select>
-            </label>
-            <label>
-              種別
-              <select id="mt-stage">
-                <option value="league">リーグ戦</option>
-                <option value="tournament">GMリーグ杯</option>
-                <option value="supercup">GMスーパーカップ</option>
-              </select>
-            </label>
-            <label>
-              節 / ラウンド
-              <input type="text" id="mt-round" placeholder="例: 第1節" />
-            </label>
-          </div>
 
-          <div class="filter-row" id="mt-tie-row" style="display:none;">
-            <label>
-              tie_id <span class="unit-hint">2レグを束ねるID</span>
-              <input type="text" id="mt-tie" placeholder="例: qf1" />
-            </label>
-            <label>
-              レグ
-              <select id="mt-leg">
-                <option value="-">-</option>
-                <option value="1">1st</option>
-                <option value="2">2nd</option>
-              </select>
-            </label>
-          </div>
+          <ol class="wizard-steps" id="mt-steps">
+            <li data-step="1"><span class="wizard-no">1</span>対戦とスコア</li>
+            <li data-step="2"><span class="wizard-no">2</span>得点者とGK</li>
+            <li data-step="3"><span class="wizard-no">3</span>チームスタッツ</li>
+            <li data-step="4"><span class="wizard-no">4</span>確認</li>
+          </ol>
 
-          <h3 class="sub-head">スコア</h3>
-          <div class="score-row">
-            <div class="score-side">
-              <label>ホーム<select id="mt-home"></select></label>
-              <input type="number" id="mt-home-score" min="0" value="0" class="score-input" />
+          <!-- ── 第1画面: 対戦カードの確認とスコア ── -->
+          <div class="wizard-pane" data-step="1">
+            <div class="filter-row">
+              <label>
+                シーズン
+                <select id="mt-season"></select>
+              </label>
+              <label>
+                種別
+                <select id="mt-stage">
+                  <option value="league">リーグ戦</option>
+                  <option value="tournament">GMリーグ杯</option>
+                  <option value="supercup">GMスーパーカップ</option>
+                </select>
+              </label>
+              <label id="mt-team-wrap" style="display:none;">
+                報告するチーム <span class="unit-hint">主催者は代理報告できます</span>
+                <select id="mt-report-team"></select>
+              </label>
             </div>
-            <span class="score-vs">—</span>
-            <div class="score-side">
-              <input type="number" id="mt-away-score" min="0" value="0" class="score-input" />
-              <label>アウェイ<select id="mt-away"></select></label>
+
+            <div class="filter-row">
+              <label id="mt-round-select-wrap" style="display:none;">
+                節
+                <select id="mt-round-select"></select>
+              </label>
+              <label id="mt-round-wrap">
+                節 / ラウンド
+                <input type="text" id="mt-round" placeholder="例: 第1節" />
+              </label>
+            </div>
+
+            <div class="filter-row" id="mt-tie-row" style="display:none;">
+              <label>
+                tie_id <span class="unit-hint">2レグを束ねるID</span>
+                <input type="text" id="mt-tie" placeholder="例: qf1" />
+              </label>
+              <label>
+                レグ
+                <select id="mt-leg">
+                  <option value="-">-</option>
+                  <option value="1">1st</option>
+                  <option value="2">2nd</option>
+                </select>
+              </label>
+            </div>
+
+            <div id="mt-card" class="match-card"></div>
+
+            <h3 class="sub-head">スコア</h3>
+            <div class="score-row">
+              <div class="score-side">
+                <label>ホーム<select id="mt-home"></select></label>
+                <input type="number" id="mt-home-score" min="0" value="0" class="score-input" />
+              </div>
+              <span class="score-vs">—</span>
+              <div class="score-side">
+                <input type="number" id="mt-away-score" min="0" value="0" class="score-input" />
+                <label>アウェイ<select id="mt-away"></select></label>
+              </div>
+            </div>
+            <div class="filter-row" id="mt-pk-row" style="display:none;">
+              <label>ホーム PK<input type="number" id="mt-home-pk" min="0" /></label>
+              <label>アウェイ PK<input type="number" id="mt-away-pk" min="0" /></label>
             </div>
           </div>
-          <div class="filter-row" id="mt-pk-row" style="display:none;">
-            <label>ホーム PK<input type="number" id="mt-home-pk" min="0" /></label>
-            <label>アウェイ PK<input type="number" id="mt-away-pk" min="0" /></label>
+
+          <!-- ── 第2画面: 得点者・アシストと起用GK ── -->
+          <div class="wizard-pane" data-step="2" style="display:none;">
+            <h3 class="sub-head">得点者とアシスト</h3>
+            <p class="muted note-sm">
+              第1画面で入力したスコアの数だけ枠が出ます。
+              ポジションを選ぶと、その区分の選手だけが並びます。
+            </p>
+            <div id="mt-goals"></div>
+
+            <h3 class="sub-head">起用 GK とセーブ数</h3>
+            <div id="mt-gks"></div>
+            <button type="button" id="mt-add-gk" class="btn btn-secondary btn-sm">GK を追加</button>
           </div>
 
-          <h3 class="sub-head">得点者</h3>
-          <div id="mt-goals"></div>
+          <!-- ── 第3画面: チームスタッツ ── -->
+          <div class="wizard-pane" data-step="3" style="display:none;">
+            <h3 class="sub-head">チームスタッツ</h3>
+            <p class="muted note-sm">eFootball のリザルト画面を上から順に写せる並びです。</p>
+            <div id="mt-shots"></div>
+          </div>
 
-          <h3 class="sub-head">チームスタッツ</h3>
-          <div id="mt-shots"></div>
-
-          <h3 class="sub-head">起用 GK とセーブ数</h3>
-          <div id="mt-gks"></div>
-          <button type="button" id="mt-add-gk" class="btn btn-secondary btn-sm">GK を追加</button>
+          <!-- ── 第4画面: 確認 ── -->
+          <div class="wizard-pane" data-step="4" style="display:none;">
+            <h3 class="sub-head">この内容で申請します</h3>
+            <div id="mt-review"></div>
+          </div>
 
           <div class="form-actions">
-            <button type="button" id="mt-submit" class="btn btn-primary">申請する</button>
+            <button type="button" id="mt-back" class="btn btn-secondary" style="display:none;">戻る</button>
+            <button type="button" id="mt-next" class="btn btn-primary">次へ</button>
+            <button type="button" id="mt-submit" class="btn btn-primary" style="display:none;">申請する</button>
             <button type="button" id="mt-cancel" class="btn btn-secondary btn-sm" style="display:none;">
               訂正をやめる
             </button>
@@ -815,6 +858,42 @@
             </div>
           </div>
           <div id="mw-derived"></div>
+        </div>
+
+        <div class="card">
+          <h2>対戦表</h2>
+          <p class="muted">
+            <strong>試合結果の報告で「節を選ぶと相手が入る」ための表です。</strong>
+            ディビジョンごとに総当たりを自動で組み、あとから入れ替えられます。
+            順位表には影響しません（集計は承認済みの試合だけを見ます）。
+          </p>
+          <div class="filter-row">
+            <label>
+              種別
+              <select id="fx-stage">
+                <option value="league">リーグ戦</option>
+                <option value="tournament">GMリーグ杯</option>
+                <option value="supercup">GMスーパーカップ</option>
+              </select>
+            </label>
+            <label>
+              巡回
+              <select id="fx-legs">
+                <option value="">シーズン設定に従う</option>
+                <option value="1">1巡（片道）</option>
+                <option value="2">2巡（ホーム＆アウェイ）</option>
+              </select>
+            </label>
+            <label class="check-label">
+              <input type="checkbox" id="fx-replace" />
+              既存の対戦表を作り直す
+            </label>
+          </div>
+          <div class="form-actions">
+            <button type="button" id="fx-generate" class="btn btn-primary">対戦表を作る</button>
+            <span id="fx-result" class="form-msg"></span>
+          </div>
+          <div id="fx-list"></div>
         </div>
 
         <div class="card">
