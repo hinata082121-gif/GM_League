@@ -183,6 +183,7 @@ function showTab(name) {
   if (name === 'archive') renderArchive();
   if (name === 'entry') renderEntry();
   if (name === 'transfer') renderTransfer();
+  if (name === 'txlog') renderTransferLog();
   if (name === 'protect') renderProtect();
   if (name === 'match') renderMatch();
   if (name === 'stats') renderStats();
@@ -2240,13 +2241,19 @@ function renderTransferPlayerSelect() {
     '<option value="">選手を選択</option>' +
     list
       .map((p) => {
+        const isSpecial = method === '特別' || method === '無効化特別';
         const blockedPending = p.pending;
         const blockedProtect = method === '特別' && p.protected;
-        const disabled = blockedPending || blockedProtect ? ' disabled' : '';
+        // 期限付き・オークション・特別で今シーズン既に動いた選手。
+        // プロテクトと違い無効化特別でも破れないので、両方で落とす
+        const blockedMoved = isSpecial && p.special_blocked;
+        const disabled =
+          blockedPending || blockedProtect || blockedMoved ? ' disabled' : '';
 
         let note = '';
         if (blockedPending) note = ' ⏳承認待ちあり';
         else if (blockedProtect) note = ' 🛡プロテクト中';
+        else if (blockedMoved) note = ' 🔒今季移籍済';
         else if (p.protected) note = ' 🛡';
 
         return '<option value="' + esc(p.player_id) + '"' + disabled + '>' +
@@ -2461,6 +2468,121 @@ async function onRespondTransfer(transferId, agree) {
   } else {
     setResult('tr-list-result', false, '失敗: ' + res.error);
   }
+}
+
+// ---------------------------------------------------------------------------
+// 画面4b: 移籍ログ
+// ---------------------------------------------------------------------------
+
+/** getTransferLog の結果。絞り込みで使い回す */
+let transferLog = null;
+
+/**
+ * 移籍ログの画面を描画する。
+ *
+ * 「移籍」タブが自チームの手続きの場所なのに対し、ここは
+ * **リーグ全体で誰がどこへ動いたか**を全員が同じものとして見る場所。
+ * 市場が閉じていても見られるようにしている（過去の動きを追うため）。
+ */
+async function renderTransferLog() {
+  const seasons = await loadActiveSeasons();
+  fillSelect('tl-season', seasons, 'season_id', 'name');
+
+  ['tl-season', 'tl-window', 'tl-method'].forEach((id) => {
+    const sel = document.getElementById(id);
+    if (!sel || sel.dataset.bound) return;
+    sel.onchange = id === 'tl-season' ? loadTransferLog : renderTransferLogTable;
+    sel.dataset.bound = '1';
+  });
+
+  await loadTransferLog();
+}
+
+/**
+ * 選択中シーズンの移籍ログを取得する。
+ */
+async function loadTransferLog() {
+  const seasonId = document.getElementById('tl-season').value;
+  if (!seasonId) return;
+
+  setLoading('tl-list');
+
+  const res = await callApi('getTransferLog', { season_id: seasonId });
+  if (!res.ok) {
+    setError('tl-list', '移籍ログを取得できませんでした: ' + res.error);
+    return;
+  }
+
+  transferLog = res.data;
+  fillTransferLogMethods();
+  renderTransferLogTable();
+}
+
+/**
+ * 移籍形態の絞り込みに、実際に使われている形態だけを並べる。
+ *
+ * 全形態を固定で並べると、1件も無い形態を選んで空表になる。
+ */
+function fillTransferLogMethods() {
+  const sel = document.getElementById('tl-method');
+  if (!sel) return;
+
+  const prev = sel.value;
+  const methods = [];
+  (transferLog.rows || []).forEach((r) => {
+    if (r.method && methods.indexOf(r.method) === -1) methods.push(r.method);
+  });
+
+  sel.innerHTML =
+    '<option value="">すべて</option>' +
+    methods.map((m) => '<option value="' + esc(m) + '">' + esc(m) + '</option>').join('');
+
+  if (prev && methods.indexOf(prev) !== -1) sel.value = prev;
+}
+
+/**
+ * 移籍ログの表を描く。列は選手名・移籍元・移籍先・金額・移籍形態のみ。
+ */
+function renderTransferLogTable() {
+  const box = document.getElementById('tl-list');
+  if (!box || !transferLog) return;
+
+  const win = document.getElementById('tl-window').value;
+  const method = document.getElementById('tl-method').value;
+
+  const rows = (transferLog.rows || []).filter((r) => {
+    if (win && String(r.window) !== win) return false;
+    if (method && r.method !== method) return false;
+    return true;
+  });
+
+  if (rows.length === 0) {
+    box.innerHTML = '<p class="muted">成立した移籍はまだありません。</p>';
+    return;
+  }
+
+  const body = rows
+    .map(
+      (r) => `<tr>
+        <td>${esc(r.player_name)}</td>
+        <td>${r.from_team_name ? esc(r.from_team_name) : '<span class="muted">—</span>'}</td>
+        <td>${esc(r.to_team_name)}</td>
+        <td class="num">${formatMoney(r.amount)}</td>
+        <td>${esc(r.method)}</td>
+      </tr>`
+    )
+    .join('');
+
+  box.innerHTML = `
+    <p class="muted">${rows.length} 件（新しい順）</p>
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr><th>選手名</th><th>移籍元</th><th>移籍先</th><th>金額</th><th>移籍形態</th></tr>
+        </thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>`;
 }
 
 // ---------------------------------------------------------------------------

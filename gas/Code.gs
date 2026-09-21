@@ -274,6 +274,9 @@ function _route(action, token, payload) {
     case "listTransfers":
       return listTransfers(token, payload);
 
+    case "getTransferLog":
+      return getTransferLog(token, payload);
+
     case "requestTransfer":
       return requestTransfer(token, payload);
 

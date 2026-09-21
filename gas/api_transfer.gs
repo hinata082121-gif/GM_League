@@ -294,6 +294,90 @@ function _teamSquadCount(seasonId, teamId, pending) {
 }
 
 /**
+ * 当該シーズンに、その選手がどの形態で動いたかを集める。
+ *
+ * 承認済みの移籍履歴と、今の在籍の獲得形態の両方を見る。
+ * 履歴だけだと主催者が取り込みで直接入れた在籍を取りこぼし、
+ * 在籍だけだと「第1次で特別、第2次で完全移籍」のように
+ * 後から上書きされた経緯が消えるため。
+ *
+ * @param {string} seasonId
+ * @returns {Object} player_id → { 形態: true }
+ */
+function _seasonMethodMap(seasonId) {
+  var map = {};
+
+  var mark = function (pid, method) {
+    if (!pid || !method) return;
+    if (!map[pid]) map[pid] = {};
+    map[pid][method] = true;
+  };
+
+  getSheetData("Transfers").forEach(function (t) {
+    if (_str(t.season_id) !== seasonId) return;
+    if (_str(t.status) !== TX_APPROVED) return;
+    mark(_str(t.player_id), _str(t.method));
+  });
+
+  getSheetData("Rosters").forEach(function (r) {
+    if (_str(r.season_id) !== seasonId) return;
+    if (_str(r.status) !== ROSTER_ACTIVE) return;
+    mark(_str(r.player_id), _str(r.acquisition_type));
+  });
+
+  return map;
+}
+
+/**
+ * 特別ルール / 無効化特別ルールで獲得できない理由を返す。獲得できるなら空文字。
+ *
+ * ▶ なぜ制限するのか
+ *   期限付き・オークションは**当該シーズン限りの契約**で、シーズン末に手元を離れる。
+ *   そこから更に強奪できると、借りた側は代価を払ったのに一度も使えないまま失う。
+ *
+ *   特別・無効化特別で既に動いた選手を除くのは、強奪の連鎖を止めるため。
+ *   金額を出せるチームが同じ選手を何度も奪い合う展開になり、
+ *   最初に奪われたチームだけが一方的に損をする。
+ *
+ *   **プロテクトはここでは見ない。** 無効化特別はプロテクトを破るための形態で、
+ *   プロテクトの判定は呼び出し側に分けてある。
+ *
+ * @param {Object} methods _seasonMethodMap の該当選手の値（無ければ null）
+ * @returns {string} 理由。獲得できるなら空文字
+ */
+function _specialRuleBlock(methods) {
+  if (!methods) return "";
+
+  for (var i = 0; i < EXPIRING_METHODS.length; i++) {
+    if (methods[EXPIRING_METHODS[i]]) {
+      return "この選手は今シーズン「" + EXPIRING_METHODS[i] +
+        "」で移籍しています。期限付き・オークションで動いた選手は特別ルールの対象にできません。";
+    }
+  }
+
+  if (methods[METHOD_SPECIAL] || methods[METHOD_OVERRIDE]) {
+    return "この選手は今シーズン既に特別ルールで移籍しています。同じシーズンに二度は使えません。";
+  }
+
+  return "";
+}
+
+/**
+ * 日時を並べ替え用の数値にする。読めなければ 0。
+ *
+ * Sheets から来る値は Date だが、取り込みの経路によっては文字列のことがある。
+ * 文字列のまま比較すると書式しだいで順番が崩れるので、必ず数値に寄せる。
+ *
+ * @param {*} v
+ * @returns {number} エポックミリ秒
+ */
+function _timeValue(v) {
+  if (v === null || v === undefined || v === "") return 0;
+  var ms = new Date(v).getTime();
+  return isNaN(ms) ? 0 : ms;
+}
+
+/**
  * 選手が指定シーズン・ウィンドウでプロテクトされているか判定する。
  * Protections シートは Phase 4 で書き込まれる。空なら常に false。
  *
@@ -460,6 +544,9 @@ function _collectTransferTargets(seasonId, myTeamId, windowNo, pending) {
     protectedOf[_str(p.player_id)] = true;
   });
 
+  // 今シーズン既に動いていて、強奪の対象にできない選手
+  var methodMap = _seasonMethodMap(seasonId);
+
   var targets = [];
   var freeAgents = [];
 
@@ -488,6 +575,12 @@ function _collectTransferTargets(seasonId, myTeamId, windowNo, pending) {
     base.team_id = owner;
     base.team_name = teamNames[owner] || owner;
     base.protected = !!protectedOf[pid];
+
+    // 画面で理由を出せるようにしておく。実際の拒否は _createTransfer 側
+    var blocked = _specialRuleBlock(methodMap[pid]);
+    base.special_blocked = !!blocked;
+    base.special_reason = blocked;
+
     targets.push(base);
   });
 
@@ -566,6 +659,76 @@ function listTransfers(token, payload) {
 
   rows.reverse();
   return { ok: true, data: rows };
+}
+
+/**
+ * 移籍ログ。承認済みの移籍を新しい順に返す。
+ *
+ * ▶ listTransfers と何が違うか
+ *   listTransfers は「自分が関与する申請の進行状況」を見るためのもので、
+ *   参加者には自チーム分しか返さない。こちらは**リーグ全体で誰がどこへ動いたか**を
+ *   全員が同じものとして見るための一覧なので、チームで絞らない。
+ *
+ *   代わりに承認済みだけを返す（原則5）。承認前の申請が混ざると
+ *   「成立していない移籍」が成立したものとして読まれる。
+ *
+ * 返す項目は選手名・移籍元・移籍先・金額・移籍形態に絞っている。
+ * 交渉額の内訳や売り手の受取額まで出すと、当事者しか知らないはずの
+ * 交渉の中身が全チームに見えてしまう。
+ *
+ * payload: { season_id?: string }  省略時は進行中のシーズン
+ *
+ * @param {string} token
+ * @param {Object} payload
+ * @returns {{ ok: boolean, data?: Object, error?: string }}
+ */
+function getTransferLog(token, payload) {
+  var auth = _requireUser(token);
+  if (!auth.ok) return auth;
+
+  var seasonId = _str(payload.season_id) || _latestSeasonId();
+  if (!seasonId) return { ok: false, error: "シーズンが見つかりません。" };
+
+  var playerNames = {};
+  getSheetData("Players").forEach(function (p) {
+    playerNames[_str(p.player_id)] = _str(p.name);
+  });
+
+  var teamNames = {};
+  getSheetData("Teams").forEach(function (t) {
+    teamNames[_str(t.team_id)] = _str(t.name);
+  });
+
+  var rows = [];
+  getSheetData("Transfers").forEach(function (t) {
+    if (_str(t.season_id) !== seasonId) return;
+    if (_str(t.status) !== TX_APPROVED) return;
+
+    var pid = _str(t.player_id);
+    var from = _str(t.from_team);
+    var to = _str(t.to_team);
+
+    rows.push({
+      window:         _num(t.window),
+      at:             _iso(t.registered_at),
+      _ms:            _timeValue(t.registered_at),
+      player_name:    playerNames[pid] || pid,
+      from_team_name: from ? (teamNames[from] || from) : "",
+      to_team_name:   to ? (teamNames[to] || to) : "",
+      amount:         _num(t.cost_to_buyer),
+      method:         _str(t.method),
+    });
+  });
+
+  // 新しい順。文字列ではなく時刻の値で比べる。
+  // ISO 以外の書式で入っていると、文字列比較では曜日から並んでしまう
+  rows.sort(function (a, b) {
+    return b._ms - a._ms;
+  });
+
+  rows.forEach(function (r) { delete r._ms; });
+
+  return { ok: true, data: { season_id: seasonId, rows: rows } };
 }
 
 // =============================================================================
@@ -734,6 +897,13 @@ function _createTransfer(args) {
       ok: false,
       error: "この選手はプロテクトされているため特別ルールでは獲得できません。",
     };
+  }
+
+  // 期限付き・オークション・特別で既に動いた選手は強奪の対象外。
+  // プロテクトと違い、無効化特別でも破れない
+  if (method === METHOD_SPECIAL || method === METHOD_OVERRIDE) {
+    var blocked = _specialRuleBlock(_seasonMethodMap(seasonId)[playerId]);
+    if (blocked) return { ok: false, error: blocked };
   }
 
   var at = now();
