@@ -9,6 +9,7 @@
  * 主催者向け:
  *   registerAuction    — オークション結果の登録（入札はツール外）
  *   listTransfers      — 移籍一覧
+ *   getTransferLog     — 移籍ログ（承認済みを全員に）
  *   approveTransfer    — 承認（Rosters 移動 + BudgetTx 計上）
  *   rejectTransfer     — 差戻
  *
