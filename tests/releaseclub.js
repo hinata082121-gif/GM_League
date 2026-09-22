@@ -140,15 +140,19 @@ t('継続参加者どうしの移籍では手放させない', () => {
   eq(rostersOf(e, 's1', 't_a').filter((x) => x[3] === 'u1').length, 1);
 });
 
-t('新規参加でもスカッドを組んだ後は手放させない', () => {
+t('新規参加クラブがエントリーを出した後でも手放させる', () => {
+  // 保有されている選手は他チームのエントリーに入れられない。
+  // 先に手放させないと、新クラブは永久に登録できないまま詰む。
+  // 「スカッドを組む前だけ」に絞っていたせいで、マリノスのエントリー後に
+  // 知念・二田を手放させられなくなった
   const e = addNewClub(env(), '川崎フロンターレ');
   moveClub(e, 'u1', '川崎フロンターレ');
-  // 川崎が既に1人登録している
   e.__addRow('Rosters', { roster_id: 'rn1', season_id: 's1', team_id: 't_n', player_id: 'u4', status: '在籍', acquisition_type: 'エントリー', acquired_cost: 0 });
+  e.__dropCache('Rosters');
 
   const r = call(e, ['u1']);
-  eq(r.data.released.length, 0);
-  ok(r.data.skipped[0].reason.indexOf('既にスカッド') !== -1, r.data.skipped[0].reason);
+  eq(r.data.released.length, 1, r.data.skipped.length ? r.data.skipped[0].reason : '');
+  eq(r.data.claims.length, 1);
 });
 
 t('オークションの選手には請求を立てない', () => {

@@ -71,6 +71,24 @@ function env(over) {
   return e;
 }
 
+/**
+ * 大会の外へ出たことにして現実移籍を反映する。
+ *
+ * applyRealTransfers は現実クラブが参加クラブの選手を弾くようになった。
+ * 「リーグ外へ移籍した」を作るには、先に現実クラブを不参加クラブへ移す。
+ * 川崎フロンターレは Clubs にあるが Teams には無いので、不参加クラブになる。
+ */
+function applyOut(e, ...playerIds) {
+  const rows = e.__rows('Players');
+  const col = rows[0];
+  playerIds.forEach((pid) => {
+    const r = rows.slice(1).find((x) => x[col.indexOf('player_id')] === pid);
+    if (r) r[col.indexOf('real_club')] = '川崎フロンターレ';
+  });
+  e.__dropCache('Players');
+  return e.applyRealTransfers('ORG', { season_id: 's1', player_ids: playerIds });
+}
+
 const balance = (e, teamId) => {
   let sum = 0;
   e.__rows('BudgetTx').slice(1).forEach((r) => { if (r[2] === teamId) sum += Number(r[3]) || 0; });
@@ -84,4 +102,4 @@ const rostersOf = (e, seasonId, teamId) =>
 
 const setDeadline = (e, iso) => { e.__rows('Seasons')[1][6] = iso; };
 
-module.exports = { env, balance, claimsOf, rostersOf, setDeadline };
+module.exports = { env, balance, claimsOf, rostersOf, setDeadline, applyOut };

@@ -1,5 +1,5 @@
 const { t, eq, ok, report } = require('./harness');
-const { env } = require('./cl-fixture');
+const { env, applyOut } = require('./cl-fixture');
 
 // 金額の丸め。
 //
@@ -55,7 +55,7 @@ function claimFor(e, cost) {
   r[col.indexOf('acquired_cost')] = cost;
   e.__dropCache('Rosters');
 
-  const res = e.applyRealTransfers('ORG', { season_id: 's1', player_ids: ['u1'] });
+  const res = applyOut(e, 'u1');
   if (!res.ok) throw new Error(res.error);
 
   return e.getMyClaims('A', { season_id: 's1' }).data.claims[0];

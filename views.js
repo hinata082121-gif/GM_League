@@ -4838,11 +4838,87 @@ async function renderSeasonAdmin() {
     document.getElementById('sc-save').onclick = onSaveSuperCup;
     document.getElementById('fx-generate').onclick = onGenerateFixtures;
     document.getElementById('fx-stage').onchange = loadFixtureAdmin;
+    document.getElementById('au-run').onclick = onAuditEligibility;
     bindMoneyEcho('pn-amount', 'pn-amount-echo');
     sel.dataset.bound = '1';
   }
 
   await loadSeasonAdmin();
+}
+
+// ---------------------------------------------------------------------------
+// 取りこぼしの点検（主催者）
+// ---------------------------------------------------------------------------
+
+/**
+ * 現実クラブと保有の食い違いを洗い出す。
+ *
+ * 読み取りだけで、ここからは何も書き換えない。
+ * 直すのは「現実移籍の反映」と「補填の請求」の各画面から行う。
+ */
+async function onAuditEligibility() {
+  const btn = document.getElementById('au-run');
+  btn.disabled = true;
+  setResult('au-result', true, '点検中...');
+
+  const res = await callApi('auditPlayerEligibility', {
+    season_id: document.getElementById('sp-season').value,
+  });
+
+  btn.disabled = false;
+  const box = document.getElementById('au-list');
+
+  if (!res.ok) {
+    setResult('au-result', false, '点検できません: ' + res.error);
+    return;
+  }
+
+  const d = res.data;
+
+  if (d.clean) {
+    setResult('au-result', true, '');
+    box.innerHTML = '<p class="msg-ok">取りこぼしはありません。</p>';
+    return;
+  }
+
+  setResult('au-result', false,
+    (d.to_release.length + d.wrongly_ineligible.length) + ' 件の要対応があります。');
+
+  const release = d.to_release.length === 0 ? '' : `
+    <h4 class="sub-head">新規クラブへ移ったのに手放されていない（${d.to_release.length}名）</h4>
+    <p class="muted note-sm">
+      保有されている選手は新クラブのエントリーに入れられません。
+      <strong>「現実移籍の反映」の新規クラブへの手放しで処理してください。</strong>
+      保有チームには補填の請求が立ちます。
+    </p>
+    <div class="table-wrap"><table class="data-table">
+      <thead><tr><th>選手</th><th>現実クラブ</th><th>保有</th><th>獲得額</th></tr></thead>
+      <tbody>${d.to_release.map((x) => `<tr>
+        <td>${esc(x.name)}</td>
+        <td>${esc(x.real_club)}</td>
+        <td>${esc(x.held_by)}</td>
+        <td class="num">${formatMoney(x.acquired_cost)}</td>
+      </tr>`).join('')}</tbody>
+    </table></div>`;
+
+  const wrong = d.wrongly_ineligible.length === 0 ? '' : `
+    <h4 class="sub-head">参加クラブにいるのに大会対象外（${d.wrongly_ineligible.length}名）</h4>
+    <p class="muted note-sm">
+      名簿が未同期のまま現実移籍を反映すると、大会の外へ出ていない選手まで対象外になります。
+      <strong>戻すかどうかは請求の状態を見て判断してください。</strong>
+      確定済みの請求はGMが入れ替え先を選んだ後なので、無効にすると選択が取り消されます。
+    </p>
+    <div class="table-wrap"><table class="data-table">
+      <thead><tr><th>選手</th><th>現実クラブ</th><th>保有</th><th>請求</th></tr></thead>
+      <tbody>${d.wrongly_ineligible.map((x) => `<tr>
+        <td>${esc(x.name)}</td>
+        <td>${esc(x.real_club)}</td>
+        <td>${x.held_by ? esc(x.held_by) : '<span class="muted">なし</span>'}</td>
+        <td>${x.claim_status ? esc(x.claim_status) : '<span class="muted">なし</span>'}</td>
+      </tr>`).join('')}</tbody>
+    </table></div>`;
+
+  box.innerHTML = release + wrong;
 }
 
 // ---------------------------------------------------------------------------

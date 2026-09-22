@@ -1,11 +1,11 @@
 const { t, eq, ok, report } = require('./harness');
-const { env, balance, claimsOf, rostersOf, setDeadline } = require('./cl-fixture');
+const { env, balance, claimsOf, rostersOf, setDeadline, applyOut } = require('./cl-fixture');
 
 // ---- 請求が立つ ------------------------------------------------------------
 
 t('現実移籍で保有チームに請求が立つ', () => {
   const e = env();
-  const r = e.applyRealTransfers('ORG', { season_id: 's1', player_ids: ['u1'] });
+  const r = applyOut(e, 'u1');
   eq(r.ok, true);
   eq(claimsOf(e).length, 1);
   const c = claimsOf(e)[0];
@@ -17,13 +17,13 @@ t('現実移籍で保有チームに請求が立つ', () => {
 
 t('請求が立った時点では入金しない', () => {
   const e = env();
-  e.applyRealTransfers('ORG', { season_id: 's1', player_ids: ['u1'] });
+  applyOut(e, 'u1');
   eq(balance(e, 't_a'), 0);
 });
 
 t('獲得額0でも請求は立つ。ただし入れ替えのみ', () => {
   const e = env();
-  e.applyRealTransfers('ORG', { season_id: 's1', player_ids: ['k1'] });
+  applyOut(e, 'k1');
 
   const c = claimsOf(e);
   eq(c.length, 1, '手放したのに何も受け取れないのはおかしい');
@@ -35,7 +35,7 @@ t('獲得額0でも請求は立つ。ただし入れ替えのみ', () => {
 
 t('獲得額0の請求は払い戻しを拒む', () => {
   const e = env();
-  e.applyRealTransfers('ORG', { season_id: 's1', player_ids: ['k1'] });
+  applyOut(e, 'k1');
   const id = e.getMyClaims('A', { season_id: 's1' }).data.claims[0].claim_id;
 
   const r = e.chooseClaim('A', { claim_id: id, choice: '払い戻し' });
@@ -45,7 +45,7 @@ t('獲得額0の請求は払い戻しを拒む', () => {
 
 t('獲得額0の請求は swap_only で返る', () => {
   const e = env();
-  e.applyRealTransfers('ORG', { season_id: 's1', player_ids: ['k1'] });
+  applyOut(e, 'k1');
 
   const mine = e.getMyClaims('A', { season_id: 's1' }).data.claims;
   eq(mine.filter((c) => c.swap_only).length, 1);
@@ -53,9 +53,9 @@ t('獲得額0の請求は swap_only で返る', () => {
 
 t('同じ選手で二重に請求は立たない', () => {
   const e = env();
-  e.applyRealTransfers('ORG', { season_id: 's1', player_ids: ['u1'] });
+  applyOut(e, 'u1');
   e.__rows('Players').slice(1).find((p) => p[0] === 'u1')[4] = true;  // 手で戻す
-  e.applyRealTransfers('ORG', { season_id: 's1', player_ids: ['u1'] });
+  applyOut(e, 'u1');
   eq(claimsOf(e).length, 1);
 });
 
@@ -197,7 +197,7 @@ t('チーム変更で本人の未精算の請求が無効になる', () => {
   const e = env();
   // B が有償で持っている選手を現実移籍で失い、請求が立った状態を作る
   e.__addRow('Rosters', { roster_id: 'r9', season_id: 's1', team_id: 't_b', player_id: 'k4', status: '在籍', acquisition_type: '完全移籍', acquired_cost: 80000000 });
-  e.applyRealTransfers('ORG', { season_id: 's1', player_ids: ['k4'] });
+  applyOut(e, 'k4');
   eq(claimsOf(e).filter((c) => c[2] === 't_b' && c[10] === '選択待ち').length, 1);
 
   const r = e.withdrawTeam('ORG', { season_id: 's1', team_id: 't_b', kind: 'チーム変更', new_club: '川崎フロンターレ' });
@@ -241,7 +241,7 @@ t('辞退・チーム変更は主催者のみ', () => {
 
 function withClaim(over) {
   const e = env(over);
-  e.applyRealTransfers('ORG', { season_id: 's1', player_ids: ['u1'] });
+  applyOut(e, 'u1');
   return { e, claimId: claimsOf(e)[0][0] };
 }
 
@@ -322,7 +322,7 @@ t('同じ選手を2つの請求で予約できない', () => {
   // A が2人失う: u1（1億）と、もう1人 k3 を有償で持たせる
   e.__addRow('Rosters', { roster_id: 'r7', season_id: 's1', team_id: 't_a', player_id: 'u2', status: '在籍', acquisition_type: '完全移籍', acquired_cost: 50000000 });
   e.__rows('Rosters').slice(1).find((r) => r[0] === 'r4')[4] = '離脱';  // B の u2 を外す
-  e.applyRealTransfers('ORG', { season_id: 's1', player_ids: ['u1','u2'] });
+  applyOut(e, 'u1','u2');
 
   const ids = claimsOf(e).map((c) => c[0]);
   eq(e.chooseClaim('A', { claim_id: ids[0], choice: '入れ替え', replacement_player_id: 'k3' }).ok, true);

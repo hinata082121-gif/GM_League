@@ -210,6 +210,10 @@ function applyRealTransfers(token, payload) {
     var rate = Number(getConfig("claim_rate_real_transfer", 0.8));
     var at = now();
 
+    // 参加クラブの名前。現実クラブがここにある選手は大会の外へ出ていない
+    var activeClubs = {};
+    _activeTeams().forEach(function (t) { activeClubs[_str(t.name)] = true; });
+
     // このシーズンの在籍行
     var rosterOf = {};
     getSheetData("Rosters").forEach(function (r) {
@@ -234,6 +238,21 @@ function applyRealTransfers(token, payload) {
       if (!_toBool(player.eligible)) {
         skipped.push({
           player_id: pid, name: _str(player.name), reason: "既に対象外です",
+        });
+        continue;
+      }
+
+      // 現実クラブが参加クラブなら、大会の外へは出ていない。
+      //
+      // ⚠️ 名簿が未同期で real_club が空のまま流すと、参加クラブにいる選手まで
+      //   対象外になり、身に覚えのない補填が立つ。実際に8名がそうなった。
+      //   保有が動くのは applyRealTransfers ではなく releaseToLeagueClub の仕事。
+      var club = _str(player.real_club);
+      if (activeClubs[club]) {
+        skipped.push({
+          player_id: pid, name: _str(player.name),
+          reason: "現実クラブ「" + club + "」は参加クラブです。大会の外へ出ていません。" +
+                  "新規参加クラブへ移ったなら releaseToLeagueClub を使ってください。",
         });
         continue;
       }
@@ -342,8 +361,13 @@ function applyRealTransfers(token, payload) {
  *   手放させるのは、新しく入ったクラブのGMが自分のクラブの選手を
  *   1人も登録できない、という場合に限る。
  *
- *   判定は「移籍先が 新規 のチームで、まだこのシーズンの在籍を
- *   1人も持っていないこと」。スカッドを組み終えたあとは対象外になる。
+ *   判定は「移籍先が 新規 のチームかどうか」だけ。
+ *
+ *   ⚠️ 新規クラブがエントリーを出した後でも使えなければならない。
+ *   保有されている選手は他チームのエントリーに入れられないので、
+ *   **先に手放させないと新クラブは永久に登録できない**。
+ *   「まだスカッドを組んでいないときだけ」という条件を付けていたことがあり、
+ *   マリノスのエントリー後に知念・二田を手放させられなくなった。
  *
  * ⚠️ 先に名簿を同期しておくこと。
  *   移籍先が参加クラブかどうかは Players.real_club で判定する。
@@ -392,13 +416,10 @@ function releaseToLeagueClub(token, payload) {
     });
 
     var rosterOf = {};
-    var squadCount = {};
     getSheetData("Rosters").forEach(function (r) {
       if (_str(r.season_id) !== seasonId) return;
       if (_str(r.status) !== ROSTER_ACTIVE) return;
       rosterOf[_str(r.player_id)] = r;
-      var tid = _str(r.team_id);
-      squadCount[tid] = (squadCount[tid] || 0) + 1;
     });
 
     var released = [];
@@ -435,15 +456,6 @@ function releaseToLeagueClub(token, payload) {
           player_id: pid, name: _str(player.name),
           reason: "移籍先の" + (teamNames[newTeamId] || club) +
                   "は継続参加です。継続参加者どうしの現実移籍では保有は動きません。",
-        });
-        continue;
-      }
-
-      if ((squadCount[newTeamId] || 0) > 0) {
-        skipped.push({
-          player_id: pid, name: _str(player.name),
-          reason: (teamNames[newTeamId] || club) +
-                  "は既にスカッドを組んでいます。新規参加の初回登録のときだけ使えます。",
         });
         continue;
       }
@@ -517,6 +529,121 @@ function releaseToLeagueClub(token, payload) {
       },
     };
   });
+}
+
+// =============================================================================
+// 取りこぼしの点検
+// =============================================================================
+
+/**
+ * 現実クラブと保有の食い違いを洗い出す。主催者専用・読み取りのみ。
+ *
+ * ▶ なぜ必要か
+ *   現実移籍の反映は「誰を対象にするか」を主催者が選ぶ作りなので、
+ *   選び漏れても何も起きない。**起きないことには気づけない。**
+ *
+ *   とくに取りこぼしやすいのが次の2つ。
+ *     1. 新規クラブが増えた直後。そのクラブへ移っていた選手を
+ *        保有チームが抱えたままになる（知念・二田がこれ）
+ *     2. 名簿を同期する前に反映を流したとき。現実クラブが空のまま
+ *        対象外にされ、参加クラブにいる選手に補填が立つ
+ *
+ *   名簿を同期した後と、新しいクラブを足した後に必ず通す。
+ *
+ * payload: { season_id }
+ *
+ * @param {string} token
+ * @param {Object} payload
+ * @returns {{ ok: boolean, data?: Object, error?: string }}
+ */
+function auditPlayerEligibility(token, payload) {
+  var auth = _requireOrganizer(token);
+  if (!auth.ok) return auth;
+
+  var seasonId = _str(payload.season_id) || _latestSeasonId();
+  if (!seasonId) return { ok: false, error: "シーズンが見つかりません。" };
+
+  var teamNames = _teamNameMap();
+
+  // 参加クラブ名 → チーム
+  var clubToTeam = {};
+  var teamKind = {};
+  _activeTeams().forEach(function (t) {
+    clubToTeam[_str(t.name)] = _str(t.team_id);
+    teamKind[_str(t.team_id)] = _str(t.kind);
+  });
+
+  var rosterOf = {};
+  getSheetData("Rosters").forEach(function (r) {
+    if (_str(r.season_id) !== seasonId) return;
+    if (_str(r.status) !== ROSTER_ACTIVE) return;
+    rosterOf[_str(r.player_id)] = r;
+  });
+
+  // 無効でない請求
+  var claimOf = {};
+  _claimsOf(seasonId).forEach(function (c) {
+    if (_str(c.status) === CLAIM_VOID) return;
+    claimOf[_str(c.player_id)] = c;
+  });
+
+  var toRelease = [];
+  var wronglyIneligible = [];
+
+  getSheetData("Players").forEach(function (p) {
+    var pid = _str(p.player_id);
+    if (!pid) return;
+
+    var club = _str(p.real_club);
+    var newTeamId = clubToTeam[club];
+    var roster = rosterOf[pid];
+    var claim = claimOf[pid];
+
+    // 対象外なのに現実クラブが参加クラブ。大会の外へは出ていない
+    if (!_toBool(p.eligible) && newTeamId) {
+      wronglyIneligible.push({
+        player_id:  pid,
+        name:       _str(p.name),
+        real_club:  club,
+        held_by:    roster ? (teamNames[_str(roster.team_id)] || "") : "",
+        claim_id:   claim ? _str(claim.claim_id) : "",
+        claim_status: claim ? _str(claim.status) : "",
+      });
+      return;
+    }
+
+    if (!_toBool(p.eligible)) return;
+    if (!roster || !newTeamId) return;
+
+    var holder = _str(roster.team_id);
+    if (holder === newTeamId) return;
+
+    // 新規参加クラブへ移っているのに、まだ手放されていない
+    if (teamKind[newTeamId] === TEAM_KIND_NEW) {
+      toRelease.push({
+        player_id:     pid,
+        name:          _str(p.name),
+        real_club:     club,
+        held_by:       teamNames[holder] || holder,
+        held_by_id:    holder,
+        acquired_cost: _num(roster.acquired_cost),
+        has_claim:     !!claim,
+      });
+    }
+  });
+
+  toRelease.sort(_comparePlayers);
+  wronglyIneligible.sort(_comparePlayers);
+
+  return {
+    ok: true,
+    data: {
+      season_id:          seasonId,
+      to_release:         toRelease,
+      wrongly_ineligible: wronglyIneligible,
+      clean: toRelease.length === 0 && wronglyIneligible.length === 0,
+    },
+  };
 }
 
 /**

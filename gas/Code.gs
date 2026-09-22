@@ -384,6 +384,9 @@ function _route(action, token, payload) {
     case "releaseToLeagueClub":
       return releaseToLeagueClub(token, payload);
 
+    case "auditPlayerEligibility":
+      return auditPlayerEligibility(token, payload);
+
     case "restorePlayerEligible":
       return restorePlayerEligible(token, payload);
 
