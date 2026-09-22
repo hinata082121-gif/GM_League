@@ -177,7 +177,7 @@ function _calcTransferCost(method, grossFee, season, windowNo, at) {
     return {
       gross: fee,
       cost: fee,
-      payout: Math.round(fee * rate),
+      payout: _roundMoney(fee * rate),
       discounted: false,
     };
   }
@@ -199,7 +199,7 @@ function _calcTransferCost(method, grossFee, season, windowNo, at) {
     return {
       gross: amt,
       cost: amt,
-      payout: Math.round(amt * orate),
+      payout: _roundMoney(amt * orate),
       discounted: false,
     };
   }

@@ -120,11 +120,11 @@ t('選択待ちの請求の母数を直す', () => {
 
 t('確定済みの請求も直す', () => {
   const e = addClaim(env(), 'u1', '確定');
-  call(e, [{ name: '浦和1', acquired_cost: 1000000 }]);
+  call(e, [{ name: '浦和1', acquired_cost: 33000000 }]);
 
   const c = claimOf(e, 'u1');
-  eq(c.base, 1000000);
-  eq(c.refund, 800000);
+  eq(c.base, 33000000);
+  eq(c.refund, 26000000, '3,300万×80%=2,640万 → 2,600万');
 });
 
 t('精算済みの請求は触らない', () => {

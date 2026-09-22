@@ -108,7 +108,8 @@ function _createClaim(seasonId, teamId, playerId, reason, baseCost, rate, at) {
 
   if (exists) return null;
 
-  var amount = Math.round(_num(baseCost) * _num(rate));
+  // 率をかけた結果は100万円単位に揃える（10万の位で四捨五入）
+  var amount = _roundMoney(_num(baseCost) * _num(rate));
 
   var row = {
     claim_id:       generateId("cl_"),

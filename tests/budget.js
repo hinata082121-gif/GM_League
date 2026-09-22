@@ -55,7 +55,8 @@ t('手数料の母数はそのシーズンの収支だけ', () => {
 
   const fee = r.data.report.fees.find((f) => f.team_id === 't_A');
   eq(fee.balance, 29000000);
-  eq(fee.fee, 2900000);
+  // 2900万×10% = 290万 → 10万の位で四捨五入して300万
+  eq(fee.fee, 3000000);
 });
 
 t('繰越は前季マイナス・翌季プラスの2行で書く', () => {
@@ -65,12 +66,12 @@ t('繰越は前季マイナス・翌季プラスの2行で書く', () => {
   const r = e.closeSeason('ORG', { season_id: 's1', next_season_id: 's2' });
   eq(r.ok, true);
 
-  // 2900万 − 手数料290万 = 2610万
+  // 2900万 − 手数料300万（290万を100万単位に丸め）= 2600万
   const carried = r.data.report.carried_budget.find((c) => c.team_id === 't_A');
-  eq(carried.amount, 26100000);
+  eq(carried.amount, 26000000);
 
   eq(bal(e, 's1', 't_A'), 0);          // 前季は繰り出して0になる
-  eq(bal(e, 's2', 't_A'), 26100000);   // 翌季に入る
+  eq(bal(e, 's2', 't_A'), 26000000);   // 翌季に入る
 
   const reasons = rows(e).filter((x) => x[2] === 't_A').map((x) => x[4]);
   ok(reasons.indexOf('次シーズンへ繰越') !== -1, reasons.join(','));
@@ -85,7 +86,7 @@ t('翌季に先に入っていた分は繰越に足される', () => {
   e.closeSeason('ORG', { season_id: 's1', next_season_id: 's2' });
 
   // 補填6400万 + 繰越2610万
-  eq(bal(e, 's2', 't_A'), 90100000);
+  eq(bal(e, 's2', 't_A'), 90000000);
 });
 
 t('マイナスの残高もそのまま繰り越す', () => {
@@ -104,7 +105,7 @@ t('引継ぎ先を指定しなければ繰り越さない', () => {
 
   const r = e.closeSeason('ORG', { season_id: 's1' });
   eq(r.data.report.carried_budget, []);
-  eq(bal(e, 's1', 't_A'), 26100000);   // 手数料だけ引かれて残る
+  eq(bal(e, 's1', 't_A'), 26000000);   // 手数料だけ引かれて残る
   eq(bal(e, 's2', 't_A'), 0);
 });
 

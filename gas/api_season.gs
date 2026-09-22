@@ -199,7 +199,7 @@ function addCompensation(token, payload) {
         : Number(getConfig("compensation_rate_withdrawal", 0.9));
 
     var reason = kind === "大会外移籍" ? REASON_COMP_TRANSFER : REASON_COMP_WITHDRAW;
-    var amount = Math.round(cost * rate);
+    var amount = _roundMoney(cost * rate);
 
     var txId = _addBudgetTx(seasonId, teamId, amount, reason, playerId, now());
 
@@ -492,7 +492,7 @@ function closeSeason(token, payload) {
       var tid = _str(t.team_id);
       var bal = balances[tid] || 0;
       if (bal <= 0) return;
-      var fee = Math.round(bal * feeRate);
+      var fee = _roundMoney(bal * feeRate);
       if (fee <= 0) return;
       _addBudgetTx(seasonId, tid, -fee, REASON_SEASON_FEE, "", at);
       report.fees.push({ team_id: tid, balance: bal, fee: fee });

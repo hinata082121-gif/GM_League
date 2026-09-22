@@ -111,7 +111,7 @@ function getRealTransferTargets(token, payload) {
       team_name:      owned ? (teamNames[_str(roster.team_id)] || "") : "",
       acquisition_type: acqType,
       acquired_cost:  cost,
-      compensation:   payable ? Math.round(cost * rate) : 0,
+      compensation:   payable ? _roundMoney(cost * rate) : 0,
       compensable:    payable,
     });
   });

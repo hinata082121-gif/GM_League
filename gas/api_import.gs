@@ -381,7 +381,7 @@ function setRosterAcquisition(token, payload) {
         if (st !== CLAIM_WAITING && st !== CLAIM_FIXED) return;
 
         var rate = _num(c.rate);
-        var amount = Math.round(t.cost * rate);
+        var amount = _roundMoney(t.cost * rate);
 
         updateRow("Claims", "claim_id", _str(c.claim_id), {
           base_cost:     t.cost,
