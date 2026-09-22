@@ -6438,18 +6438,36 @@ function renderClaimList() {
 
   // 入れ替え候補は同じ現実クラブの選手ばかりなので、名前だけでは選びにくい。
   // ポジションの詳細・年齢・外国籍を並べて、誰なのか判る形にする
-  const options = d.candidates
-    .map((c) => {
-      const meta = [];
-      if (Number(c.age) > 0) meta.push(c.age + '歳');
-      if (c.foreign) meta.push('△' + (c.nationality || '外国籍'));
+  const optionHtml = (c, selected) => {
+    const meta = [];
+    if (Number(c.age) > 0) meta.push(c.age + '歳');
+    if (c.foreign) meta.push('△' + (c.nationality || '外国籍'));
 
-      const label = (c.detail_position || c.position) + ' ' + c.name +
-        (meta.length ? '（' + meta.join(' ') + '）' : '');
+    const label = (c.detail_position || c.position) + ' ' + c.name +
+      (meta.length ? '（' + meta.join(' ') + '）' : '');
 
-      return '<option value="' + esc(c.player_id) + '">' + esc(label) + '</option>';
-    })
-    .join('');
+    return '<option value="' + esc(c.player_id) + '"' +
+      (selected ? ' selected' : '') + '>' + esc(label) + '</option>';
+  };
+
+  // 候補は「まだ誰も予約していない選手」なので、自分が選んだ相手は入っていない。
+  // その1人を足して選択状態にしないと、選び直せないように見える
+  const optionsFor = (claim) => {
+    const picked = claim.replacement_id || '';
+    const listed = d.candidates.some((c) => c.player_id === picked);
+
+    const head = (picked && !listed)
+      ? optionHtml({
+          player_id: picked,
+          name: claim.replacement_name || picked,
+          position: '', detail_position: '', age: 0, foreign: false,
+        }, true)
+      : '';
+
+    return head + d.candidates
+      .map((c) => optionHtml(c, c.player_id === picked))
+      .join('');
+  };
 
   box.innerHTML = d.claims
     .map((c) => {
@@ -6472,8 +6490,8 @@ function renderClaimList() {
             </button>
             <span class="muted">または</span>`}
             <select class="cl-swap-select" data-id="${esc(c.claim_id)}">
-              <option value="">入れ替える選手を選択</option>
-              ${options}
+              <option value=""${c.replacement_id ? '' : ' selected'}>入れ替える選手を選択</option>
+              ${optionsFor(c)}
             </select>
             <button type="button" class="btn btn-primary btn-sm cl-swap" data-id="${esc(c.claim_id)}">
               入れ替える

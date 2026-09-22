@@ -317,6 +317,17 @@ t('選び直せる（入れ替え → 払い戻しで予約が解放される）
   ok(d.candidates.some((c) => c.player_id === 'k3'), 'k3 が候補に戻っていない');
 });
 
+t('同じ相手をもう一度選べる', () => {
+  // 自分で予約した選手が自分の候補から消えていたため、選び直すと弾かれた。
+  // 柏が土屋の補填に弓場を選び直したときに出た
+  const { e, claimId } = withClaim();
+  eq(e.chooseClaim('A', { claim_id: claimId, choice: '入れ替え', replacement_player_id: 'k3' }).ok, true);
+
+  const r = e.chooseClaim('A', { claim_id: claimId, choice: '入れ替え', replacement_player_id: 'k3' });
+  eq(r.ok, true, r.error);
+  eq(claimsOf(e)[0][9], 'k3');
+});
+
 t('同じ選手を2つの請求で予約できない', () => {
   const e = env();
   // A が2人失う: u1（1億）と、もう1人 k3 を有償で持たせる

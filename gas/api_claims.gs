@@ -216,17 +216,25 @@ function _isClaimWindowOpen(season) {
  * **自分の使用クラブの選手**で、eligible かつ誰も保有していない人だけ。
  * 既に他の請求で入れ替え先として予約されている選手も除く。
  *
+ * ⚠️ exceptClaimId を渡すと、**その請求自身の予約**は除外しない。
+ *   渡さないと、一度選んだ選手を選び直せなくなる。自分で予約した選手が
+ *   自分の候補から消えるためで、同じ相手を選び直すと
+ *   「入れ替えに使えません」と弾かれた（柏の土屋→弓場で発生）。
+ *
  * @param {string} seasonId
  * @param {string} teamId
  * @param {string} clubName
+ * @param {string} [exceptClaimId] この請求自身の予約は塞がない
  * @returns {Object[]}
  */
-function _replacementCandidates(seasonId, teamId, clubName) {
+function _replacementCandidates(seasonId, teamId, clubName, exceptClaimId) {
   var claimed = _collectClaimedPlayers(seasonId);
+  var except = _str(exceptClaimId);
 
   // 他の請求で予約済みの選手
   var reserved = {};
   _claimsOf(seasonId).forEach(function (c) {
+    if (except && _str(c.claim_id) === except) return;
     var rid = _str(c.replacement_id);
     if (rid && _str(c.status) !== CLAIM_VOID) reserved[rid] = true;
   });
@@ -351,9 +359,10 @@ function _applyChoice(claim, choice, replacementId, user) {
     if (!team) return { ok: false, error: "チームが見つかりません。" };
 
     var ok = false;
-    _replacementCandidates(seasonId, teamId, _str(team.name)).forEach(function (c) {
-      if (c.player_id === replacementId) ok = true;
-    });
+    _replacementCandidates(seasonId, teamId, _str(team.name), claimId)
+      .forEach(function (c) {
+        if (c.player_id === replacementId) ok = true;
+      });
 
     if (!ok) {
       return {
