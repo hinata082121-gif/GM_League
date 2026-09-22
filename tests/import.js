@@ -66,6 +66,59 @@ t('種別を省くと初期になる', () => {
   eq(rosters(e)[0][5], '初期');
 });
 
+// ---- 上書きで獲得額を消さない ----------------------------------------------
+//
+// 上書き取り込みは在籍行を作り直す。名簿は人数合わせのために出し直すことが
+// 多く、そこに金額が書かれていないと、移籍で獲得した選手が「初期・0円」に
+// 戻って補填の母数が消える。実際に起きた事故なので、ここは必ず守る。
+
+t('上書きしても金額は残る', () => {
+  const e = env();
+  e.importRoster('ORG', { season_id: 's1', team_id: 't_A', players: [
+    { name: '尾谷', position: 'FW', real_club: 'FC東京', acquisition_type: '完全移籍', acquired_cost: 18000000 },
+  ]});
+
+  // 金額を書いていない名簿で出し直す
+  e.importRoster('ORG', { season_id: 's1', team_id: 't_A', replace: true, players: [
+    { name: '尾谷', position: 'FW', real_club: 'FC東京' },
+  ]});
+
+  const rs = rosters(e);
+  eq(rs.length, 1);
+  eq(rs[0][5], '完全移籍');
+  eq(Number(rs[0][6]), 18000000);
+});
+
+t('名簿で明示すれば上書きできる', () => {
+  const e = env();
+  e.importRoster('ORG', { season_id: 's1', team_id: 't_A', players: [
+    { name: '尾谷', position: 'FW', real_club: 'FC東京', acquisition_type: '完全移籍', acquired_cost: 18000000 },
+  ]});
+
+  e.importRoster('ORG', { season_id: 's1', team_id: 't_A', replace: true, players: [
+    { name: '尾谷', position: 'FW', real_club: 'FC東京', acquisition_type: '完全移籍', acquired_cost: 5000000 },
+  ]});
+
+  eq(Number(rosters(e)[0][6]), 5000000, '書いた値は尊重する');
+});
+
+t('新しく入った選手は初期のまま', () => {
+  const e = env();
+  e.importRoster('ORG', { season_id: 's1', team_id: 't_A', players: [
+    { name: '尾谷', position: 'FW', real_club: 'FC東京', acquisition_type: '完全移籍', acquired_cost: 18000000 },
+  ]});
+
+  e.importRoster('ORG', { season_id: 's1', team_id: 't_A', replace: true, players: [
+    { name: '尾谷', position: 'FW', real_club: 'FC東京' },
+    { name: '新顔', position: 'MF', real_club: 'FC東京' },
+  ]});
+
+  const rs = rosters(e);
+  const nk = rs.find((r) => r[5] === '初期');
+  ok(nk, '引継ぐ元が無い選手まで金額が付いてはいけない');
+  eq(Number(nk[6]), 0);
+});
+
 // ---- 検証 ------------------------------------------------------------------
 
 t('主催者以外は取り込めない', () => {

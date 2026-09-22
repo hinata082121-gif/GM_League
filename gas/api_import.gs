@@ -163,6 +163,25 @@ function importRoster(token, payload) {
       };
     }
 
+    // 入れ替える前に、今の獲得種別と獲得額を控えておく。
+    //
+    // ⚠️ 上書き取り込みは在籍行を作り直す。名簿に金額が書かれていないと、
+    //    正規に移籍で獲得した選手が「初期・0円」に戻り、補填の母数が消える。
+    //    名簿は人数合わせのために出し直すことが多いので、
+    //    **金額が指定されていないときは今の値を引き継ぐ。**
+    var kept = {};
+    getSheetData("Rosters").forEach(function (r) {
+      if (_str(r.season_id) !== seasonId) return;
+      if (_str(r.team_id) !== teamId) return;
+      var st = _str(r.status);
+      if (st !== ROSTER_ACTIVE && st !== ROSTER_PENDING) return;
+      kept[_str(r.player_id)] = {
+        acquisition_type: _str(r.acquisition_type),
+        acquired_cost:    _num(r.acquired_cost),
+        expires_season:   _str(r.expires_season),
+      };
+    });
+
     // 入れ替えなら、このシーズンのこのチームの在籍・申請中を先に消す。
     // 離脱の履歴は残す
     var removed = 0;
@@ -180,16 +199,21 @@ function importRoster(token, payload) {
         return;
       }
 
+      // 名簿が獲得種別・金額に触れていないなら、元の値を残す
+      var prev = kept[r.player_id];
+      var silent = r.row.acquisition_type === ACQ_INITIAL && r.row.acquired_cost === 0;
+
       rows.push({
         roster_id:        generateId("rs_"),
         season_id:        seasonId,
         team_id:          teamId,
         player_id:        r.player_id,
         status:           ROSTER_ACTIVE,
-        acquisition_type: r.row.acquisition_type,
-        acquired_cost:    r.row.acquired_cost,
+        acquisition_type: (silent && prev) ? prev.acquisition_type : r.row.acquisition_type,
+        acquired_cost:    (silent && prev) ? prev.acquired_cost : r.row.acquired_cost,
         acquired_at:      at,
-        expires_season:   r.row.expires_season,
+        expires_season:   (silent && prev && !r.row.expires_season)
+          ? prev.expires_season : r.row.expires_season,
       });
       added++;
     });

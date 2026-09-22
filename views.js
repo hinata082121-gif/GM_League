@@ -184,6 +184,7 @@ function showTab(name) {
   if (name === 'entry') renderEntry();
   if (name === 'transfer') renderTransfer();
   if (name === 'txlog') renderTransferLog();
+  if (name === 'fixtures') renderFixtureView();
   if (name === 'protect') renderProtect();
   if (name === 'match') renderMatch();
   if (name === 'stats') renderStats();
@@ -3081,6 +3082,160 @@ async function loadProtectionBoard() {
 }
 
 // ---------------------------------------------------------------------------
+// 画面4c: 対戦表
+// ---------------------------------------------------------------------------
+
+/** getFixtures の結果。絞り込みで使い回す */
+let fixtureView = null;
+
+/**
+ * 対戦表の画面を描画する。
+ *
+ * 「移籍ログ」と同じく、誰が見ても同じものが出る読み取り専用の画面。
+ * チーム別・節別・全表示を切り替えられる。
+ */
+async function renderFixtureView() {
+  const seasons = await loadActiveSeasons();
+  fillSelect('fv-season', seasons, 'season_id', 'name');
+
+  ['fv-season', 'fv-stage'].forEach((id) => {
+    const sel = document.getElementById(id);
+    if (!sel || sel.dataset.bound) return;
+    sel.onchange = loadFixtureView;
+    sel.dataset.bound = '1';
+  });
+
+  ['fv-team', 'fv-round'].forEach((id) => {
+    const sel = document.getElementById(id);
+    if (!sel || sel.dataset.bound) return;
+    sel.onchange = renderFixtureTable;
+    sel.dataset.bound = '1';
+  });
+
+  await loadFixtureView();
+}
+
+/**
+ * 選択中シーズン・種別の対戦表を取得する。
+ */
+async function loadFixtureView() {
+  const seasonId = document.getElementById('fv-season').value;
+  if (!seasonId) return;
+
+  setLoading('fv-list');
+
+  const res = await callApi('getFixtures', {
+    season_id: seasonId,
+    stage: document.getElementById('fv-stage').value,
+  });
+
+  if (!res.ok) {
+    setError('fv-list', '対戦表を取得できませんでした: ' + res.error);
+    return;
+  }
+
+  fixtureView = res.data;
+  fillFixtureFilters();
+  renderFixtureTable();
+}
+
+/**
+ * チームと節の絞り込みに、実際に対戦表へ出ているものだけを並べる。
+ */
+function fillFixtureFilters() {
+  const rows = fixtureView.fixtures || [];
+
+  const teams = [];
+  rows.forEach((f) => {
+    [f.home_team_name, f.away_team_name].forEach((n) => {
+      if (n && teams.indexOf(n) === -1) teams.push(n);
+    });
+  });
+  teams.sort((a, b) => a.localeCompare(b, 'ja'));
+
+  const fill = (id, values, label) => {
+    const sel = document.getElementById(id);
+    const prev = sel.value;
+    sel.innerHTML = '<option value="">' + label + '</option>' +
+      values.map((v) => '<option value="' + esc(v) + '">' + esc(v) + '</option>').join('');
+    if (prev && values.indexOf(prev) !== -1) sel.value = prev;
+  };
+
+  fill('fv-team', teams, 'すべてのチーム');
+  fill('fv-round', (fixtureView.rounds || []).map((r) => r.round), 'すべての節');
+}
+
+/**
+ * 対戦表を節ごとに並べる。
+ *
+ * チームで絞ったときは、そのチームが出ない節は丸ごと消す。
+ * 「第1節（試合なし）」が並ぶより、休みの節は出ないほうが追いやすい。
+ */
+function renderFixtureTable() {
+  const box = document.getElementById('fv-list');
+  if (!box || !fixtureView) return;
+
+  const team = document.getElementById('fv-team').value;
+  const round = document.getElementById('fv-round').value;
+
+  const rows = (fixtureView.fixtures || []).filter((f) => {
+    if (round && f.round !== round) return false;
+    if (team && f.home_team_name !== team && f.away_team_name !== team) return false;
+    return true;
+  });
+
+  if (rows.length === 0) {
+    box.innerHTML = '<p class="muted">対戦がありません。</p>';
+    return;
+  }
+
+  const groups = [];
+  rows.forEach((f) => {
+    let g = groups.find((x) => x.round === f.round);
+    if (!g) { g = { round: f.round, items: [] }; groups.push(g); }
+    g.items.push(f);
+  });
+
+  const done = rows.filter((f) => f.reported).length;
+
+  box.innerHTML =
+    '<p class="muted">' + rows.length + ' 試合中 ' + done + ' 試合が報告済みです。</p>' +
+    groups.map((g) => `
+      <div class="fixture-round">
+        <h4>${esc(g.round)}</h4>
+        ${g.items.map((f) => fixtureRowHtml(f, team)).join('')}
+      </div>`).join('');
+}
+
+/**
+ * 対戦1件の行。
+ *
+ * @param {Object} f
+ * @param {string} focus 絞り込み中のチーム名。太字にする
+ * @returns {string}
+ */
+function fixtureRowHtml(f, focus) {
+  const side = (name) =>
+    '<span class="fixture-home' + (focus && name === focus ? ' is-focus' : '') + '">' +
+    esc(name) + '</span>';
+
+  const result = f.reported
+    ? '<span class="fixture-score">' + esc(f.score) + '</span>' +
+      (f.match_status === '承認'
+        ? '<span class="badge badge-ok">承認</span>'
+        : '<span class="badge">' + esc(f.match_status) + '</span>')
+    : '<span class="muted">未報告</span>';
+
+  return `<div class="fixture-row">
+    ${f.division ? '<span class="chip-div">' + esc(f.division) + '</span>' : ''}
+    ${side(f.home_team_name)}
+    <span class="muted">vs</span>
+    ${side(f.away_team_name)}
+    ${result}
+  </div>`;
+}
+
+// ---------------------------------------------------------------------------
 // 画面6: 試合（Phase 5）
 // ---------------------------------------------------------------------------
 
@@ -3322,24 +3477,34 @@ function fillRoundSelect() {
   const sel = document.getElementById('mt-round-select');
 
   const me = reporterTeamId();
-  const mine = (matchFixtures ? matchFixtures.fixtures : [])
+  const all = (matchFixtures ? matchFixtures.fixtures : [])
     .filter((f) => f.home_team === me || f.away_team === me);
 
-  if (!me || mine.length === 0) {
+  // 報告済みの節は選択肢から外す。二重申請はサーバーでも弾かれるが、
+  // 選べてしまうと「選んだのに送れない」になる。訂正は一覧の訂正ボタンから
+  const mine = all.filter((f) => !f.reported);
+
+  if (!me || all.length === 0) {
     wrapSel.style.display = 'none';
     wrapText.style.display = '';
     return;
   }
 
   const prev = sel.value;
+  const doneCount = all.length - mine.length;
+
   sel.innerHTML =
-    '<option value="">節を選択</option>' +
+    '<option value="">' +
+    (mine.length === 0 ? '報告できる節がありません' : '節を選択') + '</option>' +
     mine.map((f) => {
       const other = f.home_team === me ? f.away_team_name : f.home_team_name;
       const side = f.home_team === me ? 'H' : 'A';
       return '<option value="' + esc(f.fixture_id) + '">' +
         esc(f.round) + '　vs ' + esc(other) + '（' + side + '）</option>';
     }).join('') +
+    (doneCount > 0
+      ? '<option value="" disabled>── 報告済み ' + doneCount + ' 節は非表示 ──</option>'
+      : '') +
     '<option value="__free__">— 対戦表にない試合 —</option>';
 
   if (prev && [...sel.options].some((o) => o.value === prev)) sel.value = prev;
@@ -3946,6 +4111,9 @@ async function onSubmitMatch() {
     );
     if (correctingMatchId) exitCorrectionMode();
     else resetMatchForm();
+
+    // 報告した節を選択肢から消すため、対戦表を取り直す
+    await loadFixtures();
     await loadMatchList();
   } else {
     setResult('mt-result', false, (correctingMatchId ? '訂正' : '申請') + 'できません: ' + res.error);

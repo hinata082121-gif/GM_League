@@ -54,6 +54,9 @@ function getFixtures(token, payload) {
     teamNames[_str(t.team_id)] = _str(t.name);
   });
 
+  // 報告済みの試合を「節＋対戦の組み合わせ」で引けるようにする
+  var reported = _reportedMatchMap(seasonId, stage);
+
   var rows = [];
   getSheetData("Fixtures").forEach(function (f) {
     if (_str(f.season_id) !== seasonId) return;
@@ -62,6 +65,7 @@ function getFixtures(token, payload) {
 
     var home = _str(f.home_team);
     var away = _str(f.away_team);
+    var hit = reported[_fixtureKey(_str(f.round), home, away)];
 
     rows.push({
       fixture_id:     _str(f.fixture_id),
@@ -73,6 +77,9 @@ function getFixtures(token, payload) {
       away_team:      away,
       away_team_name: teamNames[away] || away,
       note:           _str(f.note),
+      reported:       !!hit,
+      match_status:   hit ? hit.status : "",
+      score:          hit ? hit.score : "",
     });
   });
 
@@ -445,6 +452,51 @@ function deleteFixture(token, payload) {
 // =============================================================================
 // ヘルパ
 // =============================================================================
+
+/**
+ * 節と対戦の組み合わせからキーを作る。ホームとアウェイの順番は問わない。
+ *
+ * 対戦表では「ホーム 対 アウェイ」でも、報告は逆で出されることがある。
+ * 順番で別物として扱うと、報告済みなのに未報告に見える。
+ *
+ * @param {string} round
+ * @param {string} a
+ * @param {string} b
+ * @returns {string}
+ */
+function _fixtureKey(round, a, b) {
+  return round + "|" + (a < b ? a + "|" + b : b + "|" + a);
+}
+
+/**
+ * 報告済みの試合を「節＋対戦」で引ける形にする。
+ *
+ * 差戻は含めない。差し戻された試合は出し直す必要があるので、
+ * 報告済みとして節の選択肢から消すと再報告できなくなる。
+ *
+ * @param {string} seasonId
+ * @param {string} stage
+ * @returns {Object} key → { status, score }
+ */
+function _reportedMatchMap(seasonId, stage) {
+  var map = {};
+
+  getSheetData("Matches").forEach(function (m) {
+    if (_str(m.season_id) !== seasonId) return;
+    if (_str(m.stage) !== stage) return;
+
+    var status = _str(m.status);
+    if (status === MATCH_REJECTED) return;
+
+    var key = _fixtureKey(_str(m.round), _str(m.home_team), _str(m.away_team));
+    map[key] = {
+      status: status,
+      score:  _num(m.home_score) + " - " + _num(m.away_score),
+    };
+  });
+
+  return map;
+}
 
 /**
  * 指定シーズン・大会の対戦を返す。

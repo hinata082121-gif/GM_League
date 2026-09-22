@@ -270,4 +270,63 @@ t('ログインしていなければ見られない', () => {
   eq(e.getFixtures('', { season_id: 's1' }).ok, false);
 });
 
+// =============================================================================
+// 報告済みの印
+// =============================================================================
+
+/** 試合を1件登録する */
+function addMatch(e, over) {
+  e.__addRow('Matches', Object.assign({
+    match_id: 'm_' + Math.random().toString(36).slice(2, 8),
+    season_id: 's1', stage: 'league', round: '第1節', tie_id: '', leg: '',
+    home_team: 't_A', away_team: 't_B', home_score: 2, away_score: 1,
+    home_pk: '', away_pk: '', status: '承認', reported_by: 'u_org',
+  }, over || {}));
+  e.__dropCache('Matches');
+  return e;
+}
+
+const one = (e) => {
+  e.upsertFixture('ORG', { season_id: 's1', round: '第1節', home_team: 't_A', away_team: 't_B' });
+  return e;
+};
+
+t('報告済みなら印が付く', () => {
+  const e = addMatch(one(base()));
+  const f = list(e).data.fixtures[0];
+
+  eq(f.reported, true);
+  eq(f.match_status, '承認');
+  eq(f.score, '2 - 1');
+});
+
+t('報告がなければ印は付かない', () => {
+  const f = list(one(base())).data.fixtures[0];
+  eq(f.reported, false);
+  eq(f.score, '');
+});
+
+t('ホームとアウェイが逆でも報告済みとみなす', () => {
+  // 対戦表と逆の向きで報告されることがある
+  const e = addMatch(one(base()), { home_team: 't_B', away_team: 't_A' });
+  eq(list(e).data.fixtures[0].reported, true);
+});
+
+t('申請中でも報告済みとみなす', () => {
+  const e = addMatch(one(base()), { status: '申請中' });
+  const f = list(e).data.fixtures[0];
+  eq(f.reported, true, '二重申請を防ぐため承認前でも埋まっている扱いにする');
+  eq(f.match_status, '申請中');
+});
+
+t('差戻は報告済みにしない', () => {
+  const e = addMatch(one(base()), { status: '差戻' });
+  eq(list(e).data.fixtures[0].reported, false, '出し直せなくなる');
+});
+
+t('別の節の試合は結び付けない', () => {
+  const e = addMatch(one(base()), { round: '第2節' });
+  eq(list(e).data.fixtures[0].reported, false);
+});
+
 report('fixture.js');

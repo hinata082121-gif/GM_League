@@ -99,6 +99,7 @@
         <button class="tab-btn" data-tab="entry">エントリー</button>
         <button class="tab-btn" data-tab="transfer">移籍</button>
         <button class="tab-btn" data-tab="txlog">移籍ログ</button>
+        <button class="tab-btn" data-tab="fixtures">対戦表</button>
         <button class="tab-btn" data-tab="protect">プロテクト</button>
         <button class="tab-btn" data-tab="match">試合</button>
         <button class="tab-btn" data-tab="stats">順位・記録</button>
@@ -363,6 +364,43 @@
             </label>
           </div>
           <div id="tl-list"></div>
+        </div>
+      </div>
+
+      <!-- ===== 画面4c: 対戦表 ===== -->
+      <div class="tab-panel" data-panel="fixtures" style="display:none;">
+        <div class="card">
+          <h2>対戦表</h2>
+          <p class="muted">
+            リーグ戦の組み合わせです。報告が済んだ試合にはスコアが出ます。
+          </p>
+          <div class="filter-row">
+            <label>
+              シーズン
+              <select id="fv-season"></select>
+            </label>
+            <label>
+              種別
+              <select id="fv-stage">
+                <option value="league">リーグ戦</option>
+                <option value="tournament">GMリーグ杯</option>
+                <option value="supercup">GMスーパーカップ</option>
+              </select>
+            </label>
+            <label>
+              チーム
+              <select id="fv-team">
+                <option value="">すべて</option>
+              </select>
+            </label>
+            <label>
+              節
+              <select id="fv-round">
+                <option value="">すべて</option>
+              </select>
+            </label>
+          </div>
+          <div id="fv-list"></div>
         </div>
       </div>
 
