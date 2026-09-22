@@ -236,6 +236,180 @@ function importRoster(token, payload) {
   });
 }
 
+// =============================================================================
+// 獲得額の訂正
+// =============================================================================
+
+/**
+ * 在籍している選手の獲得種別・獲得額だけを直す。主催者専用。
+ *
+ * ▶ なぜ importRoster ではだめなのか
+ *   上書き取り込みは在籍行をまるごと作り直すので、1人の金額を直すために
+ *   スカッド全員を渡し直すことになる。渡し漏れれば他の選手が消える。
+ *   金額の訂正は頻度が低いわりに影響が大きいので、専用の入口を分ける。
+ *
+ * ▶ 請求の母数も一緒に直す
+ *   補填請求の base_cost は**請求を立てた時点の値で固定**されている。
+ *   在籍の金額だけ直しても、既に立っている請求は0円のまま動かない。
+ *   未精算（選択待ち / 確定）の請求は、ここで母数と払い戻し額を引き直す。
+ *
+ *   精算済みと無効は触らない。精算済みは予算に反映された後なので、
+ *   ここで書き換えると帳簿と食い違う。
+ *
+ * payload: {
+ *   season_id,
+ *   players: [{ name | player_id, team_id?, acquisition_type?, acquired_cost }]
+ * }
+ *
+ * @param {string} token
+ * @param {Object} payload
+ * @returns {{ ok: boolean, data?: Object, error?: string }}
+ */
+function setRosterAcquisition(token, payload) {
+  var auth = _requireOrganizer(token);
+  if (!auth.ok) return auth;
+
+  var seasonId = _str(payload.season_id);
+  var list = payload.players || [];
+
+  if (!seasonId) return { ok: false, error: "season_id は必須です。" };
+  if (list.length === 0) return { ok: false, error: "選手が1人も指定されていません。" };
+  if (!findRow("Seasons", "season_id", seasonId)) {
+    return { ok: false, error: "シーズンが見つかりません。" };
+  }
+
+  // 名前から選手を引く。同名が複数いると取り違えるので、その場合は拒否する
+  var byName = {};
+  var dupName = {};
+  getSheetData("Players").forEach(function (p) {
+    var n = _str(p.name);
+    if (!n) return;
+    if (byName[n]) dupName[n] = true;
+    byName[n] = _str(p.player_id);
+  });
+
+  // 在籍中の行を player_id で引けるようにする
+  var rosterOf = {};
+  getSheetData("Rosters").forEach(function (r) {
+    if (_str(r.season_id) !== seasonId) return;
+    if (_str(r.status) !== ROSTER_ACTIVE) return;
+    rosterOf[_str(r.player_id)] = r;
+  });
+
+  // 先に全件を解決する。1件でも駄目なら何も書かない
+  var targets = [];
+  for (var i = 0; i < list.length; i++) {
+    var no = (i + 1) + "件目";
+    var raw = list[i] || {};
+
+    var pid = _str(raw.player_id);
+    var label = pid;
+
+    if (!pid) {
+      var name = _str(raw.name).trim();
+      if (!name) return { ok: false, error: no + ": name か player_id が必要です。" };
+      if (dupName[name]) {
+        return { ok: false, error: no + ": 同名の選手が複数います: " + name + "（player_id で指定してください）" };
+      }
+      pid = byName[name];
+      label = name;
+      if (!pid) return { ok: false, error: no + ": 選手が見つかりません: " + name };
+    }
+
+    var roster = rosterOf[pid];
+    if (!roster) {
+      return { ok: false, error: no + "（" + label + "）: このシーズンに在籍していません。" };
+    }
+
+    var wantTeam = _str(raw.team_id);
+    if (wantTeam && _str(roster.team_id) !== wantTeam) {
+      return { ok: false, error: no + "（" + label + "）: 指定のチームに在籍していません。" };
+    }
+
+    var cost = Math.round(_num(raw.acquired_cost));
+    if (cost < 0) return { ok: false, error: no + "（" + label + "）: 獲得額は0以上にしてください。" };
+
+    // 種別は**指定されたときだけ**検証する。
+    // 省略時は今の値をそのまま残すので、古い表記が入っていても
+    // 金額の訂正が巻き添えで弾かれないようにする
+    var given = _str(raw.acquisition_type).trim();
+    if (given && given !== ACQ_INITIAL && TRANSFER_METHODS.indexOf(given) === -1) {
+      return {
+        ok: false,
+        error: no + "（" + label + "）: 獲得種別は " + ACQ_INITIAL + " / " +
+          TRANSFER_METHODS.join(" / ") + " のいずれかにしてください。",
+      };
+    }
+    var acq = given || _str(roster.acquisition_type) || ACQ_INITIAL;
+
+    targets.push({
+      label:   label,
+      pid:     pid,
+      roster:  roster,
+      teamId:  _str(roster.team_id),
+      before:  _num(roster.acquired_cost),
+      cost:    cost,
+      acq:     acq,
+    });
+  }
+
+  return withLock(function () {
+    var teamNames = _teamNameMap();
+    var updated = [];
+    var claims = [];
+
+    targets.forEach(function (t) {
+      updateRow("Rosters", "roster_id", _str(t.roster.roster_id), {
+        acquisition_type: t.acq,
+        acquired_cost:    t.cost,
+      });
+
+      updated.push({
+        name:      t.label,
+        team_name: teamNames[t.teamId] || t.teamId,
+        type:      t.acq,
+        before:    t.before,
+        after:     t.cost,
+      });
+
+      // 未精算の請求の母数を引き直す
+      getSheetData("Claims").forEach(function (c) {
+        if (_str(c.season_id) !== seasonId) return;
+        if (_str(c.player_id) !== t.pid) return;
+
+        var st = _str(c.status);
+        if (st !== CLAIM_WAITING && st !== CLAIM_FIXED) return;
+
+        var rate = _num(c.rate);
+        var amount = Math.round(t.cost * rate);
+
+        updateRow("Claims", "claim_id", _str(c.claim_id), {
+          base_cost:     t.cost,
+          refund_amount: amount,
+        });
+
+        claims.push({
+          name:      t.label,
+          team_name: teamNames[_str(c.team_id)] || _str(c.team_id),
+          status:    st,
+          rate:      rate,
+          before:    _num(c.refund_amount),
+          after:     amount,
+        });
+      });
+    });
+
+    return {
+      ok: true,
+      data: {
+        season_id: seasonId,
+        updated:   updated,
+        claims:    claims,
+      },
+    };
+  });
+}
+
 /**
  * 名簿の1行を検証して整える。
  *

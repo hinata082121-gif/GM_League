@@ -236,6 +236,9 @@ function _route(action, token, payload) {
     case "importSeasonTeams":
       return importSeasonTeams(token, payload);
 
+    case "setRosterAcquisition":
+      return setRosterAcquisition(token, payload);
+
     case "syncPlayerProfiles":
       return syncPlayerProfiles(token, payload);
 
