@@ -4882,7 +4882,7 @@ async function onAuditEligibility() {
   }
 
   setResult('au-result', false,
-    (d.to_release.length + d.wrongly_ineligible.length) + ' 件の要対応があります。');
+    (d.to_release.length + d.stale_club.length) + ' 件の要確認があります。');
 
   const release = d.to_release.length === 0 ? '' : `
     <h4 class="sub-head">新規クラブへ移ったのに手放されていない（${d.to_release.length}名）</h4>
@@ -4901,16 +4901,17 @@ async function onAuditEligibility() {
       </tr>`).join('')}</tbody>
     </table></div>`;
 
-  const wrong = d.wrongly_ineligible.length === 0 ? '' : `
-    <h4 class="sub-head">参加クラブにいるのに大会対象外（${d.wrongly_ineligible.length}名）</h4>
+  const wrong = d.stale_club.length === 0 ? '' : `
+    <h4 class="sub-head">大会対象外なのに現実クラブが参加クラブのまま（${d.stale_club.length}名）</h4>
     <p class="muted note-sm">
-      名簿が未同期のまま現実移籍を反映すると、大会の外へ出ていない選手まで対象外になります。
-      <strong>戻すかどうかは請求の状態を見て判断してください。</strong>
+      <strong>どちらが正しいかは人が見ないと決まりません。</strong>
+      本当に大会外へ移ったのなら<strong>名簿の現実クラブを直す</strong>のが筋です。
+      反映のほうが誤りなら「戻す」で大会対象に戻し、請求を無効にしてください。
       確定済みの請求はGMが入れ替え先を選んだ後なので、無効にすると選択が取り消されます。
     </p>
     <div class="table-wrap"><table class="data-table">
       <thead><tr><th>選手</th><th>現実クラブ</th><th>保有</th><th>請求</th></tr></thead>
-      <tbody>${d.wrongly_ineligible.map((x) => `<tr>
+      <tbody>${d.stale_club.map((x) => `<tr>
         <td>${esc(x.name)}</td>
         <td>${esc(x.real_club)}</td>
         <td>${x.held_by ? esc(x.held_by) : '<span class="muted">なし</span>'}</td>

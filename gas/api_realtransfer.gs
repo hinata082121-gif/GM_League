@@ -242,17 +242,22 @@ function applyRealTransfers(token, payload) {
         continue;
       }
 
-      // 現実クラブが参加クラブなら、大会の外へは出ていない。
+      // 現実クラブが参加クラブなら、名簿のうえでは大会の外へ出ていない。
       //
-      // ⚠️ 名簿が未同期で real_club が空のまま流すと、参加クラブにいる選手まで
-      //   対象外になり、身に覚えのない補填が立つ。実際に8名がそうなった。
-      //   保有が動くのは applyRealTransfers ではなく releaseToLeagueClub の仕事。
+      // ⚠️ 既定では止めるが、**押し切れる**ようにしてある。
+      //   止める理由は、名簿が未同期で real_club が空や古いまま流すと、
+      //   大会の外へ出ていない選手まで対象外になり、身に覚えのない補填が立つため。
+      //
+      //   一方で、現実に大会外へ移ったのに名簿がまだ古いクラブのまま、
+      //   ということも起きる。そこで弾き切ってしまうと、正しい反映ができない。
+      //   本来は名簿（real_club）を直すのが筋なので、まずそれを促す。
       var club = _str(player.real_club);
-      if (activeClubs[club]) {
+      if (activeClubs[club] && !_toBool(payload.allow_active_club)) {
         skipped.push({
           player_id: pid, name: _str(player.name),
-          reason: "現実クラブ「" + club + "」は参加クラブです。大会の外へ出ていません。" +
-                  "新規参加クラブへ移ったなら releaseToLeagueClub を使ってください。",
+          reason: "現実クラブ「" + club + "」は参加クラブのままです。" +
+                  "名簿を直すか、本当に大会外へ移ったなら「名簿が古くても反映する」を指定してください。",
+          stale_club: true,
         });
         continue;
       }
@@ -545,8 +550,12 @@ function releaseToLeagueClub(token, payload) {
  *   とくに取りこぼしやすいのが次の2つ。
  *     1. 新規クラブが増えた直後。そのクラブへ移っていた選手を
  *        保有チームが抱えたままになる（知念・二田がこれ）
- *     2. 名簿を同期する前に反映を流したとき。現実クラブが空のまま
- *        対象外にされ、参加クラブにいる選手に補填が立つ
+ *     2. 大会対象外なのに、名簿の現実クラブが参加クラブのまま
+ *
+ *   2つ目は**どちらが正しいか機械には決められない**。
+ *     名簿が古い   → 名簿の real_club を実際の移籍先に直す
+ *     反映が誤り   → restorePlayerEligible で戻し、請求を無効にする
+ *   どちらにせよ人が見る必要があるので、判断材料だけ並べて返す。
  *
  *   名簿を同期した後と、新しいクラブを足した後に必ず通す。
  *
@@ -588,7 +597,7 @@ function auditPlayerEligibility(token, payload) {
   });
 
   var toRelease = [];
-  var wronglyIneligible = [];
+  var staleClub = [];
 
   getSheetData("Players").forEach(function (p) {
     var pid = _str(p.player_id);
@@ -599,9 +608,10 @@ function auditPlayerEligibility(token, payload) {
     var roster = rosterOf[pid];
     var claim = claimOf[pid];
 
-    // 対象外なのに現実クラブが参加クラブ。大会の外へは出ていない
+    // 対象外なのに現実クラブが参加クラブのまま。
+    // 名簿が古いのか、反映が誤りなのかは人が見て決める
     if (!_toBool(p.eligible) && newTeamId) {
-      wronglyIneligible.push({
+      staleClub.push({
         player_id:  pid,
         name:       _str(p.name),
         real_club:  club,
@@ -633,15 +643,15 @@ function auditPlayerEligibility(token, payload) {
   });
 
   toRelease.sort(_comparePlayers);
-  wronglyIneligible.sort(_comparePlayers);
+  staleClub.sort(_comparePlayers);
 
   return {
     ok: true,
     data: {
       season_id:          seasonId,
-      to_release:         toRelease,
-      wrongly_ineligible: wronglyIneligible,
-      clean: toRelease.length === 0 && wronglyIneligible.length === 0,
+      to_release: toRelease,
+      stale_club: staleClub,
+      clean: toRelease.length === 0 && staleClub.length === 0,
     },
   };
 }

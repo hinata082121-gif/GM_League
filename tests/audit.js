@@ -85,14 +85,14 @@ t('誰も持っていない選手は拾わない', () => {
 // 誤って対象外
 // =============================================================================
 
-t('参加クラブにいるのに対象外の選手を拾う', () => {
-  // 名簿が未同期のまま反映を流すとこうなる
+t('対象外なのに現実クラブが参加クラブのままの選手を拾う', () => {
+  // 名簿が古いのか反映が誤りなのかは人が決める。材料だけ出す
   const e = makeIneligible(env(), 'k1');   // k1 の現実クラブは鹿島（参加中）
 
   const r = audit(e);
-  eq(r.data.wrongly_ineligible.length, 1);
-  eq(r.data.wrongly_ineligible[0].name, '鹿島1');
-  eq(r.data.wrongly_ineligible[0].held_by, '鹿島アントラーズ');
+  eq(r.data.stale_club.length, 1);
+  eq(r.data.stale_club[0].name, '鹿島1');
+  eq(r.data.stale_club[0].held_by, '鹿島アントラーズ');
 });
 
 t('請求が立っていれば一緒に返す', () => {
@@ -102,9 +102,9 @@ t('請求が立っていれば一緒に返す', () => {
   moveClub(e, 'u1', '浦和レッズ');   // 後から名簿が入って参加クラブと判明
 
   const r = audit(e);
-  eq(r.data.wrongly_ineligible.length, 1);
-  ok(r.data.wrongly_ineligible[0].claim_id, '請求 ID を返す');
-  eq(r.data.wrongly_ineligible[0].claim_status, '選択待ち');
+  eq(r.data.stale_club.length, 1);
+  ok(r.data.stale_club[0].claim_id, '請求 ID を返す');
+  eq(r.data.stale_club[0].claim_status, '選択待ち');
 });
 
 t('本当に大会の外へ出た選手は拾わない', () => {
@@ -112,7 +112,7 @@ t('本当に大会の外へ出た選手は拾わない', () => {
   moveClub(e, 'u1', '川崎フロンターレ');   // 参加していないクラブ
   e.applyRealTransfers('ORG', { season_id: 's1', player_ids: ['u1'] });
 
-  eq(audit(e).data.wrongly_ineligible.length, 0);
+  eq(audit(e).data.stale_club.length, 0);
 });
 
 t('問題が無ければ clean になる', () => {
@@ -127,15 +127,15 @@ t('参加者は点検できない', () => {
 // 反映そのものを止める
 // =============================================================================
 
-t('参加クラブにいる選手は対象外にできない', () => {
-  // 現実クラブが参加クラブなら大会の外へは出ていない。
-  // 名簿が空のまま流して8名を巻き込んだ事故の再発防止
+t('現実クラブが参加クラブのままなら既定では止める', () => {
+  // 名簿が空や古いまま流すと、大会外へ出ていない選手まで巻き込む
   const e = env();
   const r = e.applyRealTransfers('ORG', { season_id: 's1', player_ids: ['k1'] });
 
   eq(r.ok, true, r.error);
   eq(r.data.applied.length, 0);
-  ok(r.data.skipped[0].reason.indexOf('参加クラブです') !== -1, r.data.skipped[0].reason);
+  ok(r.data.skipped[0].reason.indexOf('参加クラブのまま') !== -1, r.data.skipped[0].reason);
+  eq(r.data.skipped[0].stale_club, true);
   eq(claimsOf(e).length, 0, '請求も立てない');
 });
 
@@ -147,6 +147,18 @@ t('対象外にされずに eligible のまま残る', () => {
   const col = rows[0];
   const p = rows.slice(1).find((x) => x[col.indexOf('player_id')] === 'k1');
   eq(p[col.indexOf('eligible')], true);
+});
+
+t('名簿が古いだけなら押し切れる', () => {
+  // 現実には大会外へ移ったのに名簿がまだ古いクラブのまま、ということが起きる。
+  // ここで弾き切ると正しい反映ができない
+  const e = env();
+  const r = e.applyRealTransfers('ORG', {
+    season_id: 's1', player_ids: ['k1'], allow_active_club: true,
+  });
+
+  eq(r.data.applied.length, 1);
+  eq(claimsOf(e).length, 1, '補填の請求も立つ');
 });
 
 t('現実クラブが空なら従来どおり通す', () => {
