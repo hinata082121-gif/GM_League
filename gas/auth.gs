@@ -48,8 +48,18 @@ function whoami(token) {
  * @param {string} token
  * @returns {string|null} email
  */
+/** 1リクエスト内の確認結果。batch で同じトークンを何度も確かめないため */
+var _tokenMemo = {};
+
 function _verifyToken(token) {
   if (!token) return null;
+  if (_tokenMemo.hasOwnProperty(token)) return _tokenMemo[token];
+  var email = _verifyTokenUncached(token);
+  _tokenMemo[token] = email;
+  return email;
+}
+
+function _verifyTokenUncached(token) {
 
   // 同じトークンの確認結果は使い回す。毎回 Google へ問い合わせると
   // 1回あたり数百ms〜1秒かかり、UrlFetch の1日の上限も消費する。

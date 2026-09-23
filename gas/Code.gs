@@ -64,6 +64,9 @@ function _route(action, token, payload) {
     case "whoami":
       return whoami(token);
 
+    case "batch":
+      return _runBatch(token, payload);
+
     // ---- 公開（トークン不要）----
     // ここに追加する action は必ず読み取り専用にすること。
     case "getPublicData":
@@ -456,6 +459,67 @@ function _route(action, token, payload) {
     default:
       return { ok: false, error: "Unknown action: " + action };
   }
+}
+
+// ---------------------------------------------------------------------------
+// まとめて実行
+// ---------------------------------------------------------------------------
+
+/** 1回の batch で受け付ける件数の上限 */
+var BATCH_MAX = 12;
+
+/**
+ * 読み取りの action を1回の通信でまとめて実行する。
+ *
+ * **GAS は同時に動ける数に上限があり、通信の数そのものが混雑の原因になる。**
+ * 画面を開くと一覧を3〜5本同時に取りに行くので、参加者が一斉に使うと
+ * 順番待ちで1回20〜40秒かかった。まとめれば実行は1回で済み、
+ * 同じ表を読み直すこともない（1リクエスト内のキャッシュが効く）。
+ *
+ * **読み取りだけを受け付ける。** 書き込みを混ぜると、通信が切れたときに
+ * どこまで処理されたか分からなくなるため。判定はフロントの _isReadAction と同じ。
+ *
+ * payload: { calls: [{ action, payload }] }
+ * 戻り値:  { ok: true, data: { results: [{ ok, data?, error? }] } }
+ *
+ * @param {string} token
+ * @param {Object} payload
+ * @returns {{ ok: boolean, data?: Object, error?: string }}
+ */
+function _runBatch(token, payload) {
+  var calls = (payload && payload.calls) || [];
+  if (Object.prototype.toString.call(calls) !== "[object Array]" || calls.length === 0) {
+    return { ok: false, error: "calls が空です。" };
+  }
+  if (calls.length > BATCH_MAX) {
+    return { ok: false, error: "一度にまとめられるのは " + BATCH_MAX + " 件までです。" };
+  }
+
+  var results = calls.map(function (c) {
+    var action = String((c && c.action) || "");
+    if (!_isBatchableAction(action)) {
+      return { ok: false, error: "まとめて実行できない action です: " + action };
+    }
+    try {
+      return _route(action, token, (c && c.payload) || {});
+    } catch (err) {
+      Logger.log("[batch] " + action + ": " + err.message);
+      return { ok: false, error: "サーバーエラー: " + err.message };
+    }
+  });
+
+  return { ok: true, data: { results: results } };
+}
+
+/**
+ * まとめて実行してよい action か。読み取りだけ。
+ *
+ * @param {string} action
+ * @returns {boolean}
+ */
+function _isBatchableAction(action) {
+  if (action === "batch") return false;
+  return /^(get|list|search|audit)/.test(action) || action === "whoami";
 }
 
 // ---------------------------------------------------------------------------

@@ -36,7 +36,78 @@
  *   const res = await callApi('whoami');
  *   if (res.ok) console.log(res.data.role);
  */
-async function callApi(action, payload = {}) {
+function callApi(action, payload = {}) {
+  // 読み取りは同じ瞬間に出たものを1回の通信にまとめる（_flushBatch）。
+  // GAS は同時に動ける数に上限があり、通信の数そのものが混雑の原因になるため
+  if (_isBatchable(action, payload)) {
+    return new Promise((resolve) => {
+      _batchQueue.push({ action, payload, resolve });
+      if (!_batchTimer) _batchTimer = setTimeout(_flushBatch, BATCH_WAIT_MS);
+    });
+  }
+  return _callApiDirect(action, payload);
+}
+
+/** まとめる待ち時間。画面を開いたときに同時に出る取得がここに収まる */
+const BATCH_WAIT_MS = 15;
+/** 1回にまとめる上限（GAS 側の BATCH_MAX と合わせる） */
+const BATCH_MAX = 12;
+let _batchQueue = [];
+let _batchTimer = null;
+/** GAS が batch を知らない（古いデプロイ）と分かったら以後まとめない */
+let _batchUnsupported = false;
+
+function _isBatchable(action, payload) {
+  if (_batchUnsupported) return false;
+  if (payload && payload.__retried) return false;
+  return action !== 'whoami' && _isReadAction(action);
+}
+
+/**
+ * たまった読み取りを1回の通信で送る。
+ * 1件だけなら普通に送る。まとめた通信が失敗したら、1件ずつ送り直す
+ * （それぞれが自分の再試行を持っているので、ここでは重ねて再試行しない）。
+ */
+async function _flushBatch() {
+  const queue = _batchQueue;
+  _batchQueue = [];
+  _batchTimer = null;
+
+  for (let i = 0; i < queue.length; i += BATCH_MAX) {
+    const group = queue.slice(i, i + BATCH_MAX);
+    if (group.length === 1) {
+      group[0].resolve(await _callApiDirect(group[0].action, group[0].payload));
+      continue;
+    }
+    _sendBatch(group);
+  }
+}
+
+async function _sendBatch(group) {
+  const res = await _callApiDirect('batch', {
+    calls: group.map((g) => ({ action: g.action, payload: g.payload })),
+  });
+
+  const results = res.ok && res.data && res.data.results;
+  if (results && results.length === group.length) {
+    group.forEach((g, i) => {
+      const r = results[i];
+      if (!r.ok && r.error === 'invalid_token') showSessionExpired();
+      g.resolve(r);
+    });
+    return;
+  }
+
+  if (!res.ok && /Unknown action: batch/.test(res.error || '')) {
+    console.warn('[callApi] GAS が batch に未対応のため、1件ずつ送ります');
+    _batchUnsupported = true;
+  }
+
+  // まとめて送れなかったので1件ずつ送る
+  group.forEach(async (g) => g.resolve(await _callApiDirect(g.action, g.payload)));
+}
+
+async function _callApiDirect(action, payload = {}) {
   const token = getIdToken();
   if (!token) {
     return { ok: false, error: 'no_token' };
@@ -70,14 +141,14 @@ async function callApi(action, payload = {}) {
     if (res.status === 404 && !payload.__retried) {
       console.warn('[callApi] http_404。1.5秒後に再試行します:', action);
       await new Promise((r) => setTimeout(r, 1500));
-      return callApi(action, Object.assign({}, payload, { __retried: true }));
+      return _callApiDirect(action, Object.assign({}, payload, { __retried: true }));
     }
 
     if (!res.ok) {
       // 読み取りは何度投げても結果が変わらないので、混雑による一時的な失敗は1回だけ投げ直す
       if (res.status >= 500 && _isReadAction(action) && !payload.__retried) {
         await new Promise((r) => setTimeout(r, 2000));
-        return callApi(action, Object.assign({}, payload, { __retried: true }));
+        return _callApiDirect(action, Object.assign({}, payload, { __retried: true }));
       }
       return { ok: false, error: `http_${res.status}` };
     }
@@ -97,7 +168,7 @@ async function callApi(action, payload = {}) {
     if (_isReadAction(action) && !payload.__retried) {
       console.warn('[callApi] 通信失敗。2秒後に再試行します:', action, err.message);
       await new Promise((r) => setTimeout(r, 2000));
-      return callApi(action, Object.assign({}, payload, { __retried: true }));
+      return _callApiDirect(action, Object.assign({}, payload, { __retried: true }));
     }
     console.error('[callApi] fetch 失敗:', err);
     return { ok: false, error: err.message };
