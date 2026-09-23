@@ -476,10 +476,17 @@ function swapEntryPlayers(token, payload) {
 /**
  * 1チーム1シーズンで入れ替えられる人数の上限。Config の entry_change_max（既定5）。
  *
+ * ⚠️ getConfigNum は使わない。キーが無いと空文字を Number にかけて 0 を返し、
+ *   既定値が効かない。Config にキーを足していない状態で上限0になった。
+ *
  * @returns {number}
  */
 function _entryChangeMax() {
-  return Math.max(0, Math.round(getConfigNum("entry_change_max", 5)));
+  var raw = _str(getConfig("entry_change_max", "")).trim();
+  if (raw === "") return 5;
+  var n = Number(raw);
+  if (isNaN(n)) return 5;
+  return Math.max(0, Math.round(n));
 }
 
 /**
