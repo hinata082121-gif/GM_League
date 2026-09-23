@@ -1674,6 +1674,8 @@ async function loadEntryStatus() {
   entryData = null;
   entrySelection = new Set();
   pickerBox.innerHTML = '';
+  const changeBox = document.getElementById('en-change');
+  if (changeBox) changeBox.innerHTML = '';
 
   if (!seasonId) {
     statusBox.innerHTML = '<p class="muted">シーズンを選択してください。</p>';
@@ -1697,6 +1699,141 @@ async function loadEntryStatus() {
 
   renderEntryStatusBox();
   renderEntryPicker();
+  await loadEntryChange(seasonId, res.data.team_id);
+}
+
+// ---------------------------------------------------------------------------
+// エントリー変更（自クラブのエントリー外選手と無償で1対1の入れ替え）
+// ---------------------------------------------------------------------------
+
+let entryChangeData = null;
+
+/**
+ * エントリー変更の欄を読み込む。
+ *
+ * 受付期間は日程表から GAS が判定する。画面は結果を出すだけ。
+ */
+async function loadEntryChange(seasonId, teamId) {
+  const box = document.getElementById('en-change');
+  if (!box) return;
+  box.innerHTML = '';
+  entryChangeData = null;
+  if (!seasonId || !teamId) return;
+
+  const res = await callApi('getEntryChangeStatus', { season_id: seasonId, team_id: teamId });
+  if (!res.ok) {
+    box.innerHTML = '<p class="msg-error">エントリー変更の情報を取得できませんでした: ' + esc(res.error) + '</p>';
+    return;
+  }
+
+  entryChangeData = res.data;
+  renderEntryChange();
+}
+
+/** 選手1人をプルダウン用の1行にする */
+function entryChangeLabel(p) {
+  const meta = [];
+  if (Number(p.age) > 0) meta.push(p.age + '歳');
+  if (p.foreign) meta.push('△' + (p.nationality || '外国籍'));
+  return (p.detail_position || p.position) + ' ' + p.name +
+    (meta.length ? '（' + meta.join(' ') + '）' : '');
+}
+
+function renderEntryChange() {
+  const d = entryChangeData;
+  const box = document.getElementById('en-change');
+  const w = d.window;
+
+  const fmt = (iso) => (iso ? new Date(iso).toLocaleString('ja-JP', {
+    month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  }) : '未設定');
+
+  const period = w.start_at ? fmt(w.start_at) + ' 〜 ' + fmt(w.end_at) : '未設定';
+
+  const outs = d.entered.filter((p) => p.swappable);
+  const locked = d.entered.filter((p) => !p.swappable);
+
+  const outOptions = outs
+    .map((p) => '<option value="' + esc(p.player_id) + '">' + esc(entryChangeLabel(p)) + '</option>')
+    .join('');
+  const inOptions = d.candidates
+    .map((p) => '<option value="' + esc(p.player_id) + '">' + esc(entryChangeLabel(p)) + '</option>')
+    .join('');
+
+  const form = d.can_change
+    ? `
+      <div class="claim-actions">
+        <label>外す選手
+          <select id="ec-out"><option value="">選択</option>${outOptions}</select>
+        </label>
+        <span class="muted">⇄</span>
+        <label>入れる選手
+          <select id="ec-in"><option value="">選択</option>${inOptions}</select>
+        </label>
+        <button type="button" id="ec-swap" class="btn btn-primary btn-sm">入れ替える</button>
+      </div>
+      <span id="ec-result" class="form-msg"></span>`
+    : '<p class="muted">' + esc(w.reason) + '</p>';
+
+  const lockedHtml = locked.length === 0 ? '' : `
+    <details class="note-sm">
+      <summary>外せない選手（${locked.length} 名）</summary>
+      <ul>${locked.map((p) => '<li>' + esc(p.name) + ' — ' + esc(p.reason) + '</li>').join('')}</ul>
+    </details>`;
+
+  const history = d.history.length === 0 ? '' : `
+    <h4 class="sub-head">変更履歴</h4>
+    <table class="data-table">
+      <thead><tr><th>日時</th><th>外した選手</th><th>入れた選手</th></tr></thead>
+      <tbody>${d.history.map((h) =>
+        '<tr><td>' + esc(fmt(h.changed_at)) + '</td><td>' + esc(h.out_name) +
+        '</td><td>' + esc(h.in_name) + '</td></tr>').join('')}</tbody>
+    </table>`;
+
+  box.innerHTML = `
+    <div class="card">
+      <h3 class="sub-head">エントリー変更</h3>
+      <p class="muted note-sm">
+        自クラブのエントリー済み選手を1人外し、自クラブのエントリー外の選手を1人入れます。費用はかかりません。
+        期間内なら何度でも変更できます。<br>
+        受付期間: ${esc(period)}
+        ／ 外せる選手 ${outs.length} 名 ／ 入れられる選手 ${d.candidates.length} 名
+      </p>
+      ${form}
+      ${lockedHtml}
+      ${history}
+    </div>`;
+
+  const btn = document.getElementById('ec-swap');
+  if (btn) btn.onclick = onEntryChangeSwap;
+}
+
+async function onEntryChangeSwap() {
+  const d = entryChangeData;
+  const outId = document.getElementById('ec-out').value;
+  const inId = document.getElementById('ec-in').value;
+  if (!outId || !inId) {
+    setResult('ec-result', false, '外す選手と入れる選手を両方選んでください。');
+    return;
+  }
+
+  const btn = document.getElementById('ec-swap');
+  btn.disabled = true;
+  setResult('ec-result', true, '送信中...');
+
+  const res = await callApi('swapEntryPlayer', {
+    season_id: d.season_id, team_id: d.team_id,
+    out_player_id: outId, in_player_id: inId,
+  });
+
+  if (!res.ok) {
+    setResult('ec-result', false, '入れ替えできません: ' + res.error);
+    btn.disabled = false;
+    return;
+  }
+
+  await loadEntryChange(d.season_id, d.team_id);
+  setResult('ec-result', true, res.data.out_name + ' → ' + res.data.in_name + ' に入れ替えました。');
 }
 
 /**

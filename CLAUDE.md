@@ -262,6 +262,7 @@ config.js
 │   ├─ api_stats.gs    # Phase 6: 順位表・トーナメント・ランキング
 │   ├─ api_season.gs   # Phase 7: 経済周辺・シーズン進行・賞金支給
 │   ├─ api_fixture.gs  # 対戦表（総当たり生成・編集）
+│   ├─ api_entrychange.gs # エントリー変更（自クラブのエントリー外と無償で入れ替え）
 │   ├─ api_division.gs # ディビジョン割り当て・GMスーパーカップ
 │   ├─ api_signup.gs   # 参加登録（合言葉・申請・承認）
 │   ├─ api_public.gs   # 認証不要の公開データ

@@ -270,6 +270,16 @@ function _route(action, token, payload) {
     case "setSeasonStatus":
       return setSeasonStatus(token, payload);
 
+    // ---- エントリー変更 ----
+    case "getEntryChangeStatus":
+      return getEntryChangeStatus(token, payload);
+
+    case "swapEntryPlayer":
+      return swapEntryPlayer(token, payload);
+
+    case "listEntryChanges":
+      return listEntryChanges(token, payload);
+
     // ---- Phase 3: 移籍 ----
     case "getTransferOptions":
       return getTransferOptions(token, payload);
