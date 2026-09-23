@@ -1886,6 +1886,203 @@ async function onEntryChangeSwap() {
   box.prepend(note);
 }
 
+/**
+ * 状態サマリー（チーム・提出状態・必要人数）を描画する。
+ */
+function renderEntryStatusBox() {
+  const d = entryData;
+  const box = document.getElementById('en-status');
+
+  const badge = {
+    未提出: 'tag-none',
+    提出済: 'tag-pending',
+    承認: 'tag-ok',
+    差戻: 'tag-ng',
+  }[d.entry_status] || 'tag-none';
+
+  let notice = '';
+  if (d.season_status !== 'エントリー受付') {
+    notice =
+      '<p class="msg-error">このシーズンは現在「' + esc(d.season_status) +
+      '」のため提出できません。エントリー受付中のみ提出できます。</p>';
+  } else if (d.entry_status === '承認') {
+    notice = '<p class="msg-ok">承認済みです。内容を変更するには主催者に差戻を依頼してください。</p>';
+  } else if (d.entry_status === '差戻') {
+    notice = '<p class="msg-error">差し戻されています。選び直して再提出してください。</p>';
+  }
+
+  box.innerHTML = `
+    <div class="stat-grid">
+      <div class="stat">
+        <span class="stat-label">チーム</span>
+        <span class="stat-value">${esc(d.team_name)} <span class="tag-kind">${esc(d.team_kind)}</span></span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">提出状態</span>
+        <span class="stat-value stat-sm"><span class="${badge}">${esc(d.entry_status)}</span></span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">必要人数</span>
+        <span class="stat-value stat-sm">${esc(d.required.label)}</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">選択可能な選手</span>
+        <span class="stat-value stat-sm">${d.available_count} 名</span>
+      </div>
+    </div>
+    ${notice}`;
+}
+
+/**
+ * 選手選択UIを描画する。
+ * 継続チームは選手を選ばないため、確認と提出ボタンだけ出す。
+ */
+function renderEntryPicker() {
+  const d = entryData;
+  const box = document.getElementById('en-picker');
+  const editable = d.can_submit;
+
+  if (d.team_kind === '継続') {
+    box.innerHTML = `
+      <h3 class="sub-head">引継ぎスカッドの確認</h3>
+      <p class="muted">
+        継続チームは前シーズンのスカッドをそのまま引き継ぎます（現在 ${d.selected_count} 名）。
+        内容は「チーム閲覧」で確認できます。
+      </p>
+      <div class="form-actions">
+        <button type="button" id="en-submit" class="btn btn-primary" ${editable ? '' : 'disabled'}>
+          この内容で提出する
+        </button>
+        <span id="en-result" class="form-msg"></span>
+      </div>`;
+    document.getElementById('en-submit').onclick = onSubmitEntry;
+    return;
+  }
+
+  const byPos = { GK: [], DF: [], MF: [], FW: [] };
+  d.available.forEach((p) => {
+    if (byPos[p.position]) byPos[p.position].push(p);
+  });
+
+  let html = '<h3 class="sub-head">選手を選ぶ</h3>';
+  html += '<div id="en-counter" class="entry-counter"></div>';
+
+  ['GK', 'DF', 'MF', 'FW'].forEach((pos) => {
+    const list = byPos[pos];
+    if (list.length === 0) return;
+
+    html += `
+      <div class="pos-group">
+        <div class="pos-group-head">
+          <span class="pos pos-${pos}">${pos}</span>
+          <span class="muted" id="en-count-${pos}"></span>
+        </div>
+        <div class="player-grid">`;
+
+    list.forEach((p) => {
+      const checked = entrySelection.has(p.player_id) ? 'checked' : '';
+      html += `
+          <label class="player-chip">
+            <input type="checkbox" class="en-pick" value="${esc(p.player_id)}" ${checked} ${editable ? '' : 'disabled'} />
+            <span class="player-chip-name">${esc(p.name)}</span>
+            <span class="player-chip-club">${esc(p.real_club)}</span>
+          </label>`;
+    });
+
+    html += '</div></div>';
+  });
+
+  html += `
+    <div class="form-actions">
+      <button type="button" id="en-submit" class="btn btn-primary">提出する</button>
+      <button type="button" id="en-clear" class="btn btn-secondary btn-sm">選択をすべて解除</button>
+      <span id="en-result" class="form-msg"></span>
+    </div>`;
+
+  box.innerHTML = html;
+
+  box.querySelectorAll('.en-pick').forEach((cb) => {
+    cb.onchange = () => {
+      if (cb.checked) entrySelection.add(cb.value);
+      else entrySelection.delete(cb.value);
+      updateEntryCounter();
+    };
+  });
+
+  document.getElementById('en-submit').onclick = onSubmitEntry;
+  document.getElementById('en-clear').onclick = () => {
+    entrySelection.clear();
+    box.querySelectorAll('.en-pick').forEach((cb) => { cb.checked = false; });
+    updateEntryCounter();
+  };
+
+  updateEntryCounter();
+}
+
+/**
+ * 選択人数のカウンタとポジション別内訳を更新し、
+ * 必要人数に満たない場合は提出ボタンを無効にする。
+ *
+ * 最終的な人数判定は GAS 側でも行う（クライアント側は操作性のため）。
+ */
+function updateEntryCounter() {
+  const d = entryData;
+  if (!d) return;
+
+  const counts = { GK: 0, DF: 0, MF: 0, FW: 0 };
+  d.available.forEach((p) => {
+    if (entrySelection.has(p.player_id) && counts[p.position] !== undefined) {
+      counts[p.position]++;
+    }
+  });
+
+  const n = entrySelection.size;
+  const exact = d.required.exact;
+  const okCount = exact === null
+    ? n >= d.required.min && n <= d.required.max
+    : n === exact;
+
+  const counter = document.getElementById('en-counter');
+  if (counter) {
+    counter.className = 'entry-counter ' + (okCount ? 'entry-ok' : 'entry-ng');
+    counter.innerHTML =
+      '<strong>' + n + ' / ' + esc(d.required.label) + '</strong>' +
+      '<span class="muted">GK' + counts.GK + ' / DF' + counts.DF +
+      ' / MF' + counts.MF + ' / FW' + counts.FW + '</span>';
+  }
+
+  ['GK', 'DF', 'MF', 'FW'].forEach((pos) => {
+    const el = document.getElementById('en-count-' + pos);
+    if (el) el.textContent = counts[pos] + ' 名選択中';
+  });
+
+  const btn = document.getElementById('en-submit');
+  if (btn) btn.disabled = !okCount || !d.can_submit;
+}
+
+/**
+ * エントリーを提出する。
+ */
+async function onSubmitEntry() {
+  const btn = document.getElementById('en-submit');
+  btn.disabled = true;
+  setResult('en-result', true, '送信中...');
+
+  const res = await callApi('submitEntryList', {
+    season_id: entryData.season_id,
+    team_id: entryData.team_id,
+    player_ids: Array.from(entrySelection),
+  });
+
+  if (res.ok) {
+    setResult('en-result', true, res.data.count + ' 名で提出しました。主催者の承認をお待ちください。');
+    await loadEntryStatus();
+  } else {
+    setResult('en-result', false, '提出できません: ' + res.error);
+    btn.disabled = false;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 画面4: エントリー承認（主催者限定）
 // ---------------------------------------------------------------------------
