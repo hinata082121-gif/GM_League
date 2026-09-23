@@ -272,7 +272,7 @@ t('複製でor条件も引き継ぐ', () => {
 t('設定画面の選択肢が返る', () => {
   const e = env();
   const d = e.listSponsors('ORG', { season_id: 's1' }).data;
-  eq(d.unlock_types, ['なし', '順位', '指定']);
+  eq(d.unlock_types, ['なし', '順位', '指定', 'GM1リーグ所属', 'GM2リーグ所属', '過去シーズン参加経験無']);
   eq(d.quota_types, ['なし', 'リーグ順位', 'リーグ杯']);
   eq(d.teams.length, 4);
 });

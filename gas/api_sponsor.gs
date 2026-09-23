@@ -51,7 +51,13 @@ var SPONSOR_CUP_GOALS = ["優勝", "準優勝以上", "ベスト4以上"];
 var SPONSOR_UNLOCK_NONE = "なし";
 var SPONSOR_UNLOCK_RANK = "順位";
 var SPONSOR_UNLOCK_LIST = "指定";
-var SPONSOR_UNLOCK_TYPES = [SPONSOR_UNLOCK_NONE, SPONSOR_UNLOCK_RANK, SPONSOR_UNLOCK_LIST];
+var SPONSOR_UNLOCK_GM1 = "GM1リーグ所属";
+var SPONSOR_UNLOCK_GM2 = "GM2リーグ所属";
+var SPONSOR_UNLOCK_NEWCOMER = "過去シーズン参加経験無";
+var SPONSOR_UNLOCK_TYPES = [
+  SPONSOR_UNLOCK_NONE, SPONSOR_UNLOCK_RANK, SPONSOR_UNLOCK_LIST,
+  SPONSOR_UNLOCK_GM1, SPONSOR_UNLOCK_GM2, SPONSOR_UNLOCK_NEWCOMER,
+];
 
 /**
  * 順位で解放するときの「判定するシーズン」。
@@ -253,6 +259,9 @@ function _unlockLabel(s) {
   if (s.unlock_type === SPONSOR_UNLOCK_LIST) {
     return "主催者が指定したチームのみ";
   }
+  if (s.unlock_type === SPONSOR_UNLOCK_GM1) return "今シーズン GM1リーグ所属";
+  if (s.unlock_type === SPONSOR_UNLOCK_GM2) return "今シーズン GM2リーグ所属";
+  if (s.unlock_type === SPONSOR_UNLOCK_NEWCOMER) return "過去シーズンの参加経験なし";
   return "";
 }
 
@@ -314,7 +323,61 @@ function _isUnlocked(sponsor, teamId, rankCache) {
     };
   }
 
+  if (sponsor.unlock_type === SPONSOR_UNLOCK_GM1 || sponsor.unlock_type === SPONSOR_UNLOCK_GM2) {
+    var key = "__div|" + sponsor.season_id;
+    if (!rankCache[key]) rankCache[key] = _divisionsOf(sponsor.season_id);
+    var d = rankCache[key];
+
+    if (!d.map.hasOwnProperty(teamId)) {
+      return { unlocked: false, reason: "今シーズンのディビジョンが割り当てられていません" };
+    }
+    var div = _divisionOf(d.map, teamId);
+    var want = sponsor.unlock_type === SPONSOR_UNLOCK_GM1 ? DIVISION_GM1 : DIVISION_GM2;
+    return { unlocked: div === want, reason: div + "所属" };
+  }
+
+  if (sponsor.unlock_type === SPONSOR_UNLOCK_NEWCOMER) {
+    var pkey = "__past|" + sponsor.season_id;
+    if (!rankCache[pkey]) rankCache[pkey] = _pastParticipants(sponsor.season_id);
+    var seasons = rankCache[pkey][teamId];
+    if (seasons) {
+      return { unlocked: false, reason: seasons.join("・") + " に参加しています" };
+    }
+    return { unlocked: true, reason: "過去シーズンの参加なし" };
+  }
+
   return { unlocked: true, reason: "" };
+}
+
+/**
+ * 過去シーズンに参加したチームを返す。team_id → 参加したシーズン名の配列。
+ *
+ * 見るのはツールに入っている過去シーズンだけ（Season12 以前は無いので数えない）。
+ * そのシーズンの在籍記録（Rosters）かシーズン名簿（SeasonTeams）があれば参加とみなす。
+ * 途中で辞退したチームも、参加した事実は残るので「経験あり」になる。
+ *
+ * @param {string} seasonId 今のシーズン
+ * @returns {Object}
+ */
+function _pastParticipants(seasonId) {
+  var names = {};
+  _pastSeasons(seasonId).forEach(function (p) { names[p.season_id] = p.name; });
+
+  var out = {};
+  var add = function (teamId, sid) {
+    if (!teamId || !names[sid]) return;
+    if (!out[teamId]) out[teamId] = [];
+    if (out[teamId].indexOf(names[sid]) === -1) out[teamId].push(names[sid]);
+  };
+
+  getSheetData("Rosters").forEach(function (r) { add(_str(r.team_id), _str(r.season_id)); });
+  try {
+    getSheetData("SeasonTeams").forEach(function (r) { add(_str(r.team_id), _str(r.season_id)); });
+  } catch (e) {
+    Logger.log("[_pastParticipants] SeasonTeams 読み取りエラー: " + e.message);
+  }
+
+  return out;
 }
 
 /**
