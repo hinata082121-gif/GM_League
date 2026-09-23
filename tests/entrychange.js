@@ -92,8 +92,7 @@ t('外せる・外せないが理由つきで返る', () => {
   ok(by.k2.reason.includes('プロテクト'), by.k2.reason);
   eq(by.k5.swappable, false, '補填対象');
   ok(by.k5.reason.includes('補填'), by.k5.reason);
-  eq(by.u1.swappable, false, '他クラブ');
-  ok(by.u1.reason.includes('他クラブ'), by.u1.reason);
+  eq(by.u1.swappable, true, '完全移籍で獲った他クラブの選手も外せる');
   eq(by.k6.swappable, false, '期限付き');
 });
 
@@ -179,8 +178,20 @@ t('補填対象の選手は外せない', () => {
   eq(swap(env(), 'k5', 'k3').ok, false);
 });
 
-t('他クラブの選手は外せない', () => {
-  eq(swap(env(), 'u1', 'k3').ok, false);
+t('完全移籍で獲った他クラブの選手も外せる', () => {
+  const e = env();
+  const r = swap(e, 'u1', 'k3');
+  eq(r.ok, true, r.error);
+  eq(activeOf(e, 't_a'), ['k1', 'k2', 'k3', 'k5', 'k6']);
+});
+
+t('外した他クラブの選手は、現実のクラブのエントリー外に戻る', () => {
+  const e = env();
+  swap(e, 'u1', 'k3');
+  const b = e.getEntryChangeStatus('B', { season_id: 's1', team_id: 't_b' }).data;
+  ok(b.candidates.some((c) => c.player_id === 'u1'), '浦和の候補に出る');
+  const a = status(e).data;
+  ok(!a.candidates.some((c) => c.player_id === 'u1'), '鹿島の候補には出ない');
 });
 
 t('期限付きで預かっている選手は外せない', () => {
