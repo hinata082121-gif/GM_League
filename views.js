@@ -5801,7 +5801,13 @@ function renderCloseReport(report) {
       ${list('次シーズンへの繰越', report.carried_budget || [],
         (r) => r.team_name + ' ' + formatMoney(r.amount))}
       ${list('スポンサーのノルマ', report.sponsor_results || [],
-        (r) => r.team_name + ' ' + r.sponsor_name + ' ' + (r.met ? '達成' : '未達（' + r.actual + '）−' + formatMoney(r.penalty)))}
+        (r) => r.team_name + ' ' + r.sponsor_name + ' ' + (r.met ? '達成' : '未達（' + r.actual + '）−' + formatMoney(r.penalty)) +
+          (r.released
+            ? (r.released.done
+              ? ' ／ 放出: ' + r.released.name + '（' + r.released.goals + '点）→ 翌シーズンのオークションへ'
+              : ' ／ 放出できず: ' + r.released.reason +
+                (r.released.tied && r.released.tied.length ? '（' + r.released.tied.join('・') + '）' : ''))
+            : ''))}
     </div>
     <p class="muted note-sm">
       期限切れで離脱: ${report.expired} 名
@@ -8236,6 +8242,9 @@ function renderSponsorList() {
             <span class="stat-value stat-sm">${s.penalty > 0 ? esc(formatMoney(s.penalty)) : 'なし'}</span>
           </div>
         </div>
+        ${s.penalty_release
+          ? '<p class="note-sm text-ng">未達の場合、<strong>チーム内得点王をフリー放出</strong>し、翌シーズンのオークションに回します。</p>'
+          : ''}
         ${s.unlock_label
           ? '<p class="note-sm' + (s.unlocked ? ' muted' : ' text-ng') + '">解放条件: ' +
             esc(s.unlock_label) +
@@ -8274,6 +8283,9 @@ async function onChooseSponsor(sponsorId) {
     'ノルマ: ' + s.quota_label + '\n' +
     (s.penalty > 0
       ? '未達の場合、シーズン終了時に ' + formatMoney(s.penalty) + ' が引かれます。\n'
+      : '') +
+    (s.penalty_release
+      ? '未達の場合、チーム内得点王をフリー放出し、翌シーズンのオークションに回します。\n'
       : '') +
     (d.my_contract ? '\n現在の契約は解除され、契約金は返金されます。\n' : '') +
     '\nよろしいですか？';
@@ -8329,8 +8341,8 @@ async function loadSponsorAdmin() {
   }
 
   const d = res.data;
-  // 解放条件の「判定するシーズン」で前シーズンを選べるようにする
-  d.all_seasons = await loadActiveSeasons();
+  // 解放条件の「判定するシーズン」の選択肢は GAS が unlock_season_options で返す。
+  // 以前は進行中のシーズンだけを並べていたため、今のシーズンしか選べなかった
   sponsorAdminData = d;
 
   document.getElementById('sa-open').checked = d.open;
@@ -8377,7 +8389,8 @@ function renderSponsorAdminList(d) {
               <td>${esc(s.name)}${s.note ? '<br><span class="muted note-sm">' + esc(s.note) + '</span>' : ''}</td>
               <td class="num">${esc(formatMoney(s.contract_fee))}</td>
               <td>${esc(s.quota_label)}</td>
-              <td class="num">${s.penalty > 0 ? esc(formatMoney(s.penalty)) : '—'}</td>
+              <td class="num">${s.penalty > 0 ? esc(formatMoney(s.penalty)) : '—'}${s.penalty_release
+                ? '<br><span class="note-sm text-ng">＋主力放出</span>' : ''}</td>
               <td class="muted">${s.unlock_label
                 ? esc(s.unlock_label) +
                   (s.unlock_type === '指定'
@@ -8493,7 +8506,7 @@ function onEditSponsor(s) {
   const v = s || {
     sponsor_id: '', name: '', contract_fee: 0,
     quota_type: 'なし', quota_value: '', quota_type2: 'なし', quota_value2: '',
-    penalty: 0, unlock_type: 'なし', unlock_season_id: '', unlock_value: '',
+    penalty: 0, penalty_release: false, unlock_type: 'なし', unlock_season_id: '', unlock_value: '',
     unlock_teams: [], unlock_note: '', note: '', active: true,
   };
 
@@ -8526,14 +8539,25 @@ function onEditSponsor(s) {
           未達時の罰金 <span class="unit-hint">100万円単位</span>
           <input type="number" id="sf-penalty" min="0" step="1" value="${million(v.penalty)}" />
         </label>
+        <label class="check-label">
+          <input type="checkbox" id="sf-release" ${v.penalty_release ? 'checked' : ''} />
+          未達ならチーム内得点王をフリー放出（翌シーズンのオークションへ）
+        </label>
       </div>
+      <p class="muted note-sm">
+        得点王はそのシーズンの承認済みの全試合で、そのチームの得点として記録された数で決めます。
+        シーズン終了時に在籍している選手が対象で、期限付き・オークションで預かっている選手は除きます。
+        得点もアシストも同数なら自動では放出せず、終了処理の結果に出します。
+      </p>
 
       <h4 class="sub-head-sm">解放条件</h4>
       <p class="muted note-sm">
         条件を満たしたチームだけが選べるようになります。
-        <strong>順位</strong>はツールに入っているシーズンの順位表から自動で判定し、
+        <strong>順位</strong>はツールに入っている過去シーズンの順位表から自動で判定し、
         <strong>指定</strong>は選んだチームだけに開きます。
-        過去シーズンの成績がツールに無い場合は「指定」を使ってください。
+        「直近3シーズン」はいずれかのシーズンで条件を満たせば解放します。
+        二部制のシーズンは GM1→GM2 の通し順位で判定します（GM2 の1位は GM1 の最下位の次）。
+        ツールに無いシーズンの成績で判定したい場合は「指定」を使ってください。
       </p>
       <div class="form-grid">
         <label>
@@ -8587,8 +8611,12 @@ function onEditSponsor(s) {
       </div>
     </div>`;
 
-  // 判定シーズンは自分以外も含めて全部から選べる（前シーズンを指すため）
-  fillSelect('sf-unlock-season', d.all_seasons, 'season_id', 'name', 'シーズンを選択');
+  // 判定シーズンは「前シーズン」「直近3シーズン」と過去の各シーズン。今のシーズンは出さない
+  document.getElementById('sf-unlock-season').innerHTML =
+    '<option value="">シーズンを選択</option>' +
+    (d.unlock_season_options || []).map((o) =>
+      '<option value="' + esc(o.value) + '"' + (o.available ? '' : ' disabled') + '>' +
+      esc(o.label) + (o.available ? '' : '（' + esc(o.reason) + '）') + '</option>').join('');
   document.getElementById('sf-unlock-season').value = v.unlock_season_id || '';
 
   [1, 2].forEach((n) => {
@@ -8694,6 +8722,7 @@ async function onSaveSponsorForm(sponsorId) {
     quota_type2: q2.type,
     quota_value2: q2.value,
     penalty: (Number(document.getElementById('sf-penalty').value) || 0) * 1000000,
+    penalty_release: document.getElementById('sf-release').checked,
     unlock_type: document.getElementById('sf-unlock-type').value,
     unlock_season_id: document.getElementById('sf-unlock-season').value,
     unlock_value: document.getElementById('sf-unlock-value').value,

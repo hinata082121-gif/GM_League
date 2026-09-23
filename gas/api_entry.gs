@@ -105,12 +105,16 @@ function getEntryStatus(token, payload) {
   // クラブが大会から抜けたときの扱いを現実移籍と同じ理屈で書ける（SPEC.md §6.5）。
   var myClub = _str(team.name);
 
+  // スポンサーの罰則でオークション送りになった選手はエントリーできない
+  var pooled = _auctionPoolSet(seasonId);
+
   var available = [];
   getSheetData("Players").forEach(function (p) {
     var pid = _str(p.player_id);
     if (!pid) return;
     if (!_toBool(p.eligible)) return;
     if (_str(p.real_club) !== myClub) return;
+    if (pooled[pid]) return;
 
     var owner = claimed[pid];
     if (owner && owner !== teamId) return;
@@ -421,6 +425,16 @@ function _submitNewTeam(seasonId, teamId, playerIds, entry) {
     return {
       ok: false,
       error: "エントリー対象外（eligible=false）の選手が含まれています: " + notEligible.join(", "),
+    };
+  }
+
+  var pooled = _auctionPoolSet(seasonId);
+  var toAuction = ids.filter(function (pid) { return pooled[pid]; })
+    .map(function (pid) { return _str(playerMap[pid].name); });
+  if (toAuction.length > 0) {
+    return {
+      ok: false,
+      error: "オークション送りの選手はエントリーできません: " + toAuction.join(", "),
     };
   }
 

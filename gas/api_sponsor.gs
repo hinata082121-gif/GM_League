@@ -53,6 +53,22 @@ var SPONSOR_UNLOCK_RANK = "順位";
 var SPONSOR_UNLOCK_LIST = "指定";
 var SPONSOR_UNLOCK_TYPES = [SPONSOR_UNLOCK_NONE, SPONSOR_UNLOCK_RANK, SPONSOR_UNLOCK_LIST];
 
+/**
+ * 順位で解放するときの「判定するシーズン」。
+ * シーズンIDのほかに、今のシーズンから見た相対の指定を持てる。
+ * 相対の指定はシーズンを複製しても意味が変わらないので、そのまま引き継げる。
+ */
+var SPONSOR_SCOPE_PREV = "prev";
+var SPONSOR_SCOPE_LAST3 = "last3";
+var SPONSOR_SCOPE_LAST3_COUNT = 3;
+
+/** 罰則で放出した選手の行き先。翌シーズンのオークションに回す */
+var AUCTION_POOL_SHEET = "AuctionPool";
+var AUCTION_POOL_HEADERS = [
+  "season_id", "player_id", "from_team", "reason", "source_season_id", "created_at",
+];
+var AUCTION_REASON_SPONSOR = "スポンサー罰則（主力放出）";
+
 var SPONSOR_RESULT_NONE = "未判定";
 var SPONSOR_RESULT_MET = "達成";
 var SPONSOR_RESULT_MISS = "未達";
@@ -157,6 +173,8 @@ function getSponsorOptions(token, payload) {
           quota_value2: s.quota_value2,
           quota_label:  _quotaLabel(s),
           penalty:      s.penalty,
+          penalty_release: s.penalty_release,
+          penalty_label: _penaltyLabel(s),
           unlock_label: _unlockLabel(s),
           unlocked:     u.unlocked,
           unlock_reason: u.reason,
@@ -204,6 +222,19 @@ function _oneQuotaLabel(type, value) {
 }
 
 /**
+ * 罰則を1行の文にする。
+ *
+ * @param {Object} s
+ * @returns {string}
+ */
+function _penaltyLabel(s) {
+  var parts = [];
+  if (_num(s.penalty) > 0) parts.push("罰金 " + Math.round(_num(s.penalty) / 1000000) + "百万円");
+  if (s.penalty_release) parts.push("チーム内得点王をフリー放出（翌シーズンのオークションへ）");
+  return parts.length ? parts.join(" ＋ ") : "なし";
+}
+
+/**
  * 解放条件を1行の文にする。
  *
  * @param {Object} s
@@ -213,7 +244,11 @@ function _unlockLabel(s) {
   if (s.unlock_note) return s.unlock_note;
 
   if (s.unlock_type === SPONSOR_UNLOCK_RANK) {
-    return "前シーズン " + s.unlock_value + "位以内";
+    var scope = _unlockScopeLabel(s.season_id, s.unlock_season_id);
+    if (s.unlock_season_id === SPONSOR_SCOPE_LAST3) {
+      return scope + "のいずれかで " + s.unlock_value + "位以内";
+    }
+    return scope + " " + s.unlock_value + "位以内";
   }
   if (s.unlock_type === SPONSOR_UNLOCK_LIST) {
     return "主催者が指定したチームのみ";
@@ -254,26 +289,196 @@ function _isUnlocked(sponsor, teamId, rankCache) {
   }
 
   if (sponsor.unlock_type === SPONSOR_UNLOCK_RANK) {
-    var sid = sponsor.unlock_season_id;
-    if (!sid) {
-      return { unlocked: false, reason: "判定するシーズンが設定されていません" };
-    }
-
-    if (!rankCache[sid]) rankCache[sid] = _leagueRankMap(PUBLIC_ACCESS, sid);
-    var rank = rankCache[sid][teamId];
-
-    if (!rank) {
-      return { unlocked: false, reason: "対象シーズンの順位がありません" };
-    }
+    var scope = _unlockTargetSeasons(sponsor.season_id, sponsor.unlock_season_id);
+    if (scope.error) return { unlocked: false, reason: scope.error };
 
     var target = Math.round(_num(sponsor.unlock_value));
+    var parts = [];
+    var hit = false;
+
+    // 複数シーズンのときは「いずれかで条件を満たせば解放」
+    scope.seasons.forEach(function (se) {
+      if (!rankCache[se.season_id]) rankCache[se.season_id] = _overallRankMap(se.season_id);
+      var rank = rankCache[se.season_id][teamId];
+      if (!rank) {
+        parts.push(se.name + ": 順位なし");
+        return;
+      }
+      if (rank <= target) hit = true;
+      parts.push(se.name + ": " + rank + "位");
+    });
+
     return {
-      unlocked: rank <= target,
-      reason: rank + "位（条件: " + target + "位以内）",
+      unlocked: hit,
+      reason: parts.join(" / ") + "（条件: " + target + "位以内）",
     };
   }
 
   return { unlocked: true, reason: "" };
+}
+
+/**
+ * シーズン名から番号を取り出す（"Season15" → 15）。無ければ NaN。
+ *
+ * シーズンの前後は作成日時では決まらない。Season13 は Season14 より後に
+ * ツールへ取り込んだので、作成日時で並べると順番が逆になる。
+ *
+ * @param {Object} season Seasons の行
+ * @returns {number}
+ */
+function _seasonNumber(season) {
+  var m = _str(season && season.name).match(/(\d+)/);
+  return m ? parseInt(m[1], 10) : NaN;
+}
+
+/**
+ * 指定シーズンより前のシーズンを、新しい順に返す。
+ * ツールに入っているものだけ。Season12 以前のように無いものは出てこない。
+ *
+ * @param {string} seasonId
+ * @returns {Array<{season_id: string, name: string, no: number}>}
+ */
+function _pastSeasons(seasonId) {
+  var all = getSheetData("Seasons");
+  var cur = null;
+  all.forEach(function (x) { if (_str(x.season_id) === seasonId) cur = x; });
+  var curNo = _seasonNumber(cur);
+  if (isNaN(curNo)) return [];
+
+  return all
+    .filter(function (x) {
+      var n = _seasonNumber(x);
+      return _str(x.season_id) && !isNaN(n) && n < curNo;
+    })
+    .map(function (x) {
+      return { season_id: _str(x.season_id), name: _str(x.name), no: _seasonNumber(x) };
+    })
+    .sort(function (a, b) { return b.no - a.no; });
+}
+
+/**
+ * 解放条件の「判定するシーズン」を実際のシーズンに直す。
+ *
+ *   prev  — 前シーズン（1つ前）
+ *   last3 — 直近3シーズン。3つそろっていなければ使えない
+ *   それ以外 — そのシーズンID。今のシーズンより前でなければ使えない
+ *
+ * 今のシーズン自身は選べない。まだ順位が決まっていないため。
+ *
+ * @param {string} seasonId スポンサーが属するシーズン
+ * @param {string} scope
+ * @returns {{ seasons: Object[], error: string }}
+ */
+function _unlockTargetSeasons(seasonId, scope) {
+  var past = _pastSeasons(seasonId);
+
+  if (!scope) return { seasons: [], error: "判定するシーズンが設定されていません" };
+
+  if (scope === SPONSOR_SCOPE_PREV) {
+    if (past.length === 0) return { seasons: [], error: "前シーズンがツールにありません" };
+    return { seasons: [past[0]], error: "" };
+  }
+
+  if (scope === SPONSOR_SCOPE_LAST3) {
+    if (past.length < SPONSOR_SCOPE_LAST3_COUNT) {
+      return { seasons: [], error: "直近3シーズンがツールにそろっていません" };
+    }
+    return { seasons: past.slice(0, SPONSOR_SCOPE_LAST3_COUNT), error: "" };
+  }
+
+  var found = null;
+  past.forEach(function (p) { if (p.season_id === scope) found = p; });
+  if (!found) {
+    return { seasons: [], error: "判定するシーズンは今のシーズンより前から選んでください" };
+  }
+  return { seasons: [found], error: "" };
+}
+
+/**
+ * 「判定するシーズン」の表示名。
+ *
+ * @param {string} seasonId
+ * @param {string} scope
+ * @returns {string}
+ */
+function _unlockScopeLabel(seasonId, scope) {
+  var r = _unlockTargetSeasons(seasonId, scope);
+  var names = r.seasons.map(function (x) { return x.name; });
+
+  if (scope === SPONSOR_SCOPE_PREV) {
+    return "前シーズン" + (names.length ? "（" + names[0] + "）" : "");
+  }
+  if (scope === SPONSOR_SCOPE_LAST3) {
+    return "直近3シーズン" +
+      (names.length ? "（" + names[names.length - 1] + "〜" + names[0] + "）" : "");
+  }
+  return names.length ? names[0] : "（シーズン未設定）";
+}
+
+/**
+ * 画面の「判定するシーズン」の選択肢。
+ *
+ * 前シーズン・直近3シーズン・過去の各シーズン。今のシーズンは入れない。
+ * 使えないものは available=false で返し、理由を添える。
+ *
+ * @param {string} seasonId
+ * @returns {Object[]}
+ */
+function _unlockSeasonOptions(seasonId) {
+  var past = _pastSeasons(seasonId);
+  var opts = [];
+
+  var prev = _unlockTargetSeasons(seasonId, SPONSOR_SCOPE_PREV);
+  opts.push({
+    value: SPONSOR_SCOPE_PREV,
+    label: _unlockScopeLabel(seasonId, SPONSOR_SCOPE_PREV),
+    available: !prev.error,
+    reason: prev.error,
+  });
+
+  var last3 = _unlockTargetSeasons(seasonId, SPONSOR_SCOPE_LAST3);
+  opts.push({
+    value: SPONSOR_SCOPE_LAST3,
+    label: _unlockScopeLabel(seasonId, SPONSOR_SCOPE_LAST3),
+    available: !last3.error,
+    reason: last3.error,
+  });
+
+  past.forEach(function (p) {
+    opts.push({ value: p.season_id, label: p.name, available: true, reason: "" });
+  });
+
+  return opts;
+}
+
+/**
+ * 解放条件で使う順位。二部制のシーズンは通しの順位にする。
+ *
+ * GM1 はそのまま、GM2 は GM1 のチーム数を足す。GM2 の1位を「1位」と
+ * 数えると、GM1 の上位と同じ扱いになってしまうため。
+ * ノルマの判定（_leagueRankMap）はディビジョン内の順位のままにしている。
+ *
+ * @param {string} seasonId
+ * @returns {Object} team_id → 順位
+ */
+function _overallRankMap(seasonId) {
+  var map = {};
+  var offset = 0;
+
+  [DIVISION_GM1, DIVISION_GM2].forEach(function (div) {
+    var st = getStandings(PUBLIC_ACCESS, { season_id: seasonId, division: div });
+    if (!st.ok) return;
+
+    var counted = 0;
+    st.data.table.forEach(function (row) {
+      if (_num(row.played) <= 0) return;
+      map[_str(row.team_id)] = _num(row.rank) + offset;
+      counted++;
+    });
+    offset += counted;
+  });
+
+  return map;
 }
 
 /**
@@ -445,6 +650,8 @@ function listSponsors(token, payload) {
           unlock_teams: s.unlock_teams,
           unlock_note:  s.unlock_note,
           unlock_label: _unlockLabel(s),
+          penalty_release: s.penalty_release,
+          penalty_label: _penaltyLabel(s),
           note:         s.note,
           active:       s.active,
           teams:        takers,
@@ -464,6 +671,7 @@ function listSponsors(token, payload) {
       cup_goals:    SPONSOR_CUP_GOALS,
       quota_types:  SPONSOR_QUOTA_TYPES,
       unlock_types: SPONSOR_UNLOCK_TYPES,
+      unlock_season_options: _unlockSeasonOptions(seasonId),
       teams:        _activeTeams().map(function (t) {
         return { team_id: _str(t.team_id), team_name: _str(t.name) };
       }),
@@ -532,6 +740,9 @@ function upsertSponsor(token, payload) {
     if (!unlockSeason) {
       return { ok: false, error: "順位で解放するときは、判定するシーズンを選んでください。" };
     }
+
+    var scopeCheck = _unlockTargetSeasons(seasonId, unlockSeason);
+    if (scopeCheck.error) return { ok: false, error: scopeCheck.error + "。" };
     unlockTeams = "";
   } else if (unlockType === SPONSOR_UNLOCK_LIST) {
     unlockSeason = "";
@@ -559,9 +770,16 @@ function upsertSponsor(token, payload) {
       unlock_value: unlockValue,
       unlock_teams: unlockTeams,
       unlock_note:  _str(payload.unlock_note),
+      penalty_release: _toBool(payload.penalty_release),
       note:         _str(payload.note),
       active:       payload.active === undefined ? true : _toBool(payload.active),
     };
+
+    if (updates.penalty_release && q1.type === SPONSOR_QUOTA_NONE) {
+      return { ok: false, error: "ノルマなしのスポンサーに主力放出の罰則は設定できません。" };
+    }
+
+    _ensureSponsorColumns();
 
     if (sponsorId && findRow("Sponsors", "sponsor_id", sponsorId)) {
       updateRow("Sponsors", "sponsor_id", sponsorId, updates);
@@ -655,6 +873,8 @@ function copySponsors(token, payload) {
     var existing = {};
     _sponsorsOf(to).forEach(function (s) { existing[s.name] = true; });
 
+    _ensureSponsorColumns();
+
     var rows = [];
     src.forEach(function (s) {
       if (existing[s.name]) return;   // 同名は作らない
@@ -669,10 +889,14 @@ function copySponsors(token, payload) {
         quota_value2: s.quota_value2,
         penalty:      s.penalty,
         unlock_type:  s.unlock_type,
-        // 解放の対象シーズンとチームは引き継がない。
-        // 前シーズンの設定をそのまま持ってくると、別のシーズンの順位で
-        // 判定してしまう。複製後に選び直す前提にする
-        unlock_season_id: "",
+        // 解放の対象シーズンは「前シーズン」「直近3シーズン」なら引き継ぐ。
+        // 相対の指定なので、複製先のシーズンから見て正しく読み替わる。
+        // シーズンを名指ししたものと対象チームは引き継がない。
+        // 別のシーズンの順位で判定してしまうので、複製後に選び直す
+        unlock_season_id:
+          (s.unlock_season_id === SPONSOR_SCOPE_PREV || s.unlock_season_id === SPONSOR_SCOPE_LAST3)
+            ? s.unlock_season_id : "",
+        penalty_release: s.penalty_release,
         unlock_value: s.unlock_value,
         unlock_teams: "",
         unlock_note:  s.unlock_note,
@@ -747,7 +971,7 @@ function clearTeamSponsor(token, payload) {
  * @param {Date} at
  * @param {Object} report sponsor_results に結果を積む
  */
-function _settleSponsors(token, seasonId, at, report) {
+function _settleSponsors(token, seasonId, at, report, nextSeasonId) {
   var contracts = _contractsOf(seasonId);
   if (contracts.length === 0) return;
 
@@ -777,6 +1001,11 @@ function _settleSponsors(token, seasonId, at, report) {
       );
     }
 
+    var released = null;
+    if (!met && sponsor.penalty_release) {
+      released = _releaseTopScorer(seasonId, nextSeasonId, teamId, sponsor, at, report);
+    }
+
     updateRow("TeamSponsors", "contract_id", contractId, {
       result:       met ? SPONSOR_RESULT_MET : SPONSOR_RESULT_MISS,
       penalty_paid: penalty,
@@ -791,8 +1020,205 @@ function _settleSponsors(token, seasonId, at, report) {
       actual:       judged.actual,
       met:          met,
       penalty:      penalty,
+      released:     released,
     });
   });
+}
+
+// =============================================================================
+// 罰則: 主力放出
+// =============================================================================
+
+/**
+ * そのシーズンのチーム内得点王を決める。
+ *
+ * 数えるのはそのシーズンの**承認済みの全試合**（リーグ・杯・スーパーカップ）で、
+ * そのチームの得点として記録されたもの。
+ * 候補はシーズン終了時点で在籍している選手だけ。途中で出ていった選手は放出できない。
+ * 期限付き・オークションで預かっている選手と、大会対象外の選手は除く
+ * （どのみちシーズン末に手元を離れるので、放出の意味が無い）。
+ *
+ * 並びは 得点 → アシスト。それでも並んだら決めずに返し、主催者に判断を仰ぐ。
+ *
+ * @param {string} seasonId
+ * @param {string} teamId
+ * @returns {{ player: Object|null, goals: number, assists: number, tied: Object[], reason: string }}
+ */
+function _teamTopScorer(seasonId, teamId) {
+  var approved = {};
+  getSheetData("Matches").forEach(function (m) {
+    if (_str(m.season_id) !== seasonId) return;
+    if (_str(m.status) !== MATCH_APPROVED) return;
+    approved[_str(m.match_id)] = true;
+  });
+
+  var goals = {};
+  var assists = {};
+  getSheetData("MatchGoals").forEach(function (g) {
+    if (!approved[_str(g.match_id)]) return;
+    if (_str(g.team_id) !== teamId) return;
+    var sc = _str(g.scorer_id);
+    var as = _str(g.assist_id);
+    if (sc) goals[sc] = (goals[sc] || 0) + 1;
+    if (as) assists[as] = (assists[as] || 0) + 1;
+  });
+
+  var players = {};
+  getSheetData("Players").forEach(function (p) { players[_str(p.player_id)] = p; });
+
+  var cands = [];
+  getSheetData("Rosters").forEach(function (r) {
+    if (_str(r.season_id) !== seasonId) return;
+    if (_str(r.team_id) !== teamId) return;
+    if (_str(r.status) !== ROSTER_ACTIVE) return;
+    if (EXPIRING_METHODS.indexOf(_str(r.acquisition_type)) !== -1) return;
+
+    var pid = _str(r.player_id);
+    var p = players[pid];
+    if (!p || !_toBool(p.eligible)) return;
+
+    cands.push({
+      player_id: pid,
+      name: _str(p.name),
+      goals: goals[pid] || 0,
+      assists: assists[pid] || 0,
+      roster_id: _str(r.roster_id),
+    });
+  });
+
+  cands.sort(function (a, b) {
+    if (b.goals !== a.goals) return b.goals - a.goals;
+    return b.assists - a.assists;
+  });
+
+  if (cands.length === 0 || cands[0].goals <= 0) {
+    return { player: null, goals: 0, assists: 0, tied: [], reason: "得点した在籍選手がいません" };
+  }
+
+  var top = cands[0];
+  var tied = cands.filter(function (c) {
+    return c.goals === top.goals && c.assists === top.assists;
+  });
+
+  if (tied.length > 1) {
+    return {
+      player: null, goals: top.goals, assists: top.assists, tied: tied,
+      reason: "得点・アシストとも同数の選手が " + tied.length + " 名います。主催者が決めてください",
+    };
+  }
+
+  return { player: top, goals: top.goals, assists: top.assists, tied: [], reason: "" };
+}
+
+/**
+ * チーム内得点王をフリー放出し、翌シーズンのオークションに回す。
+ *
+ * 今シーズンの在籍はそのまま残す（シーズンの記録として正しいため）。
+ * 翌シーズンへの引継ぎから外し、AuctionPool に載せる。
+ * AuctionPool に載った選手は、翌シーズンのエントリー・エントリー変更・
+ * 補填の入れ替えでは拾えない。オークションでしか獲れない。
+ *
+ * @param {string} seasonId
+ * @param {string} nextSeasonId
+ * @param {string} teamId
+ * @param {Object} sponsor
+ * @param {Date} at
+ * @param {Object} report
+ * @returns {Object} 放出の結果
+ */
+function _releaseTopScorer(seasonId, nextSeasonId, teamId, sponsor, at, report) {
+  var top = _teamTopScorer(seasonId, teamId);
+
+  if (!top.player) {
+    return {
+      done: false,
+      reason: top.reason,
+      tied: top.tied.map(function (c) { return c.name; }),
+    };
+  }
+
+  if (report) {
+    if (!report.sponsor_releases) report.sponsor_releases = [];
+    report.sponsor_releases.push({ team_id: teamId, player_id: top.player.player_id });
+  }
+
+  if (nextSeasonId) {
+    _addToAuctionPool(nextSeasonId, top.player.player_id, teamId,
+      AUCTION_REASON_SPONSOR + "・" + sponsor.name, seasonId, at);
+  }
+
+  return {
+    done: true,
+    player_id: top.player.player_id,
+    name: top.player.name,
+    goals: top.goals,
+    assists: top.assists,
+    to_auction_season: nextSeasonId || "",
+    reason: nextSeasonId ? "" : "引継ぎ先のシーズンが無いためオークションには載せていません",
+  };
+}
+
+/**
+ * オークション送りの選手を記録する。シートが無ければ作る。
+ *
+ * @param {string} seasonId 出品するシーズン
+ * @param {string} playerId
+ * @param {string} fromTeam
+ * @param {string} reason
+ * @param {string} sourceSeasonId
+ * @param {Date} at
+ */
+function _addToAuctionPool(seasonId, playerId, fromTeam, reason, sourceSeasonId, at) {
+  var ss = getSpreadsheet();
+  if (!ss.getSheetByName(AUCTION_POOL_SHEET)) {
+    var sh = ss.insertSheet(AUCTION_POOL_SHEET);
+    sh.appendRow(AUCTION_POOL_HEADERS);
+  }
+
+  var dup = false;
+  _auctionPoolRows().forEach(function (r) {
+    if (_str(r.season_id) === seasonId && _str(r.player_id) === playerId) dup = true;
+  });
+  if (dup) return;
+
+  appendRow(AUCTION_POOL_SHEET, {
+    season_id: seasonId,
+    player_id: playerId,
+    from_team: fromTeam,
+    reason: reason,
+    source_season_id: sourceSeasonId,
+    created_at: at,
+  });
+}
+
+/**
+ * AuctionPool の全行。シートが無ければ空。
+ *
+ * @returns {Object[]}
+ */
+function _auctionPoolRows() {
+  try {
+    return getSheetData(AUCTION_POOL_SHEET);
+  } catch (e) {
+    return [];
+  }
+}
+
+/**
+ * そのシーズンでオークション送りになっている選手。
+ *
+ * エントリー・エントリー変更・補填の入れ替えの候補から外すのに使う。
+ * ここで外さないと、放出された選手を元のクラブのGMが無償で拾い直せる。
+ *
+ * @param {string} seasonId
+ * @returns {Object} player_id → true
+ */
+function _auctionPoolSet(seasonId) {
+  var set = {};
+  _auctionPoolRows().forEach(function (r) {
+    if (_str(r.season_id) === seasonId) set[_str(r.player_id)] = true;
+  });
+  return set;
 }
 
 /**
@@ -973,10 +1399,26 @@ function _sponsorsOf(seasonId) {
         unlock_value: _str(s.unlock_value),
         unlock_teams: _splitIds(s.unlock_teams),
         unlock_note:  _str(s.unlock_note),
+        penalty_release: _toBool(s.penalty_release),
         note:         _str(s.note),
         active:       _toBool(s.active),
       };
     });
+}
+
+/**
+ * Sponsors シートに後から足した列が無ければ足す。
+ *
+ * setupAll を流し直さなくても使えるようにするため。
+ * appendRow / updateRow は見出しに無い列を黙って捨てるので、
+ * 列が無いまま保存すると「主力放出」の設定が消える。
+ */
+function _ensureSponsorColumns() {
+  var sheet = getSheet("Sponsors");
+  var lastCol = sheet.getLastColumn();
+  var headers = lastCol > 0 ? sheet.getRange(1, 1, 1, lastCol).getValues()[0] : [];
+  if (headers.indexOf("penalty_release") !== -1) return;
+  sheet.getRange(1, lastCol + 1).setValue("penalty_release");
 }
 
 /**

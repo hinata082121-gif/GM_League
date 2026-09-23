@@ -35,6 +35,7 @@
  *   - 現実クラブが自クラブで、大会対象（eligible）
  *   - どのチームも保有していない
  *   - 補填の入れ替え先として予約されていない
+ *   - スポンサーの罰則でオークション送りになっていない
  *
  * ▶ 受付期間
  *   日程表の「エントリー変更開始」の日の0:00から
@@ -152,6 +153,7 @@ function _entryChangeContext(seasonId) {
     players: players,
     rosters: rosters,
     owned: owned,
+    pooled: _auctionPoolSet(seasonId),
     claimed: claimed,
     reserved: reserved,
     protectedSet: protectedSet,
@@ -199,6 +201,7 @@ function _entryChangeCandidates(ctx, myClub) {
     if (_str(p.real_club) !== myClub) return;
     if (ctx.owned[pid]) return;
     if (ctx.reserved[pid]) return;
+    if (ctx.pooled[pid]) return;
     out.push(_entryChangePlayerView(p));
   });
   out.sort(_comparePlayers);

@@ -239,6 +239,9 @@ function _replacementCandidates(seasonId, teamId, clubName, exceptClaimId) {
     if (rid && _str(c.status) !== CLAIM_VOID) reserved[rid] = true;
   });
 
+  // スポンサーの罰則でオークション送りになった選手は拾えない
+  var pooled = _auctionPoolSet(seasonId);
+
   var out = [];
 
   getSheetData("Players").forEach(function (p) {
@@ -248,6 +251,7 @@ function _replacementCandidates(seasonId, teamId, clubName, exceptClaimId) {
     if (_str(p.real_club) !== clubName) return;
     if (claimed[pid]) return;
     if (reserved[pid]) return;
+    if (pooled[pid]) return;
 
     out.push({
       player_id: pid,

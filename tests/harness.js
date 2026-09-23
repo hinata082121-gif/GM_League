@@ -13,7 +13,7 @@ function createEnv(sheets, config) {
   Object.keys(sheets).forEach((n) => { store[n] = makeSheet(n, sheets[n]); });
 
   const sheetObj = (s) => ({
-    getLastColumn: () => s.values[0].length,
+    getLastColumn: () => (s.values[0] || []).length,
     getLastRow: () => s.values.length,
     getRange: (r, c, nr, nc) => ({
       getValues: () => {
@@ -53,7 +53,8 @@ function createEnv(sheets, config) {
     SpreadsheetApp: {
       openById: () => ({
         getSheetByName: (n) => (store[n] ? sheetObj(store[n]) : null),
-        insertSheet: (n) => { store[n] = makeSheet(n, []); return sheetObj(store[n]); },
+        // 本物と同じく、作った直後は見出しも無い空のシート
+        insertSheet: (n) => { store[n] = { name: n, values: [] }; return sheetObj(store[n]); },
         getSheets: () => Object.keys(store).map((n) => sheetObj(store[n])),
       }),
     },

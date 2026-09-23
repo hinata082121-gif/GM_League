@@ -214,7 +214,7 @@ t('対象シーズンに順位が無ければ開けない', () => {
 
   const s = e.getSponsorOptions('A', { season_id: 's2' }).data.sponsors[0];
   eq(s.unlocked, false);
-  ok(s.unlock_reason.indexOf('順位がありません') !== -1, s.unlock_reason);
+  ok(s.unlock_reason.indexOf('順位なし') !== -1, s.unlock_reason);
 });
 
 t('順位の解放条件は1以上', () => {

@@ -474,7 +474,7 @@ function closeSeason(token, payload) {
 
     // --- スポンサーのノルマ判定（未達なら罰金）---
     // 手数料の前に置く。罰金も賞金と同じく手数料の母数に含めるため
-    _settleSponsors(token, seasonId, at, report);
+    _settleSponsors(token, seasonId, at, report, nextSeasonId);
 
     // --- 3. シーズン終了手数料（賞金計上後の残高が母数） ---
     //
@@ -564,6 +564,11 @@ function _carryOverRosters(seasonId, nextSeasonId, at, report) {
     existing[_pairKey(r.team_id, r.player_id)] = true;
   });
 
+  var released = {};
+  ((report && report.sponsor_releases) || []).forEach(function (x) {
+    released[_pairKey(x.team_id, x.player_id)] = true;
+  });
+
   var rows = [];
   getSheetData("Rosters").forEach(function (r) {
     if (_str(r.season_id) !== seasonId) return;
@@ -573,6 +578,9 @@ function _carryOverRosters(seasonId, nextSeasonId, at, report) {
     var playerId = _str(r.player_id);
     if (!activeTeamIds[teamId]) return;
     if (existing[_pairKey(teamId, playerId)]) return;
+
+    // スポンサーの罰則で放出した選手は引き継がない（翌シーズンのオークションへ）
+    if (released[_pairKey(teamId, playerId)]) return;
 
     // 現実移籍で対象外になった選手はここで落とす
     if (ineligible[playerId]) {
