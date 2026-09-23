@@ -70,7 +70,7 @@ function _route(action, token, payload) {
     // ---- 公開（トークン不要）----
     // ここに追加する action は必ず読み取り専用にすること。
     case "getPublicData":
-      return getPublicData(payload);
+      return _cachedPublicData(payload);
 
     case "getSignupInfo":
       return getSignupInfo();
@@ -520,6 +520,33 @@ function _runBatch(token, payload) {
 function _isBatchableAction(action) {
   if (action === "batch") return false;
   return /^(get|list|search|audit)/.test(action) || action === "whoami";
+}
+
+// ---------------------------------------------------------------------------
+// 公開ページ
+// ---------------------------------------------------------------------------
+
+/** 公開データを使い回す秒数 */
+var PUBLIC_CACHE_TTL = 60;
+
+/**
+ * 公開ページのデータを1分間使い回す。
+ *
+ * 公開ページはログイン不要で、誰が開いても中身は同じ。X で告知すると
+ * 一度に大勢が開き、そのたびに順位表や移籍を集計すると GAS が詰まる。
+ * 1分遅れで困る内容ではないので、同じシーズンの結果を使い回す。
+ *
+ * @param {Object} payload
+ * @returns {{ ok: boolean, data?: Object, error?: string }}
+ */
+function _cachedPublicData(payload) {
+  var key = "pub:" + String((payload && payload.season_id) || "");
+  var hit = cacheGetJson(key);
+  if (hit) return hit;
+
+  var res = getPublicData(payload);
+  if (res && res.ok) cachePutJson(key, res, PUBLIC_CACHE_TTL);
+  return res;
 }
 
 // ---------------------------------------------------------------------------

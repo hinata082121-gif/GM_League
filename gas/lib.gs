@@ -193,6 +193,58 @@ function _sharedCachePut(name, version, values) {
 }
 
 /**
+ * 任意の値を JSON でキャッシュに置く。100KB を超えても分けて置ける。
+ *
+ * @param {string} key
+ * @param {*} value
+ * @param {number} ttl 秒
+ */
+function cachePutJson(key, value, ttl) {
+  var cache = _sharedCache();
+  if (!cache) return;
+  try {
+    var text = JSON.stringify(value);
+    var entries = {};
+    var n = 0;
+    for (var i = 0; i < text.length; i += SHARED_CACHE_CHUNK) {
+      entries[key + ":" + n] = text.slice(i, i + SHARED_CACHE_CHUNK);
+      n++;
+    }
+    entries[key] = String(n);
+    cache.putAll(entries, ttl);
+  } catch (e) {
+    Logger.log("[cachePutJson] " + e.message);
+  }
+}
+
+/**
+ * cachePutJson で置いた値を取り出す。無ければ null。
+ *
+ * @param {string} key
+ * @returns {*}
+ */
+function cacheGetJson(key) {
+  var cache = _sharedCache();
+  if (!cache) return null;
+  try {
+    var n = parseInt(cache.get(key), 10);
+    if (!n) return null;
+    var keys = [];
+    for (var i = 0; i < n; i++) keys.push(key + ":" + i);
+    var parts = cache.getAll(keys);
+    var text = "";
+    for (var j = 0; j < keys.length; j++) {
+      if (parts[keys[j]] === undefined || parts[keys[j]] === null) return null;
+      text += parts[keys[j]];
+    }
+    return JSON.parse(text);
+  } catch (e) {
+    Logger.log("[cacheGetJson] " + e.message);
+    return null;
+  }
+}
+
+/**
  * 日付は JSON にすると文字列になってしまうので、印を付けて保存する。
  * 取り出したときに Date に戻す。呼び出し側の instanceof Date が効くように。
  */
