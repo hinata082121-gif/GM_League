@@ -237,58 +237,252 @@ function generateFixtures(token, payload) {
 }
 
 /**
- * 総当たりの組み合わせを作る（円卓法）。
+ * 総当たりの組み合わせを作る。
  *
- * 奇数チームのときは空席を1つ足す。空席と当たった節は
- * そのチームが試合なし（bye）になる。7チームなら1巡7節で、
- * 毎節どこか1チームが休む。
+ * ▶ 守ること
+ *   - 同じ相手とは1巡に1回。2巡なら1回ずつホームとアウェイを入れ替える
+ *   - **2巡目は1巡目と違う並びにする。** 節の順番を並べ替え、
+ *     どの節も1巡目の同じ位置の節と重ならないようにする。
+ *     1巡目の最終節と2巡目の第1節で同じ相手と連戦にもしない
+ *   - **ホームは最大3節連続、アウェイは最大2節連続**
+ *     （Config の fixture_max_home_streak / fixture_max_away_streak）。
+ *     試合なし（bye）の節は数えずに詰めて判定する。休みを挟んでも
+ *     続けてホームならホームが続いているとみなすほうが厳しく、安全なため
  *
- * ホームとアウェイは節ごとに入れ替えて、どちらかに寄らないようにする。
+ * ▶ 作り方
+ *   1. チームの並びをシャッフルして円卓法で1巡分の組み合わせを作り、節の順番も混ぜる
+ *   2. 2巡目の節の順番を、上の条件を満たすように並べ替える
+ *   3. 各対戦のホームをランダムに決め、連続の上限を破っているチームがあれば
+ *      その試合のホームとアウェイを入れ替えて、破れがなくなるまで詰める
+ *      （1巡目で入れ替えると2巡目の同じ組み合わせも自動で入れ替わる）
+ *   うまくいかなければ組み合わせから作り直す。毎回違う対戦表になる。
+ *
+ * 奇数チームのときは空席を1つ足す。空席と当たった節はそのチームが試合なし。
  *
  * @param {string[]} teams
- * @param {number} legs 1 なら1巡、2 ならホームアウェイを入れ替えて2巡
+ * @param {number} legs 1 なら1巡、2 なら2巡
+ * @param {Function} [rng] 0以上1未満を返す乱数。テストで固定するため
  * @returns {Array<Array<{home: string, away: string}>>} 節ごとの対戦
  */
-function _roundRobin(teams, legs) {
+function _roundRobin(teams, legs, rng) {
+  var rand = rng || Math.random;
+  var maxHome = _fixtureStreakLimit("fixture_max_home_streak", 3);
+  var maxAway = _fixtureStreakLimit("fixture_max_away_streak", 2);
+
+  for (var attempt = 0; attempt < 300; attempt++) {
+    var leg1 = _fxShuffle(_circleRounds(_fxShuffle(teams, rand)), rand);
+    var order = _secondLegOrder(leg1, legs, rand);
+    if (!order) continue;
+
+    var result = _assignVenues(teams, leg1, order, maxHome, maxAway, rand);
+    if (result) return result;
+  }
+
+  throw new Error("対戦表を作れませんでした。連続の上限を見直してください。");
+}
+
+/**
+ * Config の連続上限を読む。キーが無ければ既定値。
+ *
+ * getConfigNum はキーが無いと0を返すので使わない。
+ *
+ * @param {string} key
+ * @param {number} def
+ * @returns {number}
+ */
+function _fixtureStreakLimit(key, def) {
+  var raw = _str(getConfig(key, "")).trim();
+  var n = Number(raw);
+  if (raw === "" || isNaN(n) || n < 1) return def;
+  return Math.floor(n);
+}
+
+/**
+ * 円卓法で1巡分の組み合わせを作る。ホームはまだ決めない。
+ *
+ * @param {string[]} teams
+ * @returns {Array<Array<string[]>>} 節ごとの [チームA, チームB]
+ */
+function _circleRounds(teams) {
   var list = teams.slice();
   if (list.length % 2 === 1) list.push("");
 
   var n = list.length;
-  var first = [];
+  var rounds = [];
 
   for (var r = 0; r < n - 1; r++) {
     var pairs = [];
-
     for (var i = 0; i < n / 2; i++) {
       var a = list[i];
       var b = list[n - 1 - i];
-      if (!a || !b) continue;
-
-      // 交互に入れ替える。全部 a をホームにすると先頭のチームが
-      // ホームばかりになる
-      if ((r + i) % 2 === 1) pairs.push({ home: b, away: a });
-      else pairs.push({ home: a, away: b });
+      if (a && b) pairs.push([a, b]);
     }
+    rounds.push(pairs);
 
-    first.push(pairs);
-
-    // 先頭を固定し、残りを1つずつ回す
     var fixed = list[0];
     var rest = list.slice(1);
     rest.unshift(rest.pop());
     list = [fixed].concat(rest);
   }
 
-  if (legs < 2) return first;
+  return rounds;
+}
 
-  // 2巡目はホームとアウェイを入れ替える
-  var second = first.map(function (pairs) {
-    return pairs.map(function (p) {
-      return { home: p.away, away: p.home };
+/**
+ * 全節の並び（1巡目の節番号の列）を返す。2巡なら2巡目の並びを後ろに足す。
+ *
+ * 2巡目はどの位置も1巡目と別の節にし、境目で同じ相手と連戦にしない。
+ * 見つからなければ null。
+ *
+ * @param {Array<Array<string[]>>} leg1
+ * @param {number} legs
+ * @param {Function} rand
+ * @returns {number[]|null}
+ */
+function _secondLegOrder(leg1, legs, rand) {
+  var n = leg1.length;
+  var base = [];
+  for (var i = 0; i < n; i++) base.push(i);
+  if (legs < 2) return base;
+  if (n === 1) return base.concat(base);
+
+  var lastKeys = {};
+  leg1[n - 1].forEach(function (p) { lastKeys[_fxPairKey(p)] = true; });
+
+  for (var k = 0; k < 500; k++) {
+    var perm = _fxShuffle(base, rand);
+    var same = false;
+    for (var j = 0; j < n; j++) {
+      if (perm[j] === j) { same = true; break; }
+    }
+    if (same) continue;
+
+    var clash = leg1[perm[0]].some(function (p) { return lastKeys[_fxPairKey(p)]; });
+    if (clash) continue;
+
+    return base.concat(perm);
+  }
+  return null;
+}
+
+/**
+ * ホームとアウェイを決める。連続の上限を守れなければ null。
+ *
+ * @param {string[]} teams
+ * @param {Array<Array<string[]>>} leg1
+ * @param {number[]} order 全節の並び（1巡目の節番号）
+ * @param {number} maxHome
+ * @param {number} maxAway
+ * @param {Function} rand
+ * @returns {Array<Array<{home: string, away: string}>>|null}
+ */
+function _assignVenues(teams, leg1, order, maxHome, maxAway, rand) {
+  var n = leg1.length;
+
+  // 1巡目の対戦に通し番号を振る。flip[m]=1 なら2つ目のチームが1巡目のホーム
+  var matches = [];
+  var idOf = [];
+  leg1.forEach(function (pairs, r) {
+    idOf[r] = [];
+    pairs.forEach(function (p) {
+      idOf[r].push(matches.length);
+      matches.push(p);
     });
   });
 
-  return first.concat(second);
+  var flip = matches.map(function () { return rand() < 0.5 ? 1 : 0; });
+
+  // チームごとに、出る試合を時系列で持つ
+  var seqOf = {};
+  teams.forEach(function (t) { seqOf[t] = []; });
+  order.forEach(function (r, pos) {
+    var second = pos >= n;
+    idOf[r].forEach(function (m) {
+      var p = matches[m];
+      seqOf[p[0]].push({ m: m, side: 0, second: second });
+      seqOf[p[1]].push({ m: m, side: 1, second: second });
+    });
+  });
+
+  var isHome = function (e) {
+    var homeSide = flip[e.m];
+    if (e.second) homeSide = 1 - homeSide;
+    return e.side === homeSide;
+  };
+
+  var excessOf = function (t) {
+    var h = 0;
+    var a = 0;
+    var x = 0;
+    seqOf[t].forEach(function (e) {
+      if (isHome(e)) {
+        h++; a = 0;
+        if (h > maxHome) x++;
+      } else {
+        a++; h = 0;
+        if (a > maxAway) x++;
+      }
+    });
+    return x;
+  };
+
+  var total = function () {
+    var s = 0;
+    teams.forEach(function (t) { s += excessOf(t); });
+    return s;
+  };
+
+  var score = total();
+  for (var it = 0; it < 5000 && score > 0; it++) {
+    var bad = teams.filter(function (t) { return excessOf(t) > 0; });
+    var t = bad[Math.floor(rand() * bad.length)];
+    var seq = seqOf[t];
+    var e = seq[Math.floor(rand() * seq.length)];
+
+    flip[e.m] = 1 - flip[e.m];
+    var next = total();
+    if (next <= score || rand() < 0.05) score = next;
+    else flip[e.m] = 1 - flip[e.m];
+  }
+
+  if (score > 0) return null;
+
+  return order.map(function (r, pos) {
+    var second = pos >= n;
+    return idOf[r].map(function (m) {
+      var p = matches[m];
+      var homeSide = second ? 1 - flip[m] : flip[m];
+      return { home: p[homeSide], away: p[1 - homeSide] };
+    });
+  });
+}
+
+/**
+ * 組み合わせの向きを問わない鍵。
+ *
+ * @param {string[]} p
+ * @returns {string}
+ */
+function _fxPairKey(p) {
+  return p[0] < p[1] ? p[0] + "|" + p[1] : p[1] + "|" + p[0];
+}
+
+/**
+ * 配列をシャッフルした複製を返す。
+ *
+ * @param {Array} list
+ * @param {Function} rand
+ * @returns {Array}
+ */
+function _fxShuffle(list, rand) {
+  var a = list.slice();
+  for (var i = a.length - 1; i > 0; i--) {
+    var j = Math.floor(rand() * (i + 1));
+    var tmp = a[i];
+    a[i] = a[j];
+    a[j] = tmp;
+  }
+  return a;
 }
 
 // =============================================================================
