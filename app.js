@@ -74,6 +74,11 @@ async function callApi(action, payload = {}) {
     }
 
     if (!res.ok) {
+      // 読み取りは何度投げても結果が変わらないので、混雑による一時的な失敗は1回だけ投げ直す
+      if (res.status >= 500 && _isReadAction(action) && !payload.__retried) {
+        await new Promise((r) => setTimeout(r, 2000));
+        return callApi(action, Object.assign({}, payload, { __retried: true }));
+      }
       return { ok: false, error: `http_${res.status}` };
     }
 
@@ -87,9 +92,29 @@ async function callApi(action, payload = {}) {
     return json; // { ok, data } or { ok:false, error }
 
   } catch (err) {
+    // GAS が混んでいると応答が返らずに通信が切れる（Failed to fetch）。
+    // 読み取りだけ1回投げ直す。書き込みは向こうで処理済みのことがあるので投げ直さない
+    if (_isReadAction(action) && !payload.__retried) {
+      console.warn('[callApi] 通信失敗。2秒後に再試行します:', action, err.message);
+      await new Promise((r) => setTimeout(r, 2000));
+      return callApi(action, Object.assign({}, payload, { __retried: true }));
+    }
     console.error('[callApi] fetch 失敗:', err);
     return { ok: false, error: err.message };
   }
+}
+
+/**
+ * 投げ直しても害のない読み取りの action か。
+ *
+ * 名前で判定する。書き込みを誤って投げ直すと二重に計上されうるので、
+ * 読み取りだと確実に分かる接頭辞だけを通す。
+ *
+ * @param {string} action
+ * @returns {boolean}
+ */
+function _isReadAction(action) {
+  return /^(get|list|search|whoami$|audit)/.test(action);
 }
 
 // ---------------------------------------------------------------------------

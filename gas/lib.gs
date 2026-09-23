@@ -63,7 +63,153 @@ var _sheetDataCache = {};
  */
 function getSheet(name) {
   delete _sheetDataCache[name];
+  _sharedCacheBump(name);
+  _touchedSheets[name] = true;
   return _sheetHandle(name);
+}
+
+// ---------------------------------------------------------------------------
+// リクエストをまたぐ読み取りキャッシュ（CacheService）
+// ---------------------------------------------------------------------------
+
+/**
+ * リクエストをまたいで使い回すシート。
+ *
+ * **GAS は同時に動ける数に上限があり、1回が遅いと後ろが詰まる。**
+ * エントリー変更の期間に参加者が一斉に使い、1回の通信に20〜40秒かかった。
+ * 何もしない action ですら18秒待たされたので、処理そのものより順番待ちが主因。
+ * 1回あたりの時間を削ると順番待ちも減る。
+ *
+ * ここに入れるのは**ほぼ全ての通信で読み、めったに書かないもの**だけ。
+ * 在籍・予算・移籍・請求のようにお金と保有に関わる表は入れない。
+ * 古い値を一瞬でも返すと、二重獲得や残高の誤りにつながるため。
+ *
+ * ツール経由の書き込みは getSheet を通るので、その場で捨てる。
+ * スプレッドシートを直接編集した場合だけ、最大 SHARED_CACHE_TTL 秒古い値が見える。
+ */
+var SHARED_CACHE_SHEETS = [
+  "Users", "Config", "Teams", "Seasons", "Players", "Clubs", "SeasonTeams", "SeasonSchedule",
+];
+var SHARED_CACHE_TTL = 60;
+var SHARED_CACHE_CHUNK = 90000;
+
+/** このリクエストで書き込み用に取ったシート。ロックを外すときにもう一度捨てる */
+var _touchedSheets = {};
+
+function _sharedCache() {
+  if (typeof CacheService === "undefined") return null;
+  try {
+    return CacheService.getScriptCache();
+  } catch (e) {
+    return null;
+  }
+}
+
+function _isSharedCacheSheet(name) {
+  return SHARED_CACHE_SHEETS.indexOf(name) !== -1;
+}
+
+/**
+ * そのシートのキャッシュを無効にする。版を進めて、古い版の値を使わせない。
+ *
+ * 版を持つのは、読み手が古い値を読んでいる最中に書き込みが入ったとき、
+ * 読み終わった読み手が古い値をキャッシュに戻してしまうのを防ぐため。
+ *
+ * @param {string} name
+ */
+function _sharedCacheBump(name) {
+  if (!_isSharedCacheSheet(name)) return;
+  var cache = _sharedCache();
+  if (!cache) return;
+  try {
+    cache.put("v:" + name, String(new Date().getTime()) + Math.random(), 21600);
+  } catch (e) {
+    Logger.log("[_sharedCacheBump] " + e.message);
+  }
+}
+
+/**
+ * キャッシュから表の値を取り出す。無い・版が違う・壊れているときは null。
+ *
+ * @param {string} name
+ * @returns {{ version: string, values: Array[]|null }}
+ */
+function _sharedCacheGet(name) {
+  var cache = _sharedCache();
+  if (!cache || !_isSharedCacheSheet(name)) return { version: "", values: null };
+
+  try {
+    var version = cache.get("v:" + name) || "0";
+    var head = cache.get("sd:" + name);
+    if (!head) return { version: version, values: null };
+
+    var meta = JSON.parse(head);
+    if (meta.v !== version) return { version: version, values: null };
+
+    var keys = [];
+    for (var i = 0; i < meta.n; i++) keys.push("sd:" + name + ":" + i);
+    var parts = cache.getAll(keys);
+    var text = "";
+    for (var j = 0; j < keys.length; j++) {
+      if (parts[keys[j]] === undefined || parts[keys[j]] === null) {
+        return { version: version, values: null };
+      }
+      text += parts[keys[j]];
+    }
+
+    return { version: version, values: _decodeCells(JSON.parse(text)) };
+  } catch (e) {
+    Logger.log("[_sharedCacheGet] " + e.message);
+    return { version: "", values: null };
+  }
+}
+
+/**
+ * 表の値をキャッシュに置く。読み始めから版が変わっていたら置かない。
+ *
+ * @param {string} name
+ * @param {string} version 読み始めたときの版
+ * @param {Array[]} values
+ */
+function _sharedCachePut(name, version, values) {
+  var cache = _sharedCache();
+  if (!cache || !_isSharedCacheSheet(name) || !version) return;
+
+  try {
+    if ((cache.get("v:" + name) || "0") !== version) return;
+
+    var text = JSON.stringify(_encodeCells(values));
+    var entries = {};
+    var n = 0;
+    for (var i = 0; i < text.length; i += SHARED_CACHE_CHUNK) {
+      entries["sd:" + name + ":" + n] = text.slice(i, i + SHARED_CACHE_CHUNK);
+      n++;
+    }
+    entries["sd:" + name] = JSON.stringify({ v: version, n: n });
+    cache.putAll(entries, SHARED_CACHE_TTL);
+  } catch (e) {
+    Logger.log("[_sharedCachePut] " + e.message);
+  }
+}
+
+/**
+ * 日付は JSON にすると文字列になってしまうので、印を付けて保存する。
+ * 取り出したときに Date に戻す。呼び出し側の instanceof Date が効くように。
+ */
+function _encodeCells(values) {
+  return values.map(function (row) {
+    return row.map(function (v) {
+      return v instanceof Date ? { $d: v.getTime() } : v;
+    });
+  });
+}
+
+function _decodeCells(values) {
+  return values.map(function (row) {
+    return row.map(function (v) {
+      return (v && typeof v === "object" && v.$d !== undefined) ? new Date(v.$d) : v;
+    });
+  });
 }
 
 /**
@@ -104,8 +250,13 @@ function getSheetData(sheetName) {
     return _sheetDataCache[sheetName].slice();
   }
 
-  var sheet = _sheetHandle(sheetName);
-  var values = sheet.getDataRange().getValues();
+  var shared = _sharedCacheGet(sheetName);
+  var values = shared.values;
+
+  if (!values) {
+    values = _sheetHandle(sheetName).getDataRange().getValues();
+    _sharedCachePut(sheetName, shared.version, values);
+  }
 
   if (values.length < 2) {
     _sheetDataCache[sheetName] = [];
@@ -242,6 +393,10 @@ function withLock(fn) {
   try {
     return fn();
   } finally {
+    // 書き込んだ表のキャッシュをもう一度捨てる。書き込みの最中に別の通信が
+    // 古い値を読んでキャッシュへ戻していても、ここで無効になる
+    Object.keys(_touchedSheets).forEach(_sharedCacheBump);
+    _touchedSheets = {};
     lock.releaseLock();
   }
 }

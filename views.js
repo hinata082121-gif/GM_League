@@ -353,10 +353,44 @@ function setResult(id, ok, msg) {
  * @returns {Promise<Object[]>}
  */
 async function loadTeams(force) {
-  if (cache.teams && !force) return cache.teams;
-  const res = await callApi('listTeams', {});
-  cache.teams = res.ok ? res.data.filter((t) => t.active) : [];
-  return cache.teams;
+  return cachedLoad('teams', force, 'listTeams', (d) => d.filter((t) => t.active), []);
+}
+
+/**
+ * 一覧を1回だけ取りに行き、結果を使い回す。
+ *
+ * **失敗した結果はキャッシュしない。** 以前は失敗時に空配列をキャッシュしていたため、
+ * GAS が混んで1回失敗すると、再読み込みするまで「シーズンが無い」画面のままになった。
+ *
+ * 同じ一覧を同時に複数の画面が欲しがったときは、1回の通信を共有する。
+ *
+ * @param {string} key cache のキー
+ * @param {boolean} force
+ * @param {string} action
+ * @param {Function} pick 成功時の data から保存する値を作る
+ * @param {*} fallback 失敗時に返す値（保存はしない）
+ * @returns {Promise<*>}
+ */
+const inflight = {};
+async function cachedLoad(key, force, action, pick, fallback) {
+  if (cache[key] && !force) return cache[key];
+  if (inflight[key] && !force) return inflight[key];
+
+  inflight[key] = (async () => {
+    const res = await callApi(action, {});
+    if (res.ok) {
+      cache[key] = pick(res.data);
+      return cache[key];
+    }
+    console.warn('[views] ' + action + ' に失敗しました:', res.error);
+    return fallback;
+  })();
+
+  try {
+    return await inflight[key];
+  } finally {
+    delete inflight[key];
+  }
 }
 
 /**
@@ -364,10 +398,7 @@ async function loadTeams(force) {
  * @returns {Promise<Object[]>}
  */
 async function loadSeasons(force) {
-  if (cache.seasons && !force) return cache.seasons;
-  const res = await callApi('listSeasons', {});
-  cache.seasons = res.ok ? res.data : [];
-  return cache.seasons;
+  return cachedLoad('seasons', force, 'listSeasons', (d) => d, []);
 }
 
 /**
@@ -392,10 +423,7 @@ async function loadActiveSeasons(force) {
  * @returns {Promise<Object[]>}
  */
 async function loadPlayers(force) {
-  if (cache.players && !force) return cache.players;
-  const res = await callApi('listPlayers', {});
-  cache.players = res.ok ? res.data : [];
-  return cache.players;
+  return cachedLoad('players', force, 'listPlayers', (d) => d, []);
 }
 
 /**
@@ -403,10 +431,7 @@ async function loadPlayers(force) {
  * @returns {Promise<{categories: string[], clubs: Object}>}
  */
 async function loadClubs(force) {
-  if (cache.clubs && !force) return cache.clubs;
-  const res = await callApi('listClubs', {});
-  cache.clubs = res.ok ? res.data : { categories: [], clubs: {}, total: 0 };
-  return cache.clubs;
+  return cachedLoad('clubs', force, 'listClubs', (d) => d, { categories: [], clubs: {}, total: 0 });
 }
 
 /**

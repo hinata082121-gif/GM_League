@@ -51,6 +51,23 @@ function whoami(token) {
 function _verifyToken(token) {
   if (!token) return null;
 
+  // 同じトークンの確認結果は使い回す。毎回 Google へ問い合わせると
+  // 1回あたり数百ms〜1秒かかり、UrlFetch の1日の上限も消費する。
+  // 使い回すのはトークンの有効期限まで（最大1時間）。
+  var cache = _sharedCache();
+  var cacheKey = cache ? _tokenCacheKey(token) : "";
+  if (cacheKey) {
+    try {
+      var hit = cache.get(cacheKey);
+      if (hit) {
+        var c = JSON.parse(hit);
+        if (c.exp * 1000 > new Date().getTime()) return c.email;
+      }
+    } catch (e0) {
+      Logger.log("[_verifyToken] キャッシュ読み取り失敗: " + e0.message);
+    }
+  }
+
   try {
     var url = "https://oauth2.googleapis.com/tokeninfo?id_token=" + encodeURIComponent(token);
     var res = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
@@ -76,6 +93,17 @@ function _verifyToken(token) {
     if (info.exp && parseInt(info.exp) < now) {
       Logger.log("[_verifyToken] トークン期限切れ");
       return null;
+    }
+
+    if (cacheKey && info.email && info.exp) {
+      var ttl = Math.min(3600, parseInt(info.exp, 10) - now - 30);
+      if (ttl > 0) {
+        try {
+          cache.put(cacheKey, JSON.stringify({ email: info.email, exp: parseInt(info.exp, 10) }), ttl);
+        } catch (e1) {
+          Logger.log("[_verifyToken] キャッシュ書き込み失敗: " + e1.message);
+        }
+      }
     }
 
     return info.email || null;
@@ -118,4 +146,20 @@ function _findUserByEmail(email) {
     }
   }
   return null;
+}
+
+/**
+ * トークンそのものではなく、そのハッシュをキャッシュの鍵にする。
+ * キャッシュにトークンを平文で置かないため。
+ *
+ * @param {string} token
+ * @returns {string}
+ */
+function _tokenCacheKey(token) {
+  try {
+    var digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, token);
+    return "tok:" + Utilities.base64Encode(digest);
+  } catch (e) {
+    return "";
+  }
 }
