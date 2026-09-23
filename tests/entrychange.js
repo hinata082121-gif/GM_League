@@ -24,8 +24,8 @@ const SHEETS = {
   Config: ['key','value','note'],
 };
 
-function env(nowIso) {
-  const e = createEnv(SHEETS, { squad_min: 22, squad_max: 35 });
+function env(nowIso, cfg) {
+  const e = createEnv(SHEETS, Object.assign({ squad_min: 22, squad_max: 35 }, cfg || {}));
   e.__tokens.ORG = 'org@example.com';
   e.__tokens.A = 'a@example.com';
   e.__tokens.B = 'b@example.com';
@@ -39,6 +39,8 @@ function env(nowIso) {
   const P = (id, name, club, eligible) =>
     e.__addRow('Players', { player_id: id, name, position: 'MF', detail_position: 'CMF', age: 25, nationality: '日本', real_club: club, eligible: eligible !== false });
   ['k1','k2','k3','k4','k6','k7'].forEach((id) => P(id, '鹿島' + id.slice(1), '鹿島アントラーズ'));
+  ['k8','k9','k10','k11','k12','k13'].forEach((id) => P(id, '鹿島' + id.slice(1), '鹿島アントラーズ'));
+  ['k8','k9','k10','k11','k12','k13'].forEach((id, i) => e.__addRow('Rosters', { roster_id: 'rx' + i, season_id: 's1', team_id: 't_a', player_id: id, status: '在籍', acquisition_type: '初期', acquired_cost: 0 }));
   P('k5', '鹿島5', '鹿島アントラーズ', false);
   P('u1', '浦和1', '浦和レッズ');
   P('u2', '浦和2', '浦和レッズ');
@@ -115,7 +117,7 @@ t('入れ替えると外した選手が離脱し、入れた選手が0円で在�
   const e = env();
   const r = swap(e, 'k1', 'k3');
   eq(r.ok, true, r.error);
-  eq(activeOf(e, 't_a'), ['k2', 'k3', 'k5', 'k6', 'u1']);
+  eq(activeOf(e, 't_a').filter((x) => !/^k(8|9|1[0-3])$/.test(x)), ['k2', 'k3', 'k5', 'k6', 'u1']);
 
   const rows = e.__rows('Rosters');
   const c = rows[0];
@@ -182,7 +184,7 @@ t('完全移籍で獲った他クラブの選手も外せる', () => {
   const e = env();
   const r = swap(e, 'u1', 'k3');
   eq(r.ok, true, r.error);
-  eq(activeOf(e, 't_a'), ['k1', 'k2', 'k3', 'k5', 'k6']);
+  eq(activeOf(e, 't_a').filter((x) => !/^k(8|9|1[0-3])$/.test(x)), ['k1', 'k2', 'k3', 'k5', 'k6']);
 });
 
 t('外した他クラブの選手は、現実のクラブのエントリー外に戻る', () => {
@@ -227,8 +229,72 @@ t('他チームのエントリーは触れない', () => {
 t('失敗したら何も書かない', () => {
   const e = env();
   swap(e, 'k2', 'k3');
-  eq(activeOf(e, 't_a'), ['k1', 'k2', 'k5', 'k6', 'u1']);
+  eq(activeOf(e, 't_a').filter((x) => !/^k(8|9|1[0-3])$/.test(x)), ['k1', 'k2', 'k5', 'k6', 'u1']);
   eq(e.__rows('EntryChanges').length, 1);
+});
+
+// ---- 複数名・上限 --------------------------------------------------------
+
+const swapMany = (e, pairs, who) => e.swapEntryPlayers(who || 'A', {
+  season_id: 's1', team_id: 't_a',
+  pairs: pairs.map(([o, i]) => ({ out_player_id: o, in_player_id: i })),
+});
+
+// エントリー外を増やす（上限の確認用）
+function withMoreFree(e) {
+  ['f1','f2','f3','f4','f5','f6'].forEach((id) =>
+    e.__addRow('Players', { player_id: id, name: '控え' + id, position: 'DF', real_club: '鹿島アントラーズ', eligible: true }));
+  return e;
+}
+
+t('複数名をまとめて入れ替えられ、その場で反映される', () => {
+  const e = env();
+  const r = swapMany(e, [['k1', 'k3'], ['u1', 'k4']]);
+  eq(r.ok, true, r.error);
+  eq(r.data.changes.length, 2);
+  const act = activeOf(e, 't_a');
+  ok(act.includes('k3') && act.includes('k4'), '入れた選手が在籍');
+  ok(!act.includes('k1') && !act.includes('u1'), '外した選手は在籍でない');
+  eq(r.data.remaining, 3);
+});
+
+t('上限は1シーズン5名', () => {
+  const e = withMoreFree(env());
+  eq(swapMany(e, [['k8','f1'], ['k9','f2'], ['k10','f3']]).ok, true);
+  eq(swapMany(e, [['k11','f4'], ['k12','f5']]).ok, true);
+  const r = swapMany(e, [['k13','f6']]);
+  eq(r.ok, false);
+  ok(r.error.includes('5 名まで'), r.error);
+  eq(status(e).data.remaining, 0);
+  eq(status(e).data.can_change, false);
+});
+
+t('上限を超える組数は1組も通さない', () => {
+  const e = withMoreFree(env());
+  eq(swapMany(e, [['k8','f1'], ['k9','f2'], ['k10','f3'], ['k11','f4']]).ok, true);
+  const r = swapMany(e, [['k12','f5'], ['k13','f6']]);
+  eq(r.ok, false);
+  ok(activeOf(e, 't_a').includes('k12'), '1組目も入れ替わっていない');
+});
+
+t('1組でも通らなければ何も書かない', () => {
+  const e = env();
+  const r = swapMany(e, [['k1', 'k3'], ['k2', 'k4']]);
+  eq(r.ok, false);
+  ok(r.error.includes('プロテクト'), r.error);
+  ok(activeOf(e, 't_a').includes('k1'), 'k1 は残る');
+  eq(e.__rows('EntryChanges').length, 1);
+});
+
+t('同じ選手を2組に使えない', () => {
+  eq(swapMany(env(), [['k1', 'k3'], ['k1', 'k4']]).ok, false);
+  eq(swapMany(env(), [['k1', 'k3'], ['u1', 'k3']]).ok, false);
+});
+
+t('上限は Config の entry_change_max で変えられる', () => {
+  const e = env(null, { entry_change_max: 1 });
+  eq(swapMany(e, [['k1', 'k3']]).ok, true);
+  eq(swapMany(e, [['u1', 'k4']]).ok, false);
 });
 
 report('entrychange.js');

@@ -277,6 +277,9 @@ function _route(action, token, payload) {
     case "swapEntryPlayer":
       return swapEntryPlayer(token, payload);
 
+    case "swapEntryPlayers":
+      return swapEntryPlayers(token, payload);
+
     case "listEntryChanges":
       return listEntryChanges(token, payload);
 

@@ -3,7 +3,8 @@
  *
  * 参加者:
  *   getEntryChangeStatus — 外せる選手・入れられる選手・受付期間・履歴
- *   swapEntryPlayer      — 1人外して1人入れる（無償）
+ *   swapEntryPlayers     — 複数組をまとめて入れ替える（無償・即時反映）
+ *   swapEntryPlayer      — 1組だけ入れ替える
  *
  * 主催者:
  *   listEntryChanges     — 全チームの変更履歴
@@ -12,10 +13,12 @@
  *   エントリー済みの自クラブの選手を1人エントリー外に出し、
  *   代わりに自クラブのエントリー外の選手を1人入れる。**費用はかからない。**
  *   1対1の入れ替えなので、スカッドの人数は変わらない。
+ *   **その場で確定し、すぐ反映する。** 補填のような期限後の精算も承認も無い。
+ *   1チーム1シーズンで entry_change_max 名まで（既定5）。
  *
  * ▶ 補填とは別物
  *   補填は「選手が使えなくなった」ことへの埋め合わせで、請求ごとに1回だけ。
- *   エントリー変更はGMが自分の判断で行う入れ替えで、期間内なら何度でもできる。
+ *   エントリー変更はGMが自分の判断で行う入れ替えで、上限の人数まで何度でもできる。
  *   補填の請求が立っている選手（大会対象外の選手）はここでは外せない。
  *
  * ▶ 外せる選手
@@ -268,6 +271,8 @@ function getEntryChangeStatus(token, payload) {
   entered.sort(_comparePlayers);
 
   var win = _entryChangeWindow(seasonId);
+  var max = _entryChangeMax();
+  var used = _entryChangeUsed(seasonId, teamId);
 
   return {
     ok: true,
@@ -276,7 +281,10 @@ function getEntryChangeStatus(token, payload) {
       team_id: teamId,
       team_name: myClub,
       window: win,
-      can_change: win.open || user.role === "organizer",
+      max: max,
+      used: used,
+      remaining: Math.max(0, max - used),
+      can_change: (win.open || user.role === "organizer") && used < max,
       entered: entered,
       candidates: _entryChangeCandidates(ctx, myClub),
       history: _entryChangeHistory(seasonId, teamId, ctx.players),
@@ -285,7 +293,7 @@ function getEntryChangeStatus(token, payload) {
 }
 
 /**
- * 1人外して1人入れる。
+ * 1組だけ入れ替える。swapEntryPlayers の1組版。
  *
  * payload: { season_id, team_id?, out_player_id, in_player_id }
  *
@@ -294,21 +302,59 @@ function getEntryChangeStatus(token, payload) {
  * @returns {{ ok: boolean, data?: Object, error?: string }}
  */
 function swapEntryPlayer(token, payload) {
+  return swapEntryPlayers(token, {
+    season_id: payload.season_id,
+    team_id: payload.team_id,
+    pairs: [{ out_player_id: payload.out_player_id, in_player_id: payload.in_player_id }],
+  });
+}
+
+/**
+ * 複数組をまとめて入れ替える。**その場で確定し、すぐ反映する。**
+ *
+ * 補填のように期限後の精算を待たない。承認も要らない。
+ * 1組でも通らなければ何も書かない（途中まで入れ替わった状態を残さない）。
+ *
+ * 1チーム1シーズンで入れ替えられるのは entry_change_max 名まで（既定5）。
+ * 数えるのは入れ替えた組の数。戻した場合もそれぞれ1名と数える。
+ *
+ * payload: { season_id, team_id?, pairs: [{ out_player_id, in_player_id }] }
+ *
+ * @param {string} token
+ * @param {Object} payload
+ * @returns {{ ok: boolean, data?: Object, error?: string }}
+ */
+function swapEntryPlayers(token, payload) {
   var auth = _requireUser(token);
   if (!auth.ok) return auth;
 
   var user = auth.data;
   var seasonId = _str(payload.season_id);
   var teamId = _str(payload.team_id) || _str(user.team_id);
-  var outId = _str(payload.out_player_id);
-  var inId = _str(payload.in_player_id);
 
   if (!seasonId) return { ok: false, error: "season_id は必須です。" };
   if (!teamId) return { ok: false, error: "チームが特定できません。" };
-  if (!outId || !inId) {
-    return { ok: false, error: "外す選手と入れる選手を両方選んでください。" };
+
+  var pairs = (payload.pairs || []).map(function (x) {
+    return { out: _str(x && x.out_player_id), in: _str(x && x.in_player_id) };
+  });
+  if (pairs.length === 0) return { ok: false, error: "入れ替える選手を選んでください。" };
+
+  for (var i = 0; i < pairs.length; i++) {
+    if (!pairs[i].out || !pairs[i].in) {
+      return { ok: false, error: "外す選手と入れる選手を両方選んでください（" + (i + 1) + "組目）。" };
+    }
+    if (pairs[i].out === pairs[i].in) return { ok: false, error: "同じ選手は選べません。" };
   }
-  if (outId === inId) return { ok: false, error: "同じ選手は選べません。" };
+
+  var outSeen = {};
+  var inSeen = {};
+  for (var j = 0; j < pairs.length; j++) {
+    if (outSeen[pairs[j].out]) return { ok: false, error: "外す選手が重複しています。" };
+    if (inSeen[pairs[j].in]) return { ok: false, error: "入れる選手が重複しています。" };
+    outSeen[pairs[j].out] = true;
+    inSeen[pairs[j].in] = true;
+  }
 
   var access = _checkTeamAccess(user, teamId);
   if (!access.ok) return access;
@@ -326,68 +372,133 @@ function swapEntryPlayer(token, payload) {
     var team = findRow("Teams", "team_id", teamId);
     if (!team) return { ok: false, error: "チームが見つかりません。" };
 
-    var myClub = _str(team.name);
-    var ctx = _entryChangeContext(seasonId);
-
-    var outRoster = null;
-    ctx.rosters.forEach(function (r) {
-      if (_str(r.team_id) === teamId && _str(r.player_id) === outId) outRoster = r;
-    });
-    if (!outRoster) {
-      return { ok: false, error: "外す選手は自チームのエントリーにいません。" };
-    }
-
-    var block = _entryChangeOutBlock(ctx, outRoster, teamId, myClub);
-    if (block) return { ok: false, error: "その選手は外せません: " + block };
-
-    var ok = false;
-    _entryChangeCandidates(ctx, myClub).forEach(function (c) {
-      if (c.player_id === inId) ok = true;
-    });
-    if (!ok) {
+    var max = _entryChangeMax();
+    var used = _entryChangeUsed(seasonId, teamId);
+    if (used + pairs.length > max) {
       return {
         ok: false,
-        error: "その選手は入れられません（自クラブ以外・保有済み・補填で予約済み・大会対象外のいずれか）。",
+        error: "エントリー変更は1シーズン " + max + " 名までです（使用済み " + used +
+               " 名・残り " + Math.max(0, max - used) + " 名）。",
       };
     }
 
-    var at = now();
+    var myClub = _str(team.name);
+    var ctx = _entryChangeContext(seasonId);
 
-    updateRow("Rosters", "roster_id", _str(outRoster.roster_id), { status: ROSTER_LEFT });
-
-    appendRow("Rosters", {
-      roster_id: generateId("r_"),
-      season_id: seasonId,
-      team_id: teamId,
-      player_id: inId,
-      acquisition_type: ACQ_ENTRY_CHANGE,
-      acquired_cost: 0,
-      acquired_at: at,
-      expires_season: "",
-      status: _str(outRoster.status),
+    var candidateIds = {};
+    _entryChangeCandidates(ctx, myClub).forEach(function (c) {
+      candidateIds[c.player_id] = true;
     });
 
-    var changeId = generateId("ec_");
-    _entryChangeSheet();
-    appendRow(EC_SHEET, {
-      change_id: changeId,
-      season_id: seasonId,
-      team_id: teamId,
-      out_player_id: outId,
-      in_player_id: inId,
-      changed_at: at,
-      changed_by: _str(user.user_id),
+    var plan = [];
+    for (var k = 0; k < pairs.length; k++) {
+      var pr = pairs[k];
+      var outRoster = null;
+      ctx.rosters.forEach(function (r) {
+        if (_str(r.team_id) === teamId && _str(r.player_id) === pr.out) outRoster = r;
+      });
+
+      var outName = ctx.players[pr.out] ? _str(ctx.players[pr.out].name) : pr.out;
+      if (!outRoster) {
+        return { ok: false, error: outName + " は自チームのエントリーにいません。" };
+      }
+
+      var block = _entryChangeOutBlock(ctx, outRoster, teamId, myClub);
+      if (block) return { ok: false, error: outName + " は外せません: " + block };
+
+      if (!candidateIds[pr.in]) {
+        var inName = ctx.players[pr.in] ? _str(ctx.players[pr.in].name) : pr.in;
+        return {
+          ok: false,
+          error: inName + " は入れられません（自クラブ以外・保有済み・補填で予約済み・大会対象外のいずれか）。",
+        };
+      }
+
+      plan.push({ roster: outRoster, out: pr.out, in: pr.in });
+    }
+
+    var at = now();
+    var sheetReady = false;
+    var done = [];
+
+    plan.forEach(function (x) {
+      updateRow("Rosters", "roster_id", _str(x.roster.roster_id), { status: ROSTER_LEFT });
+
+      appendRow("Rosters", {
+        roster_id: generateId("r_"),
+        season_id: seasonId,
+        team_id: teamId,
+        player_id: x.in,
+        acquisition_type: ACQ_ENTRY_CHANGE,
+        acquired_cost: 0,
+        acquired_at: at,
+        expires_season: "",
+        status: _str(x.roster.status),
+      });
+
+      if (!sheetReady) {
+        _entryChangeSheet();
+        sheetReady = true;
+      }
+
+      var changeId = generateId("ec_");
+      appendRow(EC_SHEET, {
+        change_id: changeId,
+        season_id: seasonId,
+        team_id: teamId,
+        out_player_id: x.out,
+        in_player_id: x.in,
+        changed_at: at,
+        changed_by: _str(user.user_id),
+      });
+
+      done.push({
+        change_id: changeId,
+        out_name: _str(ctx.players[x.out].name),
+        in_name: _str(ctx.players[x.in].name),
+      });
     });
 
     return {
       ok: true,
       data: {
-        change_id: changeId,
-        out_name: _str(ctx.players[outId].name),
-        in_name: _str(ctx.players[inId].name),
+        changes: done,
+        out_name: done[0].out_name,
+        in_name: done[0].in_name,
+        used: used + done.length,
+        max: max,
+        remaining: max - used - done.length,
       },
     };
   });
+}
+
+/**
+ * 1チーム1シーズンで入れ替えられる人数の上限。Config の entry_change_max（既定5）。
+ *
+ * @returns {number}
+ */
+function _entryChangeMax() {
+  return Math.max(0, Math.round(getConfigNum("entry_change_max", 5)));
+}
+
+/**
+ * そのチームがこのシーズンに入れ替えた人数。
+ *
+ * @param {string} seasonId
+ * @param {string} teamId
+ * @returns {number}
+ */
+function _entryChangeUsed(seasonId, teamId) {
+  var rows;
+  try {
+    rows = getSheetData(EC_SHEET);
+  } catch (e) {
+    return 0;
+  }
+  return rows.filter(function (r) {
+    return _str(r.season_id) === seasonId && _str(r.team_id) === teamId;
+  }).length;
 }
 
 // =============================================================================
