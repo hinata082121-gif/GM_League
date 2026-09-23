@@ -31,4 +31,23 @@ t('呼び出している自前の関数はすべて定義されている', () =>
   eq([...missing].sort(), []);
 });
 
+t('表はすべて .table-wrap で包んである（スマホで枠から飛び出さない）', () => {
+  // 表のセルは折り返さない設定なので、包まずに置くと長い選手名で枠から飛び出す。
+  // エントリー変更の履歴で実際に起きた
+  const files = ['views.js', 'index.html', 'public.html', 'register.html']
+    .filter((f) => fs.existsSync(path.join(ROOT, f)));
+  const bad = [];
+  files.forEach((f) => {
+    const text = fs.readFileSync(path.join(ROOT, f), 'utf8');
+    for (const m of text.matchAll(/<table/g)) {
+      const before = text.slice(Math.max(0, m.index - 300), m.index);
+      const div = before.slice(before.lastIndexOf('<div'));
+      if (!/table-wrap|table-scroll/.test(div)) {
+        bad.push(f + ':' + (text.slice(0, m.index).split('\n').length));
+      }
+    }
+  });
+  eq(bad, []);
+});
+
 report('frontdefs.js');

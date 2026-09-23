@@ -1780,12 +1780,14 @@ function renderEntryChange() {
 
   const history = d.history.length === 0 ? '' : `
     <h4 class="sub-head">変更履歴</h4>
-    <table class="data-table">
-      <thead><tr><th>日時</th><th>外した選手</th><th>入れた選手</th></tr></thead>
-      <tbody>${d.history.map((h) =>
-        '<tr><td>' + esc(fmt(h.changed_at)) + '</td><td>' + esc(h.out_name) +
-        '</td><td>' + esc(h.in_name) + '</td></tr>').join('')}</tbody>
-    </table>`;
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr><th>日時</th><th>外した選手</th><th>入れた選手</th></tr></thead>
+        <tbody>${d.history.map((h) =>
+          '<tr><td>' + esc(fmt(h.changed_at)) + '</td><td>' + esc(h.out_name) +
+          '</td><td>' + esc(h.in_name) + '</td></tr>').join('')}</tbody>
+      </table>
+    </div>`;
 
   box.innerHTML = `
     <div class="card">

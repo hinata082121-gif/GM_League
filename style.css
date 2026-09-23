@@ -383,6 +383,21 @@ body {
   white-space: nowrap;
 }
 
+/*
+ * 表は .table-wrap で包んで横スクロールさせるのが前提（セルは折り返さない）。
+ * 包み忘れた表がスマホで枠から飛び出さないよう、包まれていないときだけ
+ * 折り返しを許す。包み忘れは tests/frontdefs.js でも検出している。
+ */
+:not(.table-wrap):not(.table-scroll) > .data-table {
+  table-layout: fixed;
+}
+
+:not(.table-wrap):not(.table-scroll) > .data-table th,
+:not(.table-wrap):not(.table-scroll) > .data-table td {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .data-table thead th {
   background: var(--color-bg);
   font-weight: 700;
@@ -1595,4 +1610,24 @@ code {
 
 .text-ng {
   color: #b3261e;
+}
+
+/* ===== スマホで枠から飛び出さないための保険 =====
+ * 長い選手名・クラブ名はスペースが無いので、そのままだと親の幅を押し広げる。
+ * カードとフレックスの子は縮めてよい、長い語は途中で折り返してよい、とする。
+ */
+.card,
+.claim-card,
+.sponsor-card {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.claim-actions > *,
+.form-grid > * {
+  min-width: 0;
+}
+
+.claim-actions select {
+  max-width: 100%;
 }
