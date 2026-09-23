@@ -1688,6 +1688,9 @@ async function loadEntryStatus() {
 
   setLoading('en-status');
 
+  // エントリー変更の欄は別の通信。待ち時間を重ねないよう、同時に取りに行く
+  const changeLoad = loadEntryChange(seasonId, teamId || currentUser.team_id);
+
   const res = await callApi('getEntryStatus', { season_id: seasonId, team_id: teamId });
   if (!res.ok) {
     setError('en-status', 'エントリー状況の取得に失敗しました: ' + res.error);
@@ -1699,7 +1702,7 @@ async function loadEntryStatus() {
 
   renderEntryStatusBox();
   renderEntryPicker();
-  await loadEntryChange(seasonId, res.data.team_id);
+  await changeLoad;
 }
 
 // ---------------------------------------------------------------------------
