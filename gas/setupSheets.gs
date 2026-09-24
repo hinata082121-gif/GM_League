@@ -526,7 +526,7 @@ function _setupConfig() {
     ["claim_rate_real_transfer",    0.80,        "補填率（現実移籍）獲得額×80%"],
     ["claim_rate_withdrawal",       0.90,        "補填率（辞退・チーム変更）獲得額×90%"],
     ["claim_default_choice",        "払い戻し",  "期限までに選ばれなかった請求の既定"],
-    ["new_team_initial_budget",     0,           "新規参加チームの初期予算。チーム変更のリセット後もこの額になる"],
+    ["new_team_initial_budget",     50000000,    "新規参加チームの初期予算（5,000万円）。参加承認時に入り、チーム変更のリセット後もこの額になる"],
     ["manager_round",               0,           "使用監督の受付状態。0=停止 / 1=第一次（抽選） / 2=第二次（先着）"],
     ["manager_max_teams",           3,           "1人の監督を使えるチーム数の上限。超えた分だけ抽選になる"],
     ["sponsor_open",                false,       "スポンサー契約の受付中フラグ"],

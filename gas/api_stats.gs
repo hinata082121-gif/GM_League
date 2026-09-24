@@ -128,16 +128,29 @@ function getStandings(token, payload) {
   // 誰が出ていたかは SeasonTeams に名簿があればそれで決める。
   // 過去シーズンには今いないチームがいて、今のチームはいない。
   // active だけで決めると、出ていないチームが 0試合 で並んでしまう。
-  // 名簿が無いシーズンは従来どおり active なチームで代用する。
+  //
+  // 名簿が無いシーズンは、そのシーズンに在籍記録があるチームで決める。
+  // 以前は active なチームで代用していたため、Season15 から参加した
+  // 横浜F・マリノスが Season14 の順位表に 0試合 で並んでいた。
+  // 在籍記録も無い（始まる前の）シーズンだけ active なチームで代用する。
   if (d.roster.length > 0) {
     d.roster.forEach(function (tid) {
       if (inDivision(tid)) ensure(tid);
     });
   } else {
-    getSheetData("Teams").forEach(function (t) {
-      var tid = _str(t.team_id);
-      if (_toBool(t.active) && inDivision(tid)) ensure(tid);
-    });
+    var inSeason = _teamsWithRosters(seasonId);
+    var fromRosters = Object.keys(inSeason);
+
+    if (fromRosters.length > 0) {
+      fromRosters.forEach(function (tid) {
+        if (inDivision(tid)) ensure(tid);
+      });
+    } else {
+      getSheetData("Teams").forEach(function (t) {
+        var tid = _str(t.team_id);
+        if (_toBool(t.active) && inDivision(tid)) ensure(tid);
+      });
+    }
   }
 
   matches.forEach(function (m) {
@@ -853,4 +866,20 @@ function _assignSimpleRank(list, key) {
   for (var j = 0; j < list.length; j++) {
     list[j].tied = list.filter(function (x) { return x.rank === list[j].rank; }).length > 1;
   }
+}
+
+/**
+ * そのシーズンに在籍記録（離脱を含む）があるチーム。team_id → true
+ *
+ * @param {string} seasonId
+ * @returns {Object}
+ */
+function _teamsWithRosters(seasonId) {
+  var out = {};
+  getSheetData("Rosters").forEach(function (r) {
+    if (_str(r.season_id) !== seasonId) return;
+    var tid = _str(r.team_id);
+    if (tid) out[tid] = true;
+  });
+  return out;
 }

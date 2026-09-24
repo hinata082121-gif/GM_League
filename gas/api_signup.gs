@@ -558,6 +558,10 @@ function approveSignup(token, payload) {
       });
     }
 
+    // 新規参加のチームには初期予算を入れる（既定5,000万円）。
+    // 以前は入れておらず、横浜F・マリノスが0円から始まっていた
+    var initial = continuing ? null : _grantInitialBudget(teamId, at);
+
     appendRow("Users", {
       user_id:      userId,
       email:        email,
@@ -583,9 +587,50 @@ function approveSignup(token, payload) {
         team_id:    teamId,
         team_name:  teamName,
         continuing: continuing,
+        initial_budget: initial,
       },
     };
   });
+}
+
+/** BudgetTx.reason */
+var REASON_INITIAL_BUDGET = "新規参加の初期予算";
+
+/**
+ * 新規参加の初期予算。Config の new_team_initial_budget（既定5,000万円）。
+ *
+ * getConfigNum はキーが無いと0を返すので使わない。
+ *
+ * @returns {number}
+ */
+function _newTeamInitialBudget() {
+  var raw = _str(getConfig("new_team_initial_budget", "")).trim();
+  var n = Number(raw);
+  if (raw === "" || isNaN(n)) return 50000000;
+  return Math.max(0, Math.round(n));
+}
+
+/**
+ * 新規参加チームに初期予算を入れる。入れる先は進行中のシーズン。
+ * 既に入っていれば入れ直さない。
+ *
+ * @param {string} teamId
+ * @param {Date} at
+ * @returns {{ season_id: string, amount: number }|null}
+ */
+function _grantInitialBudget(teamId, at) {
+  var seasonId = _latestSeasonId();
+  var amount = _newTeamInitialBudget();
+  if (!seasonId || amount <= 0) return null;
+
+  var already = getSheetData("BudgetTx").some(function (t) {
+    return _str(t.season_id) === seasonId && _str(t.team_id) === teamId &&
+      _str(t.reason) === REASON_INITIAL_BUDGET;
+  });
+  if (already) return null;
+
+  _addBudgetTx(seasonId, teamId, amount, REASON_INITIAL_BUDGET, "", at);
+  return { season_id: seasonId, amount: amount };
 }
 
 /**

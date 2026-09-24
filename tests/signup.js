@@ -219,6 +219,34 @@ t('承認で Users と Teams が作られる', () => {
   eq(tm[4], true);              // active
 });
 
+t('新規参加のチームには初期予算5,000万円が入る', () => {
+  const e = env();
+  const s = submit(e, 'NEW');
+  const r = e.approveSignup('ORG', { signup_id: s.data.signup_id });
+  eq(r.data.initial_budget, { season_id: 's1', amount: 50000000 });
+  const tx = e.__rows('BudgetTx').slice(1).filter((x) => x[2] === r.data.team_id);
+  eq(tx.length, 1);
+  eq(tx[0][3], 50000000);
+  eq(tx[0][4], '新規参加の初期予算');
+});
+
+t('初期予算は Config の new_team_initial_budget で変えられる', () => {
+  const e = env({ new_team_initial_budget: 30000000 });
+  const s = submit(e, 'NEW');
+  const r = e.approveSignup('ORG', { signup_id: s.data.signup_id });
+  eq(r.data.initial_budget.amount, 30000000);
+});
+
+t('継続チームへの結び付けでは初期予算を入れない', () => {
+  const e = env();
+  e.__addRow('Teams', { team_id: 't_old', name: '浦和レッズ', owner_user_id: '', kind: '継続', active: true });
+  const s = submit(e, 'NEW');
+  const r = e.approveSignup('ORG', { signup_id: s.data.signup_id });
+  eq(r.data.continuing, true);
+  eq(r.data.initial_budget, null);
+  eq(e.__rows('BudgetTx').length, 1, '見出しだけ');
+});
+
 t('承認後はそのアカウントでログインできる', () => {
   const e = env();
   const s = submit(e, 'NEW');

@@ -864,7 +864,7 @@ function _resetTeamForFreshStart(seasonId, teamId, at) {
     balance += _num(tx.amount);
   });
 
-  var initial = getConfigNum("new_team_initial_budget", 0);
+  var initial = _newTeamInitialBudget();
 
   if (balance !== initial) {
     _addBudgetTx(
