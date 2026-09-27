@@ -2403,7 +2403,7 @@ function renderTransferMarketBox() {
     </div>
     <p class="muted note-sm">
       使える予算 = 残高 ${esc(formatMoney(b.balance))} − 承認待ちで確保中 ${esc(formatMoney(b.reserved))}。
-      サーバー時刻 ${esc(String(d.server_time).replace('T', ' ').slice(0, 16))}
+      サーバー時刻 ${esc(toDatetimeLocal(d.server_time).replace('T', ' '))}
     </p>`;
 }
 
@@ -5433,7 +5433,7 @@ async function onSaveMarketWindows() {
     leg_enabled: season.leg_enabled,
     window1_open_at: document.getElementById('mw-window1').value,
     window2_open_at: document.getElementById('mw-window2').value,
-    claim_deadline_at: season.claim_deadline_at,
+    claim_deadline_at: toDatetimeLocal(season.claim_deadline_at),
   });
 
   btn.disabled = false;
@@ -6197,7 +6197,7 @@ async function loadSignups() {
 
       return `
         <tr>
-          <td class="muted">${esc(String(r.created_at).slice(0, 10))}</td>
+          <td class="muted">${esc(toDatetimeLocal(r.created_at).slice(0, 10))}</td>
           <td>${esc(r.display_name)}</td>
           <td>${pending ? clubSelect(r.signup_id, r.team_name) : esc(r.team_name)}</td>
           <td>${xLinkHtml(r.x_id)}</td>
@@ -6825,9 +6825,9 @@ async function loadClaimAdmin() {
 
   const d = res.data;
 
-  document.getElementById('cs-deadline').value = d.deadline
-    ? d.deadline.slice(0, 16)
-    : '';
+  // UTC の文字列を切り取ると9時間ずれた時刻が入り、そのまま保存すると
+  // 期限が早まる（23:59 → 14:59 → 5:59 と起きた）。日本時間に直して入れる
+  document.getElementById('cs-deadline').value = toDatetimeLocal(d.deadline);
 
   document.getElementById('cs-summary').innerHTML = `
     <div class="${d.window_open ? 'hint-box' : 'warn-box'}">
@@ -6909,8 +6909,8 @@ async function onSaveClaimDeadline() {
     name: season.name,
     status: season.status,
     leg_enabled: season.leg_enabled,
-    window1_open_at: season.window1_open_at,
-    window2_open_at: season.window2_open_at,
+    window1_open_at: toDatetimeLocal(season.window1_open_at),
+    window2_open_at: toDatetimeLocal(season.window2_open_at),
     claim_deadline_at: document.getElementById('cs-deadline').value,
   });
 
@@ -7469,7 +7469,7 @@ async function onEditScheduleItem(item) {
 
   const date = prompt(
     '日付（YYYY-MM-DD）',
-    item ? String(item.date).slice(0, 10) : ''
+    item ? toDatetimeLocal(item.date).slice(0, 10) : ''
   );
   if (date === null || !date.trim()) return;
 

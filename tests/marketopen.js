@@ -69,4 +69,39 @@ t('関係ない予定を直しても開幕日時は動かない', () => {
   eq(ymdh(e.findRow('Seasons', 'season_id', 's1').window1_open_at), '9/30 0:00');
 });
 
-report();
+// ---- 日時の読み取り（保存のたびに9時間ずれた不具合）------------------------
+
+t('UTC の ISO 文字列はその時差のまま読む', () => {
+  const { e } = generated();
+  const d = e._parseDateInput('2026-09-26T14:59:00.000Z');
+  eq(d.toISOString(), '2026-09-26T14:59:00.000Z');
+});
+
+t('時差の付かない入力は日本時間として読む', () => {
+  const { e } = generated();
+  eq(ymdh(e._parseDateInput('2026-09-26T23:59')), '9/26 23:59');
+});
+
+t('今の値を送り返して保存しても期限と開幕日時がずれない', () => {
+  const { e } = generated();
+  e.upsertSeason('ORG', { season_id: 's1', name: 'x', status: '準備中', window1_open_at: '2026-09-30T00:00', claim_deadline_at: '2026-09-26T23:59' });
+  for (let i = 0; i < 3; i++) {
+    const s = e.listSeasons('ORG').data.find((x) => x.season_id === 's1');
+    e.upsertSeason('ORG', {
+      season_id: 's1', name: s.name, status: s.status,
+      window1_open_at: s.window1_open_at, window2_open_at: s.window2_open_at,
+      claim_deadline_at: s.claim_deadline_at,
+    });
+  }
+  const s = e.findRow('Seasons', 'season_id', 's1');
+  eq(ymdh(s.claim_deadline_at), '9/26 23:59');
+  eq(ymdh(s.window1_open_at), '9/30 0:00');
+});
+
+t('補填の期限を日付だけで入れるとその日の23:59まで', () => {
+  const { e } = generated();
+  e.upsertSeason('ORG', { season_id: 's1', name: 'x', status: '準備中', claim_deadline_at: '2026-09-26' });
+  eq(ymdh(e.findRow('Seasons', 'season_id', 's1').claim_deadline_at), '9/26 23:59');
+});
+
+report('marketopen.js');

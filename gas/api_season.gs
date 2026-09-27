@@ -668,6 +668,10 @@ function upsertSeason(token, payload) {
   }
 
   var cd = _parseDateInput(payload.claim_deadline_at);
+  // 期限は日付だけなら、その日の 23:59:59 まで開いておく
+  if (cd && /^\d{4}[-\/]\d{1,2}[-\/]\d{1,2}$/.test(_str(payload.claim_deadline_at).trim())) {
+    cd.setHours(23, 59, 59, 0);
+  }
   if (payload.claim_deadline_at && !cd) {
     return { ok: false, error: "補填の選択期限の日時が読み取れません。" };
   }
@@ -715,6 +719,15 @@ function _parseDateInput(v) {
   if (v instanceof Date) return v;
   var s = _str(v);
   if (!s) return null;
+
+  // 末尾に Z や +09:00 が付いた ISO 形式は、その時差のまま読む。
+  // サーバーが返した値（UTC）を画面がそのまま送り返してくることがあり、
+  // 下の正規表現で読むと UTC の時刻を日本時間として扱い、9時間早まる。
+  // 補填の期限が 23:59 → 14:59 → 5:59 と保存のたびにずれたのはこれ
+  if (/T\d{1,2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})$/.test(s)) {
+    var z = new Date(s);
+    return isNaN(z.getTime()) ? null : z;
+  }
 
   // "2026-09-01T12:00" / "2026-09-01 12:00" / "2026/09/01 12:00" に対応
   var m = s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})(?:[T ](\d{1,2}):(\d{2}))?/);
