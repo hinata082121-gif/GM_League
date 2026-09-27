@@ -428,8 +428,8 @@ function _route(action, token, payload) {
     case "settleClaims":
       return settleClaims(token, payload);
 
-    case "releaseSwappedPlayers":
-      return releaseSwappedPlayers(token, payload);
+    case "releaseClaimedPlayers":
+      return releaseClaimedPlayers(token, payload);
 
     // ---- ディビジョン & スーパーカップ ----
     case "getSeasonDivisions":

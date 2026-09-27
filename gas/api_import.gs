@@ -288,12 +288,26 @@ function setRosterAcquisition(token, payload) {
     byName[n] = _str(p.player_id);
   });
 
-  // 在籍中の行を player_id で引けるようにする
+  // 在籍中の行を player_id で引けるようにする。
+  // 補填の対象になった選手は在籍から外れているが、獲得額を直すと
+  // 請求の額も変わるので、請求が立っている離脱行も対象に含める
+  var claimKey = {};
+  _claimsOf(seasonId).forEach(function (c) {
+    if (_str(c.status) === CLAIM_VOID) return;
+    claimKey[_str(c.team_id) + "|" + _str(c.player_id)] = true;
+  });
+
   var rosterOf = {};
   getSheetData("Rosters").forEach(function (r) {
     if (_str(r.season_id) !== seasonId) return;
-    if (_str(r.status) !== ROSTER_ACTIVE) return;
-    rosterOf[_str(r.player_id)] = r;
+    var pid = _str(r.player_id);
+    var st = _str(r.status);
+    if (st === ROSTER_ACTIVE) {
+      rosterOf[pid] = r;
+    } else if (st === ROSTER_LEFT && !rosterOf[pid] &&
+               claimKey[_str(r.team_id) + "|" + pid]) {
+      rosterOf[pid] = r;
+    }
   });
 
   // 先に全件を解決する。1件でも駄目なら何も書かない

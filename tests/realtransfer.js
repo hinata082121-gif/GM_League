@@ -107,11 +107,11 @@ t('無所属の選手は補填なしで対象外になる', () => {
   ok(r.data.applied[0].reason.includes('保有していない'), r.data.applied[0].reason);
 });
 
-t('今シーズンのスカッドは減らない', () => {
+t('補填の対象になった選手の分だけ今シーズンのスカッドが減る', () => {
   const e = env();
   e.applyRealTransfers('ORG', { season_id: 's1', player_ids: ['p1'] });
   const d = e.getRealTransferTargets('ORG', { season_id: 's1' }).data;
-  eq(d.teams.find((x) => x.team_id === 't_a').squad, 3);
+  eq(d.teams.find((x) => x.team_id === 't_a').squad, 2);
 });
 
 t('二重に反映しても請求は1件だけ', () => {
@@ -162,13 +162,12 @@ t('対象外の選手は翌シーズンへ引き継がれない', () => {
   ok(!next.some((row) => row[3] === 'p1'), 'p1 が引き継がれてしまった');
 });
 
-t('落とした選手が終了レポートに出る', () => {
+t('反映済みの選手は既に外れているので翌シーズンへ引き継がれない', () => {
   const e = env();
   e.applyRealTransfers('ORG', { season_id: 's1', player_ids: ['p1'] });
   const r = e.closeSeason('ORG', { season_id: 's1', next_season_id: 's2' });
-  eq(r.data.report.dropped_ineligible.length, 1);
-  eq(r.data.report.dropped_ineligible[0].name, 'エース');
   eq(r.data.report.carried, 2);
+  eq(e.__rows('Rosters').slice(1).filter((x) => x[1] === 's2' && x[3] === 'p1').length, 0);
 });
 
 t('対象外にしていない選手は普通に引き継がれる', () => {
@@ -178,13 +177,12 @@ t('対象外にしていない選手は普通に引き継がれる', () => {
   eq(r.data.report.dropped_ineligible.length, 0);
 });
 
-t('今シーズンの在籍記録は残る', () => {
+t('補填の対象になった時点で今シーズンの在籍から外れる', () => {
   const e = env();
   e.applyRealTransfers('ORG', { season_id: 's1', player_ids: ['p1'] });
-  e.closeSeason('ORG', { season_id: 's1', next_season_id: 's2' });
   const cur = e.__rows('Rosters').slice(1).filter((r) => r[1] === 's1' && r[3] === 'p1');
-  eq(cur.length, 1);
-  eq(cur[0][4], '在籍');
+  eq(cur.length, 1, '在籍の記録そのものは消さない');
+  eq(cur[0][4], '離脱');
 });
 
 // ---- 移籍からの除外 --------------------------------------------------------

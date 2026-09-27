@@ -646,8 +646,7 @@ function settleClaims(token, payload) {
             status:           ROSTER_ACTIVE,
           });
 
-          // 入れ替えで手放した選手はその場でスカッドから外す。
-          // 代わりの選手を受け取ったのに残すと、1人分多く持つことになる
+          // 補填の対象になった選手はスカッドに残さない（念のためここでも外す）
           _releaseClaimedPlayer(seasonId, teamId, _str(c.player_id));
 
           swaps.push({
@@ -667,7 +666,9 @@ function settleClaims(token, payload) {
         }
       }
 
-      // 払い戻し
+      // 払い戻し。補填の対象になった選手はスカッドに残さない
+      _releaseClaimedPlayer(seasonId, teamId, _str(c.player_id));
+
       var amount = Math.round(_num(c.refund_amount));
 
       if (amount > 0) {
@@ -767,7 +768,7 @@ function _claimView(c, playerNames) {
 }
 
 /**
- * 入れ替えで手放した選手の在籍を離脱にする。
+ * 補填の対象になった選手の在籍を離脱にする。
  *
  * @param {string} seasonId
  * @param {string} teamId
@@ -789,10 +790,11 @@ function _releaseClaimedPlayer(seasonId, teamId, playerId) {
 }
 
 /**
- * 精算済みの入れ替えで、手放した選手が残っているものを外す。主催者専用。
+ * 補填の対象になった選手がスカッドに残っているものを外す。主催者専用。
  *
- * 以前の精算は、受け取った選手を足すだけで手放した選手を外していなかった。
- * その取り残しを片付ける。何度実行しても結果は同じ。
+ * 補填の対象になった時点で今シーズンの在籍から外すのが正しい。
+ * 以前は請求を立てても精算しても在籍を残していたので、その取り残しを片付ける。
+ * 無効にした請求は対象にしない。何度実行しても結果は同じ。
  *
  * payload: { season_id }
  *
@@ -800,7 +802,7 @@ function _releaseClaimedPlayer(seasonId, teamId, playerId) {
  * @param {Object} payload
  * @returns {{ ok: boolean, data?: Object, error?: string }}
  */
-function releaseSwappedPlayers(token, payload) {
+function releaseClaimedPlayers(token, payload) {
   var auth = _requireOrganizer(token);
   if (!auth.ok) return auth;
 
@@ -813,8 +815,7 @@ function releaseSwappedPlayers(token, payload) {
     var released = [];
 
     _claimsOf(seasonId).forEach(function (c) {
-      if (_str(c.status) !== CLAIM_SETTLED) return;
-      if (_str(c.choice) !== CLAIM_CHOICE_SWAP) return;
+      if (_str(c.status) === CLAIM_VOID) return;
 
       var teamId = _str(c.team_id);
       var pid = _str(c.player_id);
@@ -822,6 +823,7 @@ function releaseSwappedPlayers(token, payload) {
         released.push({
           team_name: teamNames[teamId] || teamId,
           player_name: (playerNames[pid] || {}).name || pid,
+          choice: _str(c.choice),
         });
       }
     });

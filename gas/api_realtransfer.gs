@@ -24,7 +24,8 @@
  *   - eligible=false にした時点で**補填の請求（Claims）を立てる**
  *   - 参加者は「払い戻し」か「自クラブの空き選手との入れ替え」を選ぶ
  *   - **入金は選択期限の翌日**。主催者が settleClaims でまとめて精算する
- *   - 離脱は**翌シーズンから**。今シーズンのスカッドと試合結果には手を触れない
+ *   - 保有チームの在籍は**その場で離脱**にする。補填の対象になった選手が
+ *     今シーズンのスカッドに残っていてはいけない。試合結果には手を触れない
  *   - 補填の母数は Rosters.acquired_cost、率は claim_rate_real_transfer（既定80%）
  *   - オークション獲得の選手は補填の対象外（シーズン終了で自動離脱するため）
  *
@@ -170,9 +171,9 @@ function _squadSizeByTeam(seasonId) {
  * 期限の翌日に settleClaims でまとめて精算する。
  * 先に入金してしまうと、使い切ってから入れ替えを選ばれて二重取りになるため。
  *
- * 今シーズンのスカッドと試合結果は変えない。
- * eligible=false になった選手は closeSeason の引継ぎで離脱するため、
- * 実際に使えなくなるのは翌シーズンから。
+ * 保有チームの在籍はその場で離脱にする。補填の対象になった選手が
+ * 今シーズンのスカッドに残ると、補填を受けたうえで選手も使えてしまう。
+ * 試合結果（得点記録など）は変えない。
  *
  * payload: { season_id, player_ids: string[], note? }
  *
@@ -278,6 +279,9 @@ function applyRealTransfers(token, payload) {
       if (roster) {
         var teamId = _str(roster.team_id);
         entry.team_id = teamId;
+
+        updateRow("Rosters", "roster_id", _str(roster.roster_id), { status: ROSTER_LEFT });
+        entry.released = true;
 
         var acqType = _str(roster.acquisition_type);
         var cost = _num(roster.acquired_cost);
@@ -786,6 +790,9 @@ function withdrawTeam(token, payload) {
 
       var pid = _str(r.player_id);
       if (affectedPlayers.indexOf(pid) === -1) return;
+
+      // 大会の外へ出た選手なので、保有チームの在籍からはその場で外す
+      updateRow("Rosters", "roster_id", _str(r.roster_id), { status: ROSTER_LEFT });
 
       if (_str(r.acquisition_type) === METHOD_AUCTION) return;
 

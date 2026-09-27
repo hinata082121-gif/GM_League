@@ -94,10 +94,10 @@ t('辞退するとチームが非アクティブになりスカッドが離脱�
   eq(rostersOf(e, 's1', 't_b').length, 0);
 });
 
-t('辞退で他チームのスカッドは減らない', () => {
+t('辞退で他チームのスカッドは旧クラブの選手だけ減る', () => {
   const e = env();
   e.withdrawTeam('ORG', { season_id: 's1', team_id: 't_b', kind: '辞退' });
-  eq(rostersOf(e, 's1', 't_a').length, 3);
+  eq(rostersOf(e, 's1', 't_a').map((x) => x[3]).sort().join(','), 'k1,k2');
 });
 
 // ---- チーム変更 ------------------------------------------------------------
@@ -413,14 +413,26 @@ t('入れ替えで手放した選手はスカッドから外れる', () => {
   ok(!ids.includes('u1'), '手放した選手が残っている');
 });
 
-t('払い戻しでは選手は外さない（離脱は翌シーズンから）', () => {
+t('請求が立った時点で対象の選手はスカッドから外れる', () => {
   const { e } = withClaim();
-  setDeadline(e, new Date(Date.now() - 1000));
-  e.settleClaims('ORG', { season_id: 's1' });
-  ok(rostersOf(e, 's1', 't_a').some((x) => x[3] === 'u1'));
+  ok(!rostersOf(e, 's1', 't_a').some((x) => x[3] === 'u1'));
 });
 
-t('精算済みの入れ替えの取り残しを後から外せる', () => {
+t('払い戻しでも選手はスカッドに残らない', () => {
+  const { e } = withClaim();
+  e.__rows('Rosters').slice(1).filter((x) => x[1] === 's1' && x[2] === 't_a' && x[3] === 'u1').forEach((x) => { x[4] = '在籍'; });
+  setDeadline(e, new Date(Date.now() - 1000));
+  e.settleClaims('ORG', { season_id: 's1' });
+  ok(!rostersOf(e, 's1', 't_a').some((x) => x[3] === 'u1'));
+});
+
+t('辞退で他チームが持っていた旧クラブの選手も外れる', () => {
+  const e = env();
+  e.withdrawTeam('ORG', { season_id: 's1', team_id: 't_b', kind: '辞退' });
+  ok(!rostersOf(e, 's1', 't_a').some((x) => x[3] === 'u1'), '浦和の選手が鹿島に残っている');
+});
+
+t('補填の対象で残っている選手を後から外せる', () => {
   const { e, claimId } = withClaim();
   setDeadline(e, new Date(Date.now() + 86400000));
   e.chooseClaim('A', { claim_id: claimId, choice: '入れ替え', replacement_player_id: 'k3' });
@@ -431,12 +443,12 @@ t('精算済みの入れ替えの取り残しを後から外せる', () => {
   const rows = e.__rows('Rosters').slice(1).filter((x) => x[1] === 's1' && x[2] === 't_a' && x[3] === 'u1');
   rows.forEach((x) => { x[4] = '在籍'; });
 
-  eq(e.releaseSwappedPlayers('A', { season_id: 's1' }).ok, false);
-  const r = e.releaseSwappedPlayers('ORG', { season_id: 's1' });
+  eq(e.releaseClaimedPlayers('A', { season_id: 's1' }).ok, false);
+  const r = e.releaseClaimedPlayers('ORG', { season_id: 's1' });
   eq(r.ok, true);
   eq(r.data.count, 1);
   ok(!rostersOf(e, 's1', 't_a').some((x) => x[3] === 'u1'));
-  eq(e.releaseSwappedPlayers('ORG', { season_id: 's1' }).data.count, 0);
+  eq(e.releaseClaimedPlayers('ORG', { season_id: 's1' }).data.count, 0);
 });
 
 t('未選択は既定（払い戻し）で精算される', () => {
