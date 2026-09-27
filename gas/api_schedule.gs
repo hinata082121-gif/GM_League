@@ -207,10 +207,15 @@ function generateSchedule(token, payload) {
 
     _appendRowsBatch("SeasonSchedule", rows);
 
+    // 移籍市場の開幕日時を日程に合わせる。プロテクトの期間と
+    // 最終日割引は開幕日時からの逆算なので、ここがずれると全部ずれる
+    var synced = _syncMarketOpenFromSchedule(seasonId, rows);
+
     return {
       ok: true,
       data: {
         season_id:    seasonId,
+        market_open:  synced,
         opening_date: _iso(opening),
         count:        rows.length,
         first_date:   _iso(rows[0].date),
@@ -524,16 +529,22 @@ function upsertScheduleItem(token, payload) {
       done:       _toBool(payload.done),
     };
 
+    var created = false;
     if (scheduleId && findRow("SeasonSchedule", "schedule_id", scheduleId)) {
       updateRow("SeasonSchedule", "schedule_id", scheduleId, updates);
-      return { ok: true, data: { schedule_id: scheduleId, created: false } };
+    } else {
+      scheduleId = generateId("sc_");
+      updates.schedule_id = scheduleId;
+      appendRow("SeasonSchedule", updates);
+      created = true;
     }
 
-    scheduleId = generateId("sc_");
-    updates.schedule_id = scheduleId;
-    appendRow("SeasonSchedule", updates);
+    // 移籍期間開幕の日付を動かしたら、市場の開幕日時もついてくる
+    var synced = _marketWindowOfLabel(label)
+      ? _syncMarketOpenFromSchedule(seasonId, [updates])
+      : null;
 
-    return { ok: true, data: { schedule_id: scheduleId, created: true } };
+    return { ok: true, data: { schedule_id: scheduleId, created: created, market_open: synced } };
   });
 }
 
@@ -629,4 +640,60 @@ function _formatDate(d) {
 function _weekdayLabel(d) {
   if (!d) return "";
   return ["日", "月", "火", "水", "木", "金", "土"][d.getDay()];
+}
+
+// =============================================================================
+// 移籍市場の開幕日時（日程から決める）
+// =============================================================================
+
+/**
+ * 日程の名前から、第何次の移籍市場の開幕かを返す。該当しなければ 0。
+ *
+ *   「移籍期間開幕［始］」         → 1
+ *   「第二次移籍期間開幕［始］」   → 2（第2次 と書いても同じ）
+ *
+ * @param {string} label
+ * @returns {number}
+ */
+function _marketWindowOfLabel(label) {
+  var l = _str(label).trim();
+  if (/^第(二|2|２)次移籍期間開幕/.test(l)) return 2;
+  if (/^移籍期間開幕/.test(l)) return 1;
+  return 0;
+}
+
+/**
+ * 日程の「移籍期間開幕」の日付を、Seasons の市場開幕日時（その日の0:00）に写す。
+ *
+ * ▶ なぜ必要か
+ *   有料プロテクトの開始（開幕の前日23:00）、無料プロテクトの期間、
+ *   最終日割引は、すべて Seasons.window1_open_at / window2_open_at からの逆算。
+ *   日程表とは別に手で入れていたため、Season15 では日程表が 9/30 開幕なのに
+ *   開幕日時が 9/29 になっており、有料プロテクトが1日早く 9/28 23:00 から出ていた。
+ *   日程を正として、開幕日時は日程から決める。
+ *
+ * @param {string} seasonId
+ * @param {Object[]} rows date と label を持つ行
+ * @returns {Object|null} 書き換えた内容
+ */
+function _syncMarketOpenFromSchedule(seasonId, rows) {
+  var updates = {};
+
+  (rows || []).forEach(function (r) {
+    var w = _marketWindowOfLabel(r.label);
+    if (!w) return;
+    var d = _asDate(r.date);
+    if (!d) return;
+    var open = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+    var key = w === 2 ? "window2_open_at" : "window1_open_at";
+    if (!updates[key] || open < updates[key]) updates[key] = open;
+  });
+
+  if (Object.keys(updates).length === 0) return null;
+
+  updateRow("Seasons", "season_id", seasonId, updates);
+
+  var out = {};
+  Object.keys(updates).forEach(function (k) { out[k] = _iso(updates[k]); });
+  return out;
 }
