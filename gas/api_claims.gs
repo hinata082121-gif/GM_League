@@ -646,6 +646,10 @@ function settleClaims(token, payload) {
             status:           ROSTER_ACTIVE,
           });
 
+          // 入れ替えで手放した選手はその場でスカッドから外す。
+          // 代わりの選手を受け取ったのに残すと、1人分多く持つことになる
+          _releaseClaimedPlayer(seasonId, teamId, _str(c.player_id));
+
           swaps.push({
             claim_id: claimId,
             team_id: teamId,
@@ -760,4 +764,68 @@ function _claimView(c, playerNames) {
     chosen_at:       _iso(c.chosen_at),
     settled_at:      _iso(c.settled_at),
   };
+}
+
+/**
+ * 入れ替えで手放した選手の在籍を離脱にする。
+ *
+ * @param {string} seasonId
+ * @param {string} teamId
+ * @param {string} playerId
+ * @returns {number} 離脱にした行数
+ */
+function _releaseClaimedPlayer(seasonId, teamId, playerId) {
+  if (!playerId) return 0;
+  var n = 0;
+  getSheetData("Rosters").forEach(function (r) {
+    if (_str(r.season_id) !== seasonId) return;
+    if (_str(r.team_id) !== teamId) return;
+    if (_str(r.player_id) !== playerId) return;
+    if (_str(r.status) !== ROSTER_ACTIVE) return;
+    updateRow("Rosters", "roster_id", _str(r.roster_id), { status: ROSTER_LEFT });
+    n++;
+  });
+  return n;
+}
+
+/**
+ * 精算済みの入れ替えで、手放した選手が残っているものを外す。主催者専用。
+ *
+ * 以前の精算は、受け取った選手を足すだけで手放した選手を外していなかった。
+ * その取り残しを片付ける。何度実行しても結果は同じ。
+ *
+ * payload: { season_id }
+ *
+ * @param {string} token
+ * @param {Object} payload
+ * @returns {{ ok: boolean, data?: Object, error?: string }}
+ */
+function releaseSwappedPlayers(token, payload) {
+  var auth = _requireOrganizer(token);
+  if (!auth.ok) return auth;
+
+  var seasonId = _str(payload.season_id);
+  if (!seasonId) return { ok: false, error: "season_id は必須です。" };
+
+  return withLock(function () {
+    var teamNames = _teamNameMap();
+    var playerNames = _playerInfoMap();
+    var released = [];
+
+    _claimsOf(seasonId).forEach(function (c) {
+      if (_str(c.status) !== CLAIM_SETTLED) return;
+      if (_str(c.choice) !== CLAIM_CHOICE_SWAP) return;
+
+      var teamId = _str(c.team_id);
+      var pid = _str(c.player_id);
+      if (_releaseClaimedPlayer(seasonId, teamId, pid) > 0) {
+        released.push({
+          team_name: teamNames[teamId] || teamId,
+          player_name: (playerNames[pid] || {}).name || pid,
+        });
+      }
+    });
+
+    return { ok: true, data: { season_id: seasonId, released: released, count: released.length } };
+  });
 }

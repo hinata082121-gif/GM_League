@@ -401,6 +401,44 @@ t('入れ替えを選ぶと選手がスカッドに入る', () => {
   eq(roster[6], 0);   // acquired_cost は 0
 });
 
+t('入れ替えで手放した選手はスカッドから外れる', () => {
+  const { e, claimId } = withClaim();
+  setDeadline(e, new Date(Date.now() + 86400000));
+  e.chooseClaim('A', { claim_id: claimId, choice: '入れ替え', replacement_player_id: 'k3' });
+  setDeadline(e, new Date(Date.now() - 1000));
+  e.settleClaims('ORG', { season_id: 's1' });
+
+  const ids = rostersOf(e, 's1', 't_a').map((x) => x[3]);
+  ok(ids.includes('k3'), '受け取った選手がいない');
+  ok(!ids.includes('u1'), '手放した選手が残っている');
+});
+
+t('払い戻しでは選手は外さない（離脱は翌シーズンから）', () => {
+  const { e } = withClaim();
+  setDeadline(e, new Date(Date.now() - 1000));
+  e.settleClaims('ORG', { season_id: 's1' });
+  ok(rostersOf(e, 's1', 't_a').some((x) => x[3] === 'u1'));
+});
+
+t('精算済みの入れ替えの取り残しを後から外せる', () => {
+  const { e, claimId } = withClaim();
+  setDeadline(e, new Date(Date.now() + 86400000));
+  e.chooseClaim('A', { claim_id: claimId, choice: '入れ替え', replacement_player_id: 'k3' });
+  setDeadline(e, new Date(Date.now() - 1000));
+  e.settleClaims('ORG', { season_id: 's1' });
+
+  // 以前の精算を再現する: 手放した選手を在籍に戻す
+  const rows = e.__rows('Rosters').slice(1).filter((x) => x[1] === 's1' && x[2] === 't_a' && x[3] === 'u1');
+  rows.forEach((x) => { x[4] = '在籍'; });
+
+  eq(e.releaseSwappedPlayers('A', { season_id: 's1' }).ok, false);
+  const r = e.releaseSwappedPlayers('ORG', { season_id: 's1' });
+  eq(r.ok, true);
+  eq(r.data.count, 1);
+  ok(!rostersOf(e, 's1', 't_a').some((x) => x[3] === 'u1'));
+  eq(e.releaseSwappedPlayers('ORG', { season_id: 's1' }).data.count, 0);
+});
+
 t('未選択は既定（払い戻し）で精算される', () => {
   const { e } = withClaim();
   setDeadline(e, new Date(Date.now() - 1000));
