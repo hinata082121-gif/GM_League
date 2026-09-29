@@ -55,7 +55,9 @@ const MONEY_UNIT = 1000000;
 function unitToYen(v) {
   const n = Number(v);
   if (!isFinite(n) || n <= 0) return 0;
-  return Math.floor(n) * MONEY_UNIT;
+  // 100万円単位で入力する。小数は10万の位で四捨五入する
+  // （0.4 → 0円 / 0.5 → 100万円 / 1.45 → 100万円 / 1.5 → 200万円）
+  return Math.round(n) * MONEY_UNIT;
 }
 
 /**
@@ -2309,6 +2311,7 @@ async function renderTransfer() {
     teamSel.onchange = loadTransferOptions;
     document.getElementById('tr-method').onchange = onTransferMethodChange;
     document.getElementById('tr-pos').onchange = renderTransferPlayerSelect;
+    document.getElementById('tr-from').onchange = renderTransferPlayerSelect;
     document.getElementById('tr-player').onchange = updateTransferPreview;
     document.getElementById('tr-fee').oninput = updateTransferPreview;
     document.getElementById('tr-submit').onclick = onSubmitTransfer;
@@ -2354,6 +2357,7 @@ async function loadTransferOptions() {
 
   if (res.data.market_open) {
     formWrap.style.display = 'block';
+    renderTransferTeamSelect();
     renderTransferMethodSelect();
     renderTransferPlayerSelect();
   }
@@ -2440,7 +2444,31 @@ function onTransferMethodChange() {
 }
 
 /**
- * 対象選手のプルダウンを組み立てる（ポジション → 選手 の2段目）。
+ * 相手チームのプルダウンを組み立てる。
+ *
+ * 獲得できる選手は全チーム分で数百人になり、ポジションだけでは
+ * 目当ての選手を探しきれない。どの移籍形態でも、先にチームで絞れるようにする。
+ * 選び直しても、前に選んでいたチームがまだあれば残す。
+ */
+function renderTransferTeamSelect() {
+  const sel = document.getElementById('tr-from');
+  const prev = sel.value;
+
+  const names = {};
+  (transferData.targets || []).forEach((p) => {
+    if (p.team_id) names[p.team_id] = p.team_name || p.team_id;
+  });
+
+  const ids = Object.keys(names).sort((a, b) => names[a].localeCompare(names[b], 'ja'));
+  sel.innerHTML =
+    '<option value="">すべて</option>' +
+    ids.map((id) => '<option value="' + esc(id) + '">' + esc(names[id]) + '</option>').join('');
+
+  if (prev && names[prev]) sel.value = prev;
+}
+
+/**
+ * 対象選手のプルダウンを組み立てる（相手チーム・ポジション → 選手）。
  *
  * 承認待ちの申請がある選手と、特別ルールでプロテクト中の選手は選べないようにする。
  * 最終的な可否判定は GAS 側でも行う。
@@ -2449,10 +2477,12 @@ function renderTransferPlayerSelect() {
   if (!transferData) return;
 
   const pos = document.getElementById('tr-pos').value;
+  const from = document.getElementById('tr-from').value;
   const method = document.getElementById('tr-method').value;
   const sel = document.getElementById('tr-player');
 
   let list = (transferData.targets || []).slice();
+  if (from) list = list.filter((p) => p.team_id === from);
   if (pos) list = list.filter((p) => p.position === pos);
 
   sel.innerHTML =
@@ -2506,7 +2536,8 @@ function updateTransferPreview() {
 
   if (info.needs_fee) {
     cost = fee;
-    payout = Math.round(fee * d.seller_rate_normal);
+    // サーバーと同じく10万の位で四捨五入して100万円単位にする
+    payout = Math.round((fee * d.seller_rate_normal) / MONEY_UNIT) * MONEY_UNIT;
   } else {
     cost = info.fixed_cost;
     payout = info.payout;

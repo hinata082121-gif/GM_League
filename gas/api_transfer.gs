@@ -165,7 +165,9 @@ function _isDiscountWindow(season, windowNo, at) {
  * @returns {{gross: number, cost: number, payout: number, discounted: boolean}}
  */
 function _calcTransferCost(method, grossFee, season, windowNo, at) {
-  var fee = Math.max(0, Math.floor(_num(grossFee)));
+  // 交渉額も10万の位で四捨五入して100万円単位にそろえる
+  // （40万以下は切り捨て、50万以上は切り上げ）
+  var fee = Math.max(0, _roundMoney(_num(grossFee)));
   var w = windowNo === 2 ? 2 : 1;
 
   if (

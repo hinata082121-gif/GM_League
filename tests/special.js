@@ -195,4 +195,42 @@ t('獲れる選手には理由が付かない', () => {
   eq(target.special_reason, '');
 });
 
+// =============================================================================
+// 売り手の同意は挟まない
+// =============================================================================
+
+['特別', '無効化特別'].forEach((method) => {
+  t(method + 'は売り手の同意なしで主催者承認待ちになる', () => {
+    const e = heldByA(market());
+    const r = grab(e, method);
+    eq(r.ok, true, r.error);
+    eq(r.data.status, '主催者承認待ち');
+  });
+
+  t(method + 'は売り手の画面に同意ボタンが出ず、応答もできない', () => {
+    const e = heldByA(market());
+    const id = grab(e, method).data.transfer_id;
+    const list = e.listTransfers('A', { season_id: 's1' });
+    const rows = Array.isArray(list.data) ? list.data : (list.data.transfers || list.data.rows || []);
+    const row = rows.find((x) => x.transfer_id === id);
+    ok(row, '売り手の一覧に出ていない');
+    eq(row.can_respond, false);
+    eq(e.respondTransfer('A', { transfer_id: id, agree: true }).ok, false);
+  });
+});
+
+// =============================================================================
+// 交渉額は10万の位で四捨五入
+// =============================================================================
+
+[[101400000, 101000000, 91000000], [101500000, 102000000, 92000000], [150000000, 150000000, 135000000]].forEach(([input, fee, payout]) => {
+  t('交渉額 ' + input + ' は ' + fee + '、売り手受取は ' + payout, () => {
+    const e = heldByA(market());
+    const r = e.requestTransfer('B', { season_id: 's1', to_team: 't_B', player_id: 'p_1', method: '完全移籍', gross_fee: input });
+    eq(r.ok, true, r.error);
+    eq(r.data.cost_to_buyer, fee);
+    eq(r.data.payout_to_seller, payout);
+  });
+});
+
 report('special.js');

@@ -303,6 +303,12 @@
                 <select id="tr-method"></select>
               </label>
               <label>
+                相手チーム
+                <select id="tr-from">
+                  <option value="">すべて</option>
+                </select>
+              </label>
+              <label>
                 ポジション
                 <select id="tr-pos">
                   <option value="">すべて</option>
@@ -318,7 +324,7 @@
               </label>
               <label id="tr-fee-wrap">
                 交渉額 <span class="unit-hint">100万円単位</span>
-                <input type="number" id="tr-fee" min="0" step="1" placeholder="例: 100 → 1億円" />
+                <input type="number" id="tr-fee" min="0" step="0.1" inputmode="decimal" placeholder="例: 100 → 1億円" />
                 <span id="tr-fee-echo" class="money-echo">—</span>
               </label>
             </div>
