@@ -308,6 +308,9 @@ function _route(action, token, payload) {
     case "approveTransfer":
       return approveTransfer(token, payload);
 
+    case "approveTransfers":
+      return approveTransfers(token, payload);
+
     case "rejectTransfer":
       return rejectTransfer(token, payload);
 

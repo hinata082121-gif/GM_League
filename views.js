@@ -2925,8 +2925,13 @@ async function loadTxApprovalList() {
         差戻: 'tag-ng',
       };
 
+      const check = t.can_approve
+        ? '<input type="checkbox" class="ta-check" value="' + esc(t.transfer_id) + '" data-cost="' + Number(t.cost_to_buyer) + '" />'
+        : '';
+
       return `
       <tr>
+        <td>${check}</td>
         <td>${esc(t.player_name)}</td>
         <td class="muted">${esc(t.from_team_name || '—')} → ${esc(t.to_team_name)}</td>
         <td>${esc(t.method)}<span class="muted"> 第${t.window}次</span></td>
@@ -2938,11 +2943,20 @@ async function loadTxApprovalList() {
     })
     .join('');
 
+  const approvable = txRes.data.filter((t) => t.can_approve).length;
+
   box.innerHTML = `
+    ${approvable > 0 ? `
+    <div class="form-actions bulk-bar">
+      <button type="button" id="ta-bulk-selected" class="btn btn-primary" disabled>選択した移籍を一括承認</button>
+      <button type="button" id="ta-bulk-all" class="btn btn-secondary">主催者承認待ちをすべて承認（${approvable}件）</button>
+      <span id="ta-bulk-count" class="muted note-sm">0件選択中</span>
+    </div>` : ''}
     <div class="table-wrap">
       <table class="data-table">
         <thead>
           <tr>
+            <th>${approvable > 0 ? '<input type="checkbox" id="ta-check-all" title="承認できるものをすべて選択" />' : ''}</th>
             <th>選手</th><th>移籍</th><th>形態</th>
             <th class="num">買い手支払</th><th class="num">売り手受取</th>
             <th>状態</th><th>操作</th>
@@ -2951,7 +2965,10 @@ async function loadTxApprovalList() {
         <tbody>${rows}</tbody>
       </table>
     </div>
-    <p id="ta-result" class="form-msg"></p>`;
+    <p id="ta-result" class="form-msg"></p>
+    <div id="ta-bulk-report"></div>`;
+
+  bindBulkApproval(box, seasonId);
 
   box.querySelectorAll('.ta-approve').forEach((b) => {
     b.onclick = () => onTxApprovalAction('approveTransfer', b.dataset.id, '承認');
@@ -2959,6 +2976,106 @@ async function loadTxApprovalList() {
   box.querySelectorAll('.ta-reject').forEach((b) => {
     b.onclick = () => onTxApprovalAction('rejectTransfer', b.dataset.id, '差戻');
   });
+}
+
+/**
+ * 一括承認のチェックとボタンをつなぐ。
+ *
+ * @param {HTMLElement} box
+ * @param {string} seasonId
+ */
+function bindBulkApproval(box, seasonId) {
+  const checks = () => Array.from(box.querySelectorAll('.ta-check'));
+  const btn = document.getElementById('ta-bulk-selected');
+  const all = document.getElementById('ta-check-all');
+  const count = document.getElementById('ta-bulk-count');
+  if (!btn) return;
+
+  const update = () => {
+    const on = checks().filter((c) => c.checked);
+    const total = on.reduce((a, c) => a + Number(c.dataset.cost || 0), 0);
+    count.textContent = on.length + '件選択中' + (on.length ? '（買い手支払 計 ' + formatMoney(total) + '）' : '');
+    btn.disabled = on.length === 0;
+    if (all) all.checked = on.length > 0 && on.length === checks().length;
+  };
+
+  checks().forEach((c) => { c.onchange = update; });
+  if (all) {
+    all.onchange = () => {
+      checks().forEach((c) => { c.checked = all.checked; });
+      update();
+    };
+  }
+
+  btn.onclick = () => {
+    const ids = checks().filter((c) => c.checked).map((c) => c.value);
+    onBulkApprove({ transfer_ids: ids }, ids.length);
+  };
+  document.getElementById('ta-bulk-all').onclick = () => {
+    onBulkApprove({ season_id: seasonId, all_pending: true }, checks().length);
+  };
+
+  update();
+}
+
+/**
+ * 移籍をまとめて承認する。
+ *
+ * 予算が足りないものなどは飛ばして残りを承認する。
+ * 飛ばしたものは理由つきで一覧にする。
+ *
+ * @param {Object} payload approveTransfers に渡す内容
+ * @param {number} n 対象件数（確認用）
+ */
+async function onBulkApprove(payload, n) {
+  if (!confirm(n + '件の移籍をまとめて承認します。スカッドと予算がその場で更新されます。よろしいですか？')) {
+    return;
+  }
+
+  ['ta-bulk-selected', 'ta-bulk-all'].forEach((id) => {
+    const b = document.getElementById(id);
+    if (b) b.disabled = true;
+  });
+  setResult('ta-result', true, '一括承認中...（件数が多いと数十秒かかります）');
+
+  const res = await callApi('approveTransfers', payload);
+
+  if (!res.ok) {
+    setResult('ta-result', false, '一括承認できません: ' + res.error);
+    ['ta-bulk-selected', 'ta-bulk-all'].forEach((id) => {
+      const b = document.getElementById(id);
+      if (b) b.disabled = false;
+    });
+    return;
+  }
+
+  const d = res.data;
+  await loadTxApprovalList();
+
+  setResult(
+    'ta-result',
+    d.failed_count === 0,
+    d.approved_count + '件を承認しました（買い手支払 計 ' + formatMoney(d.total_cost) +
+      ' / 売り手受取 計 ' + formatMoney(d.total_payout) + '）' +
+      (d.failed_count ? '。' + d.failed_count + '件は承認できませんでした。' : '')
+  );
+
+  const rep = document.getElementById('ta-bulk-report');
+  if (rep && d.failed_count) {
+    rep.innerHTML = `
+      <h3 class="sub-head">承認できなかった移籍</h3>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>選手</th><th>移籍</th><th>理由</th></tr></thead>
+          <tbody>${d.failed.map((f) => `
+            <tr>
+              <td>${esc(f.player_name || f.transfer_id)}</td>
+              <td class="muted">${esc(f.from_team_name || '—')} → ${esc(f.to_team_name || '—')}</td>
+              <td>${esc(f.reason)}</td>
+            </tr>`).join('')}</tbody>
+        </table>
+      </div>`;
+  }
 }
 
 /**

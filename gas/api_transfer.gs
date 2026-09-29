@@ -11,6 +11,7 @@
  *   listTransfers      — 移籍一覧
  *   getTransferLog     — 移籍ログ（承認済みを全員に）
  *   approveTransfer    — 承認（Rosters 移動 + BudgetTx 計上）
+ *   approveTransfers   — まとめて承認（100件を超えても1回で済む）
  *   rejectTransfer     — 差戻
  *
  * ⚠️ 設計原則（SPEC.md §3）
@@ -1164,6 +1165,273 @@ function approveTransfer(token, payload) {
       },
     };
   });
+}
+
+/** 一括承認で1回に受け付ける件数の上限 */
+var BULK_APPROVE_MAX = 300;
+
+/**
+ * 移籍をまとめて承認する。主催者専用。
+ *
+ * ▶ なぜ approveTransfer を繰り返さないのか
+ *   1件ずつだと、そのたびに在籍・予算・移籍の表を読み直して1行ずつ書く。
+ *   100件を超えると GAS の実行時間の上限に近づき、途中で止まると
+ *   どこまで承認されたか分からなくなる。表は最初に1回だけ読み、
+ *   予算は手元で引き算しながら判定し、書き込みは最後にまとめて行う。
+ *
+ * ▶ 判定は1件ずつ
+ *   予算が足りない・既に処理済み、などの申請は飛ばして残りを承認する。
+ *   飛ばしたものは理由つきで返すので、個別に見直せる。
+ *   申請の古い順に処理するので、予算が足りないときは先に出した申請が優先される。
+ *
+ * payload: { transfer_ids?: string[], season_id?: string, all_pending?: boolean }
+ *   all_pending=true なら、そのシーズンの「主催者承認待ち」をすべて対象にする
+ *
+ * @param {string} token
+ * @param {Object} payload
+ * @returns {{ ok: boolean, data?: Object, error?: string }}
+ */
+function approveTransfers(token, payload) {
+  var auth = _requireOrganizer(token);
+  if (!auth.ok) return auth;
+
+  var allPending = _toBool(payload.all_pending);
+  var seasonFilter = _str(payload.season_id);
+  if (allPending && !seasonFilter) {
+    return { ok: false, error: "すべて承認するときは season_id が必要です。" };
+  }
+
+  var wanted = {};
+  var ids = [];
+  (payload.transfer_ids || []).forEach(function (v) {
+    var id = _str(v);
+    if (id && !wanted[id]) { wanted[id] = true; ids.push(id); }
+  });
+
+  if (!allPending && ids.length === 0) {
+    return { ok: false, error: "承認する移籍を選んでください。" };
+  }
+
+  return withLock(function () {
+    var at = now();
+
+    // --- 移籍（1回だけ読む）---
+    var txSheet = getSheet("Transfers");
+    var txValues = txSheet.getDataRange().getValues();
+    var th = txValues[0];
+    var c = {};
+    ["transfer_id", "season_id", "player_id", "from_team", "to_team", "method",
+     "cost_to_buyer", "payout_to_seller", "registered_at", "status"].forEach(function (k) {
+      c[k] = th.indexOf(k);
+    });
+
+    var byId = {};
+    var reserved = {};
+    for (var i = 1; i < txValues.length; i++) {
+      var r = txValues[i];
+      var id = String(r[c.transfer_id]);
+      if (!id) continue;
+      byId[id] = i;
+      if (TX_PENDING_STATUSES.indexOf(String(r[c.status])) !== -1) {
+        var rk = String(r[c.season_id]) + "|" + String(r[c.to_team]);
+        reserved[rk] = (reserved[rk] || 0) + _num(r[c.cost_to_buyer]);
+      }
+    }
+
+    if (allPending) {
+      Object.keys(byId).forEach(function (id) {
+        var r = txValues[byId[id]];
+        if (String(r[c.season_id]) !== seasonFilter) return;
+        if (String(r[c.status]) !== TX_ORG_PENDING) return;
+        if (!wanted[id]) { wanted[id] = true; ids.push(id); }
+      });
+    }
+
+    if (ids.length === 0) {
+      return { ok: true, data: { approved: [], failed: [], approved_count: 0, failed_count: 0 } };
+    }
+    if (ids.length > BULK_APPROVE_MAX) {
+      return { ok: false, error: "一度に承認できるのは " + BULK_APPROVE_MAX + " 件までです（" + ids.length + " 件）。" };
+    }
+
+    // 申請の古い順。予算が足りないときに先に出した申請を優先する
+    ids.sort(function (a, b) {
+      var ra = byId[a] ? _timeValue(txValues[byId[a]][c.registered_at]) : 0;
+      var rb = byId[b] ? _timeValue(txValues[byId[b]][c.registered_at]) : 0;
+      if (ra !== rb) return ra - rb;
+      return (byId[a] || 0) - (byId[b] || 0);
+    });
+
+    // 今回まとめて承認する申請の予約は外しておく。1件ずつ承認するたびに
+    // 残高から引くので、まだ順番が来ていない申請に先の申請が塞がれないようにする
+    ids.forEach(function (id) {
+      var bi = byId[id];
+      if (!bi) return;
+      var br = txValues[bi];
+      if (TX_PENDING_STATUSES.indexOf(String(br[c.status])) === -1) return;
+      var brk = String(br[c.season_id]) + "|" + String(br[c.to_team]);
+      reserved[brk] = (reserved[brk] || 0) - _num(br[c.cost_to_buyer]);
+    });
+
+    // --- 予算（1回だけ読む）---
+    var balance = {};
+    getSheetData("BudgetTx").forEach(function (t) {
+      var bk = _str(t.season_id) + "|" + _str(t.team_id);
+      balance[bk] = (balance[bk] || 0) + _num(t.amount);
+    });
+
+    // --- 在籍（1回だけ読む）---
+    var rsSheet = getSheet("Rosters");
+    var rsValues = rsSheet.getDataRange().getValues();
+    var rh = rsValues[0];
+    var rSeason = rh.indexOf("season_id");
+    var rTeam = rh.indexOf("team_id");
+    var rPlayer = rh.indexOf("player_id");
+    var rStatus = rh.indexOf("status");
+
+    var activeAt = {};
+    for (var j = 1; j < rsValues.length; j++) {
+      if (String(rsValues[j][rStatus]) !== ROSTER_ACTIVE) continue;
+      activeAt[String(rsValues[j][rSeason]) + "|" + String(rsValues[j][rTeam]) + "|" +
+        String(rsValues[j][rPlayer])] = j;
+    }
+
+    var playerNames = {};
+    getSheetData("Players").forEach(function (p) { playerNames[_str(p.player_id)] = _str(p.name); });
+    var teamNames = _teamNameMap();
+
+    var approved = [];
+    var failed = [];
+    var newRosters = [];
+    var newTx = [];
+    var rosterChanged = false;
+
+    ids.forEach(function (id) {
+      var idx = byId[id];
+      if (!idx) {
+        failed.push({ transfer_id: id, reason: "移籍申請が見つかりません" });
+        return;
+      }
+      var r = txValues[idx];
+      var seasonId = String(r[c.season_id]);
+      var fromTeam = String(r[c.from_team] || "");
+      var toTeam = String(r[c.to_team]);
+      var playerId = String(r[c.player_id]);
+      var method = String(r[c.method]);
+      var cost = _num(r[c.cost_to_buyer]);
+      var payout = _num(r[c.payout_to_seller]);
+      var label = {
+        transfer_id: id,
+        player_name: playerNames[playerId] || playerId,
+        from_team_name: fromTeam ? (teamNames[fromTeam] || fromTeam) : "",
+        to_team_name: teamNames[toTeam] || toTeam,
+        method: method,
+        cost_to_buyer: cost,
+        payout_to_seller: payout,
+      };
+
+      if (String(r[c.status]) !== TX_ORG_PENDING) {
+        label.reason = "主催者承認待ちではありません（現在: " + String(r[c.status]) + "）";
+        failed.push(label);
+        return;
+      }
+
+      // 承認時の予算確認。今回の対象外で承認待ちの申請の分は差し引いて判定する
+      var bk = seasonId + "|" + toTeam;
+      var available = (balance[bk] || 0) - (reserved[bk] || 0);
+      if (available < cost) {
+        label.reason = "獲得側の予算が不足しています（必要 " + formatYen_(cost) +
+          " / 使える予算 " + formatYen_(available) + "）";
+        failed.push(label);
+        return;
+      }
+
+      if (fromTeam) {
+        var ak = seasonId + "|" + fromTeam + "|" + playerId;
+        if (activeAt[ak]) {
+          rsValues[activeAt[ak]][rStatus] = ROSTER_LEFT;
+          delete activeAt[ak];
+          rosterChanged = true;
+        }
+      }
+
+      newRosters.push({
+        roster_id:        generateId("r_"),
+        season_id:        seasonId,
+        team_id:          toTeam,
+        player_id:        playerId,
+        acquisition_type: method,
+        acquired_cost:    cost,
+        acquired_at:      at,
+        expires_season:   EXPIRING_METHODS.indexOf(method) !== -1 ? seasonId : "",
+        status:           ROSTER_ACTIVE,
+      });
+
+      newTx.push({
+        tx_id: generateId("tx_"), season_id: seasonId, team_id: toTeam,
+        amount: -cost, reason: "移籍金支出", ref: id, created_at: at,
+      });
+      if (fromTeam && payout > 0) {
+        newTx.push({
+          tx_id: generateId("tx_"), season_id: seasonId, team_id: fromTeam,
+          amount: payout, reason: "移籍金収入", ref: id, created_at: at,
+        });
+        var sk = seasonId + "|" + fromTeam;
+        balance[sk] = (balance[sk] || 0) + payout;
+      }
+
+      balance[bk] = (balance[bk] || 0) - cost;
+
+      r[c.status] = TX_APPROVED;
+      approved.push(label);
+    });
+
+    // --- まとめて書く ---
+    if (rosterChanged && rsValues.length > 1) {
+      var statusCol = rsValues.slice(1).map(function (row) { return [row[rStatus]]; });
+      rsSheet.getRange(2, rStatus + 1, statusCol.length, 1).setValues(statusCol);
+    }
+    _appendRowsBatch("Rosters", newRosters);
+    _appendRowsBatch("BudgetTx", newTx);
+
+    if (approved.length > 0) {
+      var txCol = txValues.slice(1).map(function (row) { return [row[c.status]]; });
+      txSheet.getRange(2, c.status + 1, txCol.length, 1).setValues(txCol);
+    }
+
+    var totalCost = 0;
+    var totalPayout = 0;
+    approved.forEach(function (a) { totalCost += a.cost_to_buyer; totalPayout += a.payout_to_seller; });
+
+    return {
+      ok: true,
+      data: {
+        approved: approved,
+        failed: failed,
+        approved_count: approved.length,
+        failed_count: failed.length,
+        total_cost: totalCost,
+        total_payout: totalPayout,
+      },
+    };
+  });
+}
+
+/**
+ * エラー文用の金額表記（例: 1億5000万円）。
+ *
+ * @param {number} n
+ * @returns {string}
+ */
+function formatYen_(n) {
+  var v = Math.round(_num(n));
+  var sign = v < 0 ? "-" : "";
+  v = Math.abs(v);
+  var oku = Math.floor(v / 100000000);
+  var man = Math.floor((v % 100000000) / 10000);
+  if (oku > 0) return sign + oku + "億" + (man > 0 ? man + "万" : "") + "円";
+  if (man > 0) return sign + man + "万円";
+  return sign + v + "円";
 }
 
 /**
