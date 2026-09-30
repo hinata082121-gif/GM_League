@@ -163,9 +163,8 @@ function _isBatchable(action, payload) {
 }
 
 /**
- * たまった読み取りを1回の通信で送る。
- * 1件だけなら普通に送る。まとめた通信が失敗したら、1件ずつ送り直す
- * （それぞれが自分の再試行を持っているので、ここでは重ねて再試行しない）。
+ * たまった読み取りを1回の通信で送る。1件だけなら普通に送る。
+ * 失敗したときの投げ直しは _callApiDirect が batch ごと1回だけ行う。
  */
 async function _flushBatch() {
   const queue = _batchQueue;
@@ -202,10 +201,50 @@ async function _sendBatch(group) {
   if (!res.ok && /Unknown action: batch/.test(res.error || '')) {
     console.warn('[callApi] GAS が batch に未対応のため、1件ずつ送ります');
     _batchUnsupported = true;
+    group.forEach(async (g) => g.resolve(await _callApiDirect(g.action, g.payload)));
+    return;
   }
 
-  // まとめて送れなかったので1件ずつ送る
-  group.forEach(async (g) => g.resolve(await _callApiDirect(g.action, g.payload)));
+  // **混雑で失敗したときに1件ずつ送り直してはいけない。**
+  // 以前はそうしていたため、GAS が上限に達して断られるほど通信が数倍に増え、
+  // 混雑をさらに悪化させていた。batch は _callApiDirect で1回投げ直し済みなので、
+  // ここでは全件を同じ失敗として返す（失敗は使い回しに残らず、開き直せば取り直す）
+  const error = res.error || 'batch_failed';
+  group.forEach((g) => g.resolve({ ok: false, error }));
+}
+
+/**
+ * GAS が混んで断られたときの文言。
+ *
+ * GAS は同時に動ける数に上限があり、超えると30秒ほど待たせた末に
+ * 404 のエラーページを返す（CORS ヘッダーが無いと Failed to fetch になる）。
+ * 「http_404」だけでは参加者が壊れたと受け取るので、待てば直ることを伝える。
+ *
+ * @param {string} detail
+ * @returns {string}
+ */
+function _busyError(detail) {
+  return 'サーバーが混み合っています。少し待ってから開き直してください（' + detail + '）';
+}
+
+/**
+ * 投げ直すまでの待ち時間。2〜5秒でばらけさせる。
+ * 全員が同じ間隔で投げ直すと、断られた通信が同じ瞬間にまた押し寄せるため。
+ *
+ * @returns {Promise<void>}
+ */
+function _retryWait() {
+  return new Promise((r) => setTimeout(r, 2000 + Math.floor(Math.random() * 3000)));
+}
+
+/**
+ * 投げ直しても害のない action か。batch は読み取りしか入らないので含める。
+ *
+ * @param {string} action
+ * @returns {boolean}
+ */
+function _isRetryable(action) {
+  return action === 'batch' || _isReadAction(action);
 }
 
 async function _callApiDirect(action, payload = {}) {
@@ -237,21 +276,22 @@ async function _callApiDirect(action, payload = {}) {
       redirect: 'follow',   // GAS の 302 リダイレクトを自動追跡
     });
 
-    // GAS はデプロイ直後の伝播中に一時的に 404 を返すことがある。
+    // GAS はデプロイ直後の伝播中と、同時に動ける数の上限に達したときに 404 を返す。
     // 1回だけ間を置いて再試行する。
     if (res.status === 404 && !payload.__retried) {
-      console.warn('[callApi] http_404。1.5秒後に再試行します:', action);
-      await new Promise((r) => setTimeout(r, 1500));
+      console.warn('[callApi] http_404。少し待って再試行します:', action);
+      await _retryWait();
       return _callApiDirect(action, Object.assign({}, payload, { __retried: true }));
     }
 
     if (!res.ok) {
       // 読み取りは何度投げても結果が変わらないので、混雑による一時的な失敗は1回だけ投げ直す
-      if (res.status >= 500 && _isReadAction(action) && !payload.__retried) {
-        await new Promise((r) => setTimeout(r, 2000));
+      if (res.status >= 500 && _isRetryable(action) && !payload.__retried) {
+        await _retryWait();
         return _callApiDirect(action, Object.assign({}, payload, { __retried: true }));
       }
-      return { ok: false, error: `http_${res.status}` };
+      const code = 'http_' + res.status;
+      return { ok: false, error: (res.status === 404 || res.status >= 500) ? _busyError(code) : code };
     }
 
     const json = await res.json();
@@ -266,13 +306,19 @@ async function _callApiDirect(action, payload = {}) {
   } catch (err) {
     // GAS が混んでいると応答が返らずに通信が切れる（Failed to fetch）。
     // 読み取りだけ1回投げ直す。書き込みは向こうで処理済みのことがあるので投げ直さない
-    if (_isReadAction(action) && !payload.__retried) {
-      console.warn('[callApi] 通信失敗。2秒後に再試行します:', action, err.message);
-      await new Promise((r) => setTimeout(r, 2000));
+    if (_isRetryable(action) && !payload.__retried) {
+      console.warn('[callApi] 通信失敗。少し待って再試行します:', action, err.message);
+      await _retryWait();
       return _callApiDirect(action, Object.assign({}, payload, { __retried: true }));
     }
     console.error('[callApi] fetch 失敗:', err);
-    return { ok: false, error: err.message };
+    if (_isRetryable(action)) return { ok: false, error: _busyError(err.message) };
+    // 書き込みは向こうで済んでいることがある。二重に操作する前に確かめてもらう
+    return {
+      ok: false,
+      error: '通信が途中で切れました。処理が済んでいることがあるので、' +
+        '操作し直す前にページを再読み込みして確認してください（' + err.message + '）',
+    };
   }
 }
 

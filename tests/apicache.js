@@ -9,11 +9,13 @@ const { t, eq, ok, report } = require('./harness');
 
 const SRC = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
 
-function env(handler) {
+function env(handler, respond) {
   const sent = [];
   const ctx = {
     console: { log() {}, warn() {}, error() {} },
-    setTimeout, clearTimeout, structuredClone,
+    // 投げ直しの待ち（2〜5秒）はテストでは待たない。batch の15msはそのまま
+    setTimeout: (fn, ms) => setTimeout(fn, ms > 100 ? 0 : ms),
+    clearTimeout, structuredClone,
     GM_CONFIG: { GAS_URL: 'https://example.invalid/exec' },
     getIdToken: () => 'TOKEN',
     isTokenExpired: () => false,
@@ -21,6 +23,10 @@ function env(handler) {
     fetch: async (url, opts) => {
       const body = JSON.parse(opts.body);
       sent.push(body);
+      if (respond) {
+        const r = respond(body);
+        if (r) return r;
+      }
       const one = (a, p) => handler(a, p || {});
       const json = body.action === 'batch'
         ? { ok: true, data: { results: body.payload.calls.map((c) => one(c.action, c.payload)) } }
@@ -157,6 +163,47 @@ at('点検は使い回さない', async () => {
   await e.callApi('auditPlayerEligibility', {});
   await e.callApi('auditPlayerEligibility', {});
   eq(e.sent.length, 2);
+});
+
+const busy404 = () => ({ ok: false, status: 404, json: async () => ({}) });
+
+at('混雑で batch が断られても1件ずつに分けて送り直さない', async () => {
+  const e = env(okHandler, (b) => (b.action === 'batch' ? busy404() : null));
+  const rs = await Promise.all([
+    e.callApi('listTeams', {}), e.callApi('listSeasons', {}), e.callApi('getUiState', {}),
+  ]);
+  eq(e.sent.map((b) => b.action), ['batch', 'batch'], '最初の1回と投げ直し1回だけ');
+  ok(rs.every((r) => !r.ok && r.error.includes('混み合っています')), JSON.stringify(rs));
+
+  // 失敗は残さないので、開き直せば取り直す
+  await e.callApi('listTeams', {});
+  eq(e.sent.length, 3);
+});
+
+at('通信が切れた batch は1回だけ投げ直す', async () => {
+  let n = 0;
+  const e = env(okHandler, (b) => {
+    if (b.action === 'batch' && n++ === 0) throw new TypeError('Failed to fetch');
+    return null;
+  });
+  const [a, b] = await Promise.all([e.callApi('listTeams', {}), e.callApi('listSeasons', {})]);
+  eq(e.sent.map((x) => x.action), ['batch', 'batch']);
+  eq(a.ok && b.ok, true);
+});
+
+at('通信が切れた書き込みは投げ直さず、確認を促す', async () => {
+  const e = env(okHandler, () => { throw new TypeError('Failed to fetch'); });
+  const r = await e.callApi('requestTransfer', { player_id: 'p1' });
+  eq(e.sent.length, 1);
+  ok(r.error.includes('再読み込みして確認'), r.error);
+});
+
+at('batch に未対応の古い GAS なら1件ずつ送る', async () => {
+  const e = env((a) => (a === 'batch' ? { ok: false, error: 'Unknown action: batch' } : okHandler(a)), (b) =>
+    (b.action === 'batch' ? { ok: true, status: 200, json: async () => ({ ok: false, error: 'Unknown action: batch' }) } : null));
+  const [a, b] = await Promise.all([e.callApi('listTeams', {}), e.callApi('listSeasons', {})]);
+  eq(a.ok && b.ok, true);
+  eq(e.sent.map((x) => x.action), ['batch', 'listTeams', 'listSeasons']);
 });
 
 at('書き込みはまとめない', async () => {
