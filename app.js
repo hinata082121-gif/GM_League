@@ -228,6 +228,19 @@ function _busyError(detail) {
 }
 
 /**
+ * 書き込みの結果を受け取れなかったときの文言。
+ *
+ * 書き込みは向こうで済んでいることがある。二重に操作する前に確かめてもらう。
+ *
+ * @param {string} detail
+ * @returns {string}
+ */
+function _lostWriteError(detail) {
+  return '結果を受け取れませんでした。処理が済んでいることがあるので、' +
+    '操作し直す前にページを再読み込みして確認してください（' + detail + '）';
+}
+
+/**
  * 投げ直すまでの待ち時間。2〜5秒でばらけさせる。
  * 全員が同じ間隔で投げ直すと、断られた通信が同じ瞬間にまた押し寄せるため。
  *
@@ -276,22 +289,25 @@ async function _callApiDirect(action, payload = {}) {
       redirect: 'follow',   // GAS の 302 リダイレクトを自動追跡
     });
 
-    // GAS はデプロイ直後の伝播中と、同時に動ける数の上限に達したときに 404 を返す。
-    // 1回だけ間を置いて再試行する。
-    if (res.status === 404 && !payload.__retried) {
-      console.warn('[callApi] http_404。少し待って再試行します:', action);
-      await _retryWait();
-      return _callApiDirect(action, Object.assign({}, payload, { __retried: true }));
-    }
-
     if (!res.ok) {
-      // 読み取りは何度投げても結果が変わらないので、混雑による一時的な失敗は1回だけ投げ直す
-      if (res.status >= 500 && _isRetryable(action) && !payload.__retried) {
+      const busy = res.status === 404 || res.status >= 500;
+
+      // GAS はデプロイ直後の伝播中と、混雑しているときに 404 や 5xx を返す。
+      // 読み取りは何度投げても結果が変わらないので、1回だけ間を置いて投げ直す
+      if (busy && _isRetryable(action) && !payload.__retried) {
+        console.warn('[callApi] http_' + res.status + '。少し待って再試行します:', action);
         await _retryWait();
         return _callApiDirect(action, Object.assign({}, payload, { __retried: true }));
       }
+
       const code = 'http_' + res.status;
-      return { ok: false, error: (res.status === 404 || res.status >= 500) ? _busyError(code) : code };
+      if (!busy) return { ok: false, error: code };
+      if (_isRetryable(action)) return { ok: false, error: _busyError(code) };
+
+      // **書き込みは 404 でも投げ直さない。** 混雑時の 404 は、向こうで処理が
+      // 済んでいても返る。以前は 404 なら書き込みも投げ直していたため、
+      // シーズンの作成が2回走って同じシーズンが2つできた（2026-09-30）
+      return { ok: false, error: _lostWriteError(code) };
     }
 
     const json = await res.json();
@@ -313,12 +329,7 @@ async function _callApiDirect(action, payload = {}) {
     }
     console.error('[callApi] fetch 失敗:', err);
     if (_isRetryable(action)) return { ok: false, error: _busyError(err.message) };
-    // 書き込みは向こうで済んでいることがある。二重に操作する前に確かめてもらう
-    return {
-      ok: false,
-      error: '通信が途中で切れました。処理が済んでいることがあるので、' +
-        '操作し直す前にページを再読み込みして確認してください（' + err.message + '）',
-    };
+    return { ok: false, error: _lostWriteError(err.message) };
   }
 }
 

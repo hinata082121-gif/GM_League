@@ -36,6 +36,16 @@ t('終了したシーズンだけ並ぶ', () => {
   eq(r.data.map((s) => s.name), ['Season14']);
 });
 
+t('後から取り込んだ過去シーズンも番号の新しい順に並ぶ', () => {
+  const e = env();
+  e.__addRow('Seasons', { season_id: 's13', name: 'Season13', status: '終了' });
+  e.__addRow('Seasons', { season_id: 'sx', name: '（重複・削除してください）', status: '終了' });
+  e.__addRow('Seasons', { season_id: 's12', name: 'Season12', status: '終了' });
+
+  const r = e.listArchivedSeasons('ORG');
+  eq(r.data.map((s) => s.name), ['Season14', 'Season13', 'Season12', '（重複・削除してください）']);
+});
+
 t('参加者も一覧を見られる', () => {
   const e = env();
   eq(e.listArchivedSeasons('A').ok, true);

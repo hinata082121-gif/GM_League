@@ -21,6 +21,10 @@
 /**
  * 終了したシーズンの一覧を返す。新しい順。
  *
+ * 新しさは名前の番号で決める。行の並びや作成日時では決まらない。
+ * 過去のシーズンほど後から取り込んでいるため（Season14 → 13 → 12 の順に入れた）。
+ * 番号の無い名前は最後に並べる。
+ *
  * @param {string} token
  * @returns {{ ok: boolean, data?: Object[], error?: string }}
  */
@@ -39,6 +43,14 @@ function listArchivedSeasons(token) {
     });
 
   rows.reverse();
+  rows.sort(function (a, b) {
+    var na = _seasonNumber(a);
+    var nb = _seasonNumber(b);
+    if (isNaN(na) && isNaN(nb)) return 0;
+    if (isNaN(na)) return 1;
+    if (isNaN(nb)) return -1;
+    return nb - na;
+  });
   return { ok: true, data: rows };
 }
 

@@ -198,6 +198,22 @@ at('通信が切れた書き込みは投げ直さず、確認を促す', async (
   ok(r.error.includes('再読み込みして確認'), r.error);
 });
 
+at('404 が返った書き込みは投げ直さない（処理済みのことがある）', async () => {
+  const e = env(okHandler, () => busy404());
+  const r = await e.callApi('upsertSeason', { name: 'Season12' });
+  eq(e.sent.length, 1, '2回送るとシーズンが2つできる');
+  eq(r.ok, false);
+  ok(r.error.includes('再読み込みして確認'), r.error);
+});
+
+at('404 が返った読み取りは1回だけ投げ直す', async () => {
+  let n = 0;
+  const e = env(okHandler, () => (n++ === 0 ? busy404() : null));
+  const r = await e.callApi('whoami');
+  eq(e.sent.length, 2);
+  eq(r.ok, true);
+});
+
 at('batch に未対応の古い GAS なら1件ずつ送る', async () => {
   const e = env((a) => (a === 'batch' ? { ok: false, error: 'Unknown action: batch' } : okHandler(a)), (b) =>
     (b.action === 'batch' ? { ok: true, status: 200, json: async () => ({ ok: false, error: 'Unknown action: batch' }) } : null));
