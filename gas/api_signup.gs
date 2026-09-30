@@ -9,9 +9,10 @@
  *   getMySignup       — 自分の申請状況
  *
  * 主催者専用:
- *   listSignups    — 申請一覧
- *   approveSignup  — 承認（Users + Teams を作る）
- *   rejectSignup   — 却下
+ *   listSignups      — 申請一覧
+ *   approveSignup    — 承認（Users + Teams を作る）
+ *   rejectSignup     — 却下
+ *   releaseTeamOwner — GM交代。オーナーを外して後任を募集する
  *
  * ⚠️ 設計原則
  *   1. 書き込みは必ず GAS 経由。合言葉の照合もサーバー側でのみ行う
@@ -35,6 +36,21 @@ var SIGNUP_PENDING = "申請中";
 var SIGNUP_APPROVED = "承認";
 var SIGNUP_REJECTED = "却下";
 var SIGNUP_STATUSES = [SIGNUP_PENDING, SIGNUP_APPROVED, SIGNUP_REJECTED];
+
+/**
+ * 既にあるチームを引き受けるときの始め方。
+ *
+ *   引継ぎ — 前任のスカッドと予算をそのまま受け取る
+ *   新規   — スカッドを解散し、予算を初期値にして新規参加と同じ状態から始める
+ *
+ * どちらにするかは参加者に選んでもらい、主催者が承認のときに指定する。
+ */
+var START_MODE_INHERIT = "引継ぎ";
+var START_MODE_FRESH = "新規";
+var START_MODES = [START_MODE_INHERIT, START_MODE_FRESH];
+
+/** BudgetTx.reason。前任の予算を引き継がずに始めたときの調整 */
+var REASON_FRESH_START = "新規参加リセット";
 
 // =============================================================================
 // 受付状態
@@ -131,9 +147,7 @@ function _signupClubOptions(selfEmail) {
   // オーナーが決まって初めて「その人のもの」になる。
   // 承認時に既存のチームへ結び付ける（approveSignup）。
   //
-  // 判定は owner_user_id が空かどうかだけで行う。
-  // 参照先のユーザーが実在するかまでは見ない。値が入っている時点で
-  // 誰かのものにする意図があったとみなすほうが、取り違えより安全。
+  // 判定は _teamIsClaimable に寄せてある。承認側（_unclaimedTeam）と揃えるため。
   var takenBy = {};
   var claimable = {};
 
@@ -141,12 +155,16 @@ function _signupClubOptions(selfEmail) {
     var name = _str(t.name);
     if (!name) return;
 
-    if (_str(t.owner_user_id)) {
-      takenBy[name] = "登録済み";
+    if (_teamIsClaimable(t)) {
+      if (!claimable[name]) claimable[name] = _str(t.team_id);
     } else {
-      claimable[name] = true;
+      takenBy[name] = "登録済み";
     }
   });
+
+  // 引き継げるもの（今シーズンの在籍・予算）が残っているチーム。
+  // 過去シーズンの記録のためだけにあるチームは、選んでも新規参加と同じ扱い
+  var carry = _teamCarryStates();
 
   // 使用済み: 他の人が申請中
   var self = String(selfEmail || "").toLowerCase();
@@ -188,8 +206,9 @@ function _signupClubOptions(selfEmail) {
       club_name:    r.club_name,
       taken:        !!taken,
       taken_reason: taken,
-      // 継続参加のチーム。選べるが、承認すると既存のスカッドと予算を引き継ぐ
-      continuing:   !taken && !!claimable[r.club_name],
+      // 引き継げるスカッドか予算が残っているチーム。
+      // 承認のときに「引継ぎ」か「新規」かを選ぶ（approveSignup の start_mode）
+      continuing:   !taken && _isInheritable(carry[claimable[r.club_name]]),
     });
   });
 
@@ -494,7 +513,17 @@ function listSignups(token, payload) {
  *
  * チーム名は主催者が上書きできる（重複や表記ゆれの調整用）。
  *
- * payload: { signup_id, team_name? }
+ * 同じ名前のチームが既にあるとき（継続参加・GM交代・辞退したクラブへの参加）は、
+ * 新しく作らずそこへ結び付ける。始め方は start_mode で選ぶ。
+ *
+ *   引継ぎ — スカッドと予算をそのまま受け取る
+ *   新規   — スカッドを解散し、予算を初期値にそろえる
+ *
+ * 省略時は、引き継げるものがあれば引継ぎ。無ければ新規（初期予算が入る）。
+ * 過去シーズンの記録のためだけにあるチームは引き継げるものが無いので、
+ * 何も指定しなくても新規参加と同じ扱いになる。
+ *
+ * payload: { signup_id, team_name?, start_mode? }
  *
  * @param {string} token
  * @param {Object} payload
@@ -506,6 +535,11 @@ function approveSignup(token, payload) {
 
   var signupId = _str(payload.signup_id);
   if (!signupId) return { ok: false, error: "signup_id は必須です。" };
+
+  var mode = _str(payload.start_mode);
+  if (mode && START_MODES.indexOf(mode) === -1) {
+    return { ok: false, error: "start_mode が不正です: " + mode };
+  }
 
   return withLock(function () {
     var row = findRow("Signups", "signup_id", signupId);
@@ -537,18 +571,51 @@ function approveSignup(token, payload) {
     var existing = _unclaimedTeam(teamName);
     var teamId;
     var continuing = false;
+    var initial = null;
+    var reset = null;
+    var released = 0;
+    var unlinked = 0;
 
     if (existing) {
       teamId = _str(existing.team_id);
-      continuing = true;
+
+      var seasonId = _latestSeasonId();
+      var state = _teamCarryStates()[teamId] || { squad: 0, balance: 0 };
+      var inheritable = _isInheritable(state);
+
+      // 引き継げるものが無いチームは、何を指定されても新規参加と同じ。
+      // 過去シーズンの記録のためだけにあるチームに初期予算が入らず、
+      // 0円から始まってしまうのを防ぐ
+      if (!inheritable) mode = START_MODE_FRESH;
+      if (!mode) mode = START_MODE_INHERIT;
+
+      // 前任のログインをこのチームから外す。外さないと、辞退した人が
+      // 後任のチームをそのまま操作できてしまう
+      unlinked = _unlinkTeamUsers(teamId);
+
+      continuing = mode === START_MODE_INHERIT;
 
       updateRow("Teams", "team_id", teamId, {
         owner_user_id: userId,
-        kind:          "継続",
+        // スカッドが無ければ自クラブの選手から登録し直すので新規扱い
+        kind:          continuing && state.squad > 0 ? "継続" : "新規",
         active:        true,
       });
+
+      if (!continuing) {
+        if (inheritable && seasonId) {
+          released = _releaseTeamRosters(seasonId, teamId);
+          reset = _resetTeamForFreshStart(seasonId, teamId, at, {
+            reason: REASON_FRESH_START,
+            note:   "前任から引き継がず新規参加として開始",
+          });
+        } else {
+          initial = _grantInitialBudget(teamId, at);
+        }
+      }
     } else {
       teamId = generateId("t_");
+      mode = START_MODE_FRESH;
       appendRow("Teams", {
         team_id:       teamId,
         name:          teamName,
@@ -556,11 +623,11 @@ function approveSignup(token, payload) {
         kind:          "新規",
         active:        true,
       });
-    }
 
-    // 新規参加のチームには初期予算を入れる（既定5,000万円）。
-    // 以前は入れておらず、横浜F・マリノスが0円から始まっていた
-    var initial = continuing ? null : _grantInitialBudget(teamId, at);
+      // 新規参加のチームには初期予算を入れる（既定5,000万円）。
+      // 以前は入れておらず、横浜F・マリノスが0円から始まっていた
+      initial = _grantInitialBudget(teamId, at);
+    }
 
     appendRow("Users", {
       user_id:      userId,
@@ -588,6 +655,140 @@ function approveSignup(token, payload) {
         team_name:  teamName,
         continuing: continuing,
         initial_budget: initial,
+        start_mode:     mode,
+        released:       released,
+        reset:          reset,
+        unlinked_users: unlinked,
+      },
+    };
+  });
+}
+
+/**
+ * そのチームを新しい参加者が引き受けられるか。
+ *
+ * 引き受けられるのは次のどちらか。
+ *   - オーナーがいない（継続参加で本人の申請待ち・GM交代で後任待ち・過去の記録用）
+ *   - 辞退して active=false になっている（前任のオーナーが残っていても構わない）
+ *
+ * 参加中（active）でオーナーの値が入っているチームは塞ぐ。
+ * 参照先のユーザーが実在するかまでは見ない。値が入っている時点で
+ * 誰かのものにする意図があったとみなすほうが、取り違えより安全。
+ *
+ * @param {Object} team Teams の行
+ * @returns {boolean}
+ */
+function _teamIsClaimable(team) {
+  return !_str(team.owner_user_id) || !_toBool(team.active);
+}
+
+/**
+ * 各チームが今シーズンに持っているもの。在籍の人数と予算の残高。
+ *
+ * @returns {Object} team_id → { squad: number, balance: number }
+ */
+function _teamCarryStates() {
+  var seasonId = _latestSeasonId();
+  var out = {};
+  if (!seasonId) return out;
+
+  var at = function (tid) {
+    if (!out[tid]) out[tid] = { squad: 0, balance: 0 };
+    return out[tid];
+  };
+
+  try {
+    getSheetData("Rosters").forEach(function (r) {
+      if (_str(r.season_id) !== seasonId) return;
+      if (_str(r.status) !== ROSTER_ACTIVE) return;
+      at(_str(r.team_id)).squad++;
+    });
+    getSheetData("BudgetTx").forEach(function (t) {
+      if (_str(t.season_id) !== seasonId) return;
+      var tid = _str(t.team_id);
+      if (!tid) return;
+      at(tid).balance += _num(t.amount);
+    });
+  } catch (e) {
+    Logger.log("[_teamCarryStates] " + e.message);
+  }
+
+  return out;
+}
+
+/**
+ * 引き継げるものがあるか。在籍が1人でもいるか、予算が0でなければある。
+ *
+ * @param {{squad: number, balance: number}|undefined} state
+ * @returns {boolean}
+ */
+function _isInheritable(state) {
+  return !!state && (state.squad > 0 || state.balance !== 0);
+}
+
+/**
+ * そのチームに結び付いているユーザーを外す。
+ *
+ * Users の行は消さない。team_id を空にするだけなので、
+ * 本人はログインできるがチームは持たない状態になる。
+ *
+ * @param {string} teamId
+ * @returns {number} 外した人数
+ */
+function _unlinkTeamUsers(teamId) {
+  var ids = [];
+  getSheetData("Users").forEach(function (u) {
+    if (_str(u.team_id) === teamId && _str(u.role) !== "organizer") ids.push(_str(u.user_id));
+  });
+  ids.forEach(function (id) {
+    updateRow("Users", "user_id", id, { team_id: "" });
+  });
+  return ids.length;
+}
+
+/**
+ * GM交代。チームのオーナーを外し、後任が参加登録で選べる状態にする。主催者専用。
+ *
+ * **スカッドと予算には触れない。** チームは参加中のまま残るので、
+ * シーズンをまたいでも繰り越される。後任の申請を承認するときに
+ * 「引継ぎ」か「新規」かを選ぶ（approveSignup の start_mode）。
+ *
+ * 辞退（withdrawTeam）との違い
+ *   辞退はクラブごと大会から外す。スカッドは解散し、そのクラブの選手は
+ *   大会対象外になり、保有していた他チームに補填が立つ。後から戻せない。
+ *   **後任が引き継ぐ見込みがあるなら、辞退ではなくこちらを使う。**
+ *   後任が来なかったら、そのあとで辞退にすればよい。
+ *
+ * payload: { team_id }
+ *
+ * @param {string} token
+ * @param {Object} payload
+ * @returns {{ ok: boolean, data?: Object, error?: string }}
+ */
+function releaseTeamOwner(token, payload) {
+  var auth = _requireOrganizer(token);
+  if (!auth.ok) return auth;
+
+  var teamId = _str(payload.team_id);
+  if (!teamId) return { ok: false, error: "team_id は必須です。" };
+
+  return withLock(function () {
+    var team = findRow("Teams", "team_id", teamId);
+    if (!team) return { ok: false, error: "チームが見つかりません。" };
+    if (!_toBool(team.active)) {
+      return { ok: false, error: "このチームは既に大会から外れています。" };
+    }
+
+    var unlinked = _unlinkTeamUsers(teamId);
+    updateRow("Teams", "team_id", teamId, { owner_user_id: "" });
+
+    return {
+      ok: true,
+      data: {
+        team_id:        teamId,
+        team_name:      _str(team.name),
+        unlinked_users: unlinked,
+        note:           "スカッドと予算はそのままです。後任の参加登録を承認するときに、引継ぎか新規かを選べます。",
       },
     };
   });
@@ -634,12 +835,12 @@ function _grantInitialBudget(teamId, at) {
 }
 
 /**
- * 同じ名前で、まだオーナーがいないチームを探す。
+ * 同じ名前で、新しい参加者が引き受けられるチームを探す。
  *
  * 継続参加のチームは主催者が先に作ってあり、オーナーだけが空いている。
  * 承認のときにここへ結び付けると、スカッドと予算をそのまま引き継げる。
  *
- * 判定は owner_user_id が空かどうかだけ。_signupClubOptions と揃える。
+ * 判定は _teamIsClaimable。_signupClubOptions と揃える。
  *
  * @param {string} teamName
  * @returns {Object|null}
@@ -648,7 +849,7 @@ function _unclaimedTeam(teamName) {
   var rows = getSheetData("Teams");
   for (var i = 0; i < rows.length; i++) {
     if (_str(rows[i].name) !== teamName) continue;
-    if (!_str(rows[i].owner_user_id)) return rows[i];
+    if (_teamIsClaimable(rows[i])) return rows[i];
   }
   return null;
 }

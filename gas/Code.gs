@@ -174,6 +174,9 @@ function _route(action, token, payload) {
     case "rejectSignup":
       return rejectSignup(token, payload);
 
+    case "releaseTeamOwner":
+      return releaseTeamOwner(token, payload);
+
     // ---- Phase 1: マスタ読み取り（ログイン済みなら誰でも） ----
     case "listPlayers":
       return listPlayers(token, payload);

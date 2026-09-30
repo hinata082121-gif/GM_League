@@ -240,6 +240,7 @@ t('初期予算は Config の new_team_initial_budget で変えられる', () =>
 t('継続チームへの結び付けでは初期予算を入れない', () => {
   const e = env();
   e.__addRow('Teams', { team_id: 't_old', name: '浦和レッズ', owner_user_id: '', kind: '継続', active: true });
+  e.__addRow('Rosters', { roster_id: 'r_old', season_id: 's1', team_id: 't_old', player_id: 'p1', status: '在籍' });
   const s = submit(e, 'NEW');
   const r = e.approveSignup('ORG', { signup_id: s.data.signup_id });
   eq(r.data.continuing, true);

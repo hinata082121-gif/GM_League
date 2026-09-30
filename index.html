@@ -1009,13 +1009,17 @@
         </div>
 
         <div class="card">
-          <h2>辞退・チーム変更</h2>
+          <h2>辞退・チーム変更・GM交代</h2>
           <p class="muted">
             参加者が抜けたり使用クラブを変えたりすると、<strong>そのクラブの選手は全員が大会の対象外</strong>になります。
             その選手を保有している他チームには自動で補填の請求が立ちます。
             <br>
             <strong>チーム変更は完全リセットです。</strong>スカッド・予算・プロテクト・エントリーがすべて初期化され、
             新規参加者と同じ状態から始まります。
+            <br>
+            <strong>後任がそのクラブを引き受ける見込みがあるなら、辞退ではなく GM交代を使います。</strong>
+            スカッドと予算を残したままオーナーだけを外し、後任の参加登録を承認するときに
+            「引継ぎ」か「完全新規」かを選べます。辞退はスカッドを解散するので、後から引き継げません。
           </p>
           <div class="form-grid">
             <label>
@@ -1027,6 +1031,7 @@
               <select id="wd-kind">
                 <option value="辞退">辞退（大会から抜ける）</option>
                 <option value="チーム変更">チーム変更（別クラブで続ける）</option>
+                <option value="GM交代">GM交代（クラブは残し、後任を募集）</option>
               </select>
             </label>
             <label id="wd-club-wrap" style="display:none;">

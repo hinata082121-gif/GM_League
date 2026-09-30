@@ -858,25 +858,26 @@ function withdrawTeam(token, payload) {
  * **差額のマイナス取引を1行足して**目的の残高にそろえる。
  * 履歴を消さないので、何が起きたか後から追える。
  *
+ * **そろえるのはそのシーズンの残高。** 全シーズンの合計ではない。
+ * 辞退したチームは繰越の対象外なので、前シーズンに残高が残ったままになる。
+ * 合計でそろえると、その分だけ今シーズンがマイナスから始まってしまう。
+ *
  * @param {string} seasonId
  * @param {string} teamId
  * @param {Date} at
+ * @param {{reason?: string, note?: string}} [opts] 取引に付ける理由。省略時はチーム変更
  * @returns {Object} リセットの内訳
  */
-function _resetTeamForFreshStart(seasonId, teamId, at) {
+function _resetTeamForFreshStart(seasonId, teamId, at, opts) {
   // --- 予算 ---
-  var balance = 0;
-  getSheetData("BudgetTx").forEach(function (tx) {
-    if (_str(tx.team_id) !== teamId) return;
-    balance += _num(tx.amount);
-  });
-
+  var balance = _seasonBalance(seasonId, teamId);
   var initial = _newTeamInitialBudget();
 
   if (balance !== initial) {
     _addBudgetTx(
-      seasonId, teamId, initial - balance, REASON_TEAM_RESET,
-      "チーム変更による初期化", at
+      seasonId, teamId, initial - balance,
+      (opts && opts.reason) || REASON_TEAM_RESET,
+      (opts && opts.note) || "チーム変更による初期化", at
     );
   }
 

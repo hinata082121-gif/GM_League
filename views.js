@@ -6381,8 +6381,22 @@ async function loadSignups() {
       })
       .join('');
 
-    return '<select class="sg-team-input" data-id="' + esc(signupId) + '">' + opts + '</select>';
+    return '<select class="sg-team-input" data-id="' + esc(signupId) + '">' + opts + '</select>' +
+      // 引き継げるスカッドか予算が残っているクラブを選んだときだけ出す
+      '<select class="sg-mode" data-id="' + esc(signupId) + '" style="display:none;">' +
+      '<option value="">始め方を選択</option>' +
+      '<option value="引継ぎ">引継ぎ（スカッド・予算をそのまま）</option>' +
+      '<option value="新規">完全新規（スカッド解散・予算は初期値）</option>' +
+      '</select>';
   };
+
+  // 引き継げるものが残っているクラブ
+  const continuingClubs = new Set();
+  if (clubData) {
+    clubData.categories.forEach((cat) => clubData.clubs[cat].forEach((c) => {
+      if (c.continuing) continuingClubs.add(c.club_name);
+    }));
+  }
 
   const rows = res.data
     .map((r) => {
@@ -6425,7 +6439,23 @@ async function loadSignups() {
     <p class="muted note-sm">
       チームは承認前なら主催者が差し替えられます。既に使われているクラブは選べません。
       選択肢に出るのは Config の <code>signup_club_categories</code> で許可したカテゴリだけです。
+      <br>
+      前任のスカッドや予算が残っているクラブでは「始め方」を選びます。
+      <strong>引継ぎ</strong>はそのまま受け取り、<strong>完全新規</strong>はスカッドを解散して予算を初期値にそろえます。
+      どちらにするかは参加者に確認してください。
     </p>`;
+
+  // クラブを選び直したら、始め方の欄を出し入れする
+  box.querySelectorAll('.sg-team-input').forEach((sel) => {
+    const mode = box.querySelector('.sg-mode[data-id="' + sel.dataset.id + '"]');
+    const sync = () => {
+      const on = continuingClubs.has(sel.value);
+      mode.style.display = on ? '' : 'none';
+      if (!on) mode.value = '';
+    };
+    sel.onchange = sync;
+    sync();
+  });
 
   box.querySelectorAll('.sg-approve').forEach((b) => {
     b.onclick = () => onApproveSignup(b.dataset.id);
@@ -6444,9 +6474,26 @@ async function onApproveSignup(signupId) {
   const input = document.querySelector('.sg-team-input[data-id="' + signupId + '"]');
   const teamName = input ? input.value.trim() : '';
 
-  if (!confirm('この申請を承認します。\nチーム「' + teamName + '」とユーザーが作成されます。')) return;
+  // 前任のスカッドや予算が残っているクラブは、始め方を選んでから承認する。
+  // 黙って引継ぎにすると、完全新規を望んだ参加者が前任の戦力を持って始まってしまう
+  const modeSel = document.querySelector('.sg-mode[data-id="' + signupId + '"]');
+  const needsMode = modeSel && modeSel.style.display !== 'none';
+  const mode = needsMode ? modeSel.value : '';
 
-  const res = await callApi('approveSignup', { signup_id: signupId, team_name: teamName });
+  if (needsMode && !mode) {
+    alert('「' + teamName + '」には前任のスカッドか予算が残っています。\n' +
+      '始め方（引継ぎ / 完全新規）を選んでから承認してください。');
+    return;
+  }
+
+  const modeNote =
+    mode === '引継ぎ' ? '\n\n【引継ぎ】前任のスカッドと予算をそのまま受け取ります。'
+    : mode === '新規' ? '\n\n【完全新規】前任のスカッドは解散し、予算は初期値にそろえます。取り消せません。'
+    : '';
+
+  if (!confirm('この申請を承認します。\nチーム「' + teamName + '」とユーザーが作成されます。' + modeNote)) return;
+
+  const res = await callApi('approveSignup', { signup_id: signupId, team_name: teamName, start_mode: mode });
 
   if (!res.ok) {
     alert('承認できません: ' + res.error);
@@ -7249,6 +7296,46 @@ async function onWithdrawKindChange() {
 }
 
 /**
+ * GM交代を実行する。オーナーだけを外し、スカッドと予算は残す。
+ *
+ * 辞退と違ってクラブは大会に残るので、選手が対象外になることも、
+ * 他チームに補填が立つこともない。
+ *
+ * @param {string} teamId
+ * @param {string} teamName
+ */
+async function onSubmitOwnerRelease(teamId, teamName) {
+  const msg = teamName + ' のGMを外し、後任を募集する状態にします。\n\n' +
+    '  ・スカッドと予算はそのまま残ります\n' +
+    '  ・今のGMはこのチームを操作できなくなります\n' +
+    '  ・参加登録でこのクラブが選べるようになります\n\n' +
+    '後任の申請を承認するときに、引継ぎか完全新規かを選びます。よろしいですか？';
+
+  if (!confirm(msg)) return;
+
+  const btn = document.getElementById('wd-submit');
+  btn.disabled = true;
+  setResult('wd-result', true, '実行中...');
+
+  const res = await callApi('releaseTeamOwner', { team_id: teamId });
+
+  btn.disabled = false;
+
+  if (!res.ok) {
+    setResult('wd-result', false, '実行できません: ' + res.error);
+    return;
+  }
+
+  setResult('wd-result', true, 'GM交代を反映しました。');
+  document.getElementById('wd-report').innerHTML =
+    '<div class="hint-box"><p><strong>' + esc(res.data.team_name) + '</strong> は後任待ちです。</p>' +
+    '<p class="muted note-sm">' + esc(res.data.note) + '</p></div>';
+
+  cache.teams = null;
+  await loadTeams(true);
+}
+
+/**
  * 辞退・チーム変更を実行する。
  */
 async function onSubmitWithdraw() {
@@ -7267,6 +7354,11 @@ async function onSubmitWithdraw() {
 
   const teamName = document.getElementById('wd-team')
     .selectedOptions[0].textContent;
+
+  if (kind === 'GM交代') {
+    await onSubmitOwnerRelease(teamId, teamName);
+    return;
+  }
 
   const msg = kind === '辞退'
     ? teamName + ' を大会から外します。\n\n' +
