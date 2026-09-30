@@ -36,7 +36,105 @@
  *   const res = await callApi('whoami');
  *   if (res.ok) console.log(res.data.role);
  */
-function callApi(action, payload = {}) {
+function callApi(action, payload = {}, opts = {}) {
+  if (_isCacheableRead(action)) return _cachedRead(action, payload, opts.fresh);
+
+  // 書き込みの前後で使い回しを捨てる。自分の操作の結果がすぐ画面に出るように。
+  // 後にも捨てるのは、書き込みの最中に出た読み取りが古い値を持ち帰るため
+  if (!_isReadAction(action)) {
+    _clearReadCache();
+    const p = _sendApi(action, payload);
+    p.then(_clearReadCache, _clearReadCache);
+    return p;
+  }
+
+  return _sendApi(action, payload);
+}
+
+/**
+ * 読み取りの結果を使い回す秒数。
+ *
+ * タブを行き来するたびに同じ一覧を取り直すと、そのぶん GAS の順番待ちが伸びる。
+ * 他の参加者の操作が画面に出るのは最大この時間だけ遅れる。
+ * 自分が書き込んだときは即座に捨てるので、自分の操作は遅れない。
+ * 最終的な判定はすべて GAS 側で行うので、古い表示から操作しても不正にはならない。
+ */
+const READ_CACHE_TTL_MS = 30 * 1000;
+
+/** action + payload → { gen, at, promise }。at は応答が返った時刻（通信中は 0） */
+const _readCache = new Map();
+/** 書き込みのたびに進める。古い世代の読み取り結果はキャッシュに残さない */
+let _readCacheGen = 0;
+
+/**
+ * 使い回してよい読み取りか。
+ *
+ * 点検（audit）は、主催者がスプレッドシートを直した直後に押し直して
+ * 結果を確かめるためのものなので、毎回取り直す。
+ */
+function _isCacheableRead(action) {
+  return action !== 'whoami' && !/^audit/.test(action) && _isReadAction(action);
+}
+
+/** 使い回しを全部捨てる。書き込みの前後とログイン・ログアウト時に呼ぶ */
+function _clearReadCache() {
+  _readCacheGen++;
+  _readCache.clear();
+}
+
+/**
+ * 読み取りを1回の通信で済ませる。
+ *
+ * - 同じ読み取りが通信中なら、その結果を待つ（同時に2本投げない）
+ * - READ_CACHE_TTL_MS 以内に取った結果があればそれを返す
+ * - 失敗した結果は残さない（次に開いたとき取り直す）
+ *
+ * 呼び出し側が結果を書き換えても他へ影響しないよう、毎回複製して渡す。
+ *
+ * @param {string} action
+ * @param {Object} payload
+ * @param {boolean} fresh true なら使い回さずに取り直す
+ * @returns {Promise<Object>}
+ */
+function _cachedRead(action, payload, fresh) {
+  const key = action + '\u0000' + JSON.stringify(payload || {});
+  const hit = _readCache.get(key);
+  const alive = hit && (hit.at === 0 || Date.now() - hit.at < READ_CACHE_TTL_MS);
+
+  if (hit && alive && !fresh) return hit.promise.then(_cloneResult);
+
+  const entry = { gen: _readCacheGen, at: 0, promise: null };
+  entry.promise = _sendApi(action, payload).then((res) => {
+    if (_readCache.get(key) === entry) {
+      if (res.ok && entry.gen === _readCacheGen) entry.at = Date.now();
+      else _readCache.delete(key);
+    }
+    return res;
+  });
+  _readCache.set(key, entry);
+  return entry.promise.then(_cloneResult);
+}
+
+function _cloneResult(res) {
+  if (typeof structuredClone === 'function') return structuredClone(res);
+  return JSON.parse(JSON.stringify(res));
+}
+
+/**
+ * 画面を開く前に読み取りを先に投げておく。
+ *
+ * 結果は使い回しに入るので、後から同じ読み取りを呼ぶと通信せずに受け取れる。
+ * 順番に await している画面でも、先に投げておけば1回の通信にまとまる。
+ *
+ * @param {string} action
+ * @param {Object} [payload={}]
+ */
+function prefetchApi(action, payload = {}) {
+  if (!_isCacheableRead(action)) return;
+  callApi(action, payload).catch(() => {});
+}
+
+function _sendApi(action, payload) {
   // 読み取りは同じ瞬間に出たものを1回の通信にまとめる（_flushBatch）。
   // GAS は同時に動ける数に上限があり、通信の数そのものが混雑の原因になるため
   if (_isBatchable(action, payload)) {
@@ -60,7 +158,8 @@ let _batchUnsupported = false;
 function _isBatchable(action, payload) {
   if (_batchUnsupported) return false;
   if (payload && payload.__retried) return false;
-  return action !== 'whoami' && _isReadAction(action);
+  // whoami もまとめる。ログイン時に最初の画面の読み取りと1回で済ませるため
+  return _isReadAction(action);
 }
 
 /**
@@ -90,9 +189,11 @@ async function _sendBatch(group) {
 
   const results = res.ok && res.data && res.data.results;
   if (results && results.length === group.length) {
+    // ログイン時の束（whoami 入り）でトークンが無効なら、onSignIn が案内を出す
+    const atLogin = group.some((g) => g.action === 'whoami');
     group.forEach((g, i) => {
       const r = results[i];
-      if (!r.ok && r.error === 'invalid_token') showSessionExpired();
+      if (!r.ok && r.error === 'invalid_token' && !atLogin) showSessionExpired();
       g.resolve(r);
     });
     return;
@@ -282,7 +383,15 @@ async function onSignIn(token) {
   if (loginSection) loginSection.style.display = 'none';
   if (loadingEl)    loadingEl.style.display    = 'block';
 
-  const res = await callApi('whoami');
+  // 別のアカウントで入り直したときに前の人の結果を見せない
+  _clearReadCache();
+
+  // 最初の画面で使う読み取りを whoami と一緒に投げ、1回の通信で済ませる。
+  // これまでは whoami → 一覧 → ダッシュボード と順に待っていたので、
+  // 混雑時は順番待ちがそのまま3回ぶん積み上がっていた
+  const whoamiLoad = callApi('whoami');
+  if (typeof prefetchInitialViews === 'function') prefetchInitialViews();
+  const res = await whoamiLoad;
 
   if (loadingEl) loadingEl.style.display = 'none';
 
@@ -339,6 +448,7 @@ function onSignOut() {
   if (loginSection) loginSection.style.display = 'block';
   if (errorEl)      errorEl.style.display      = 'none'; // エラーメッセージをクリア
   hideSessionBanner();
+  _clearReadCache();
 
   console.log('[app] onSignOut — ログイン画面に戻りました');
 }

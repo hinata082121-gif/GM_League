@@ -139,8 +139,10 @@ function _sharedCacheGet(name) {
   if (!cache || !_isSharedCacheSheet(name)) return { version: "", values: null };
 
   try {
-    var version = cache.get("v:" + name) || "0";
-    var head = cache.get("sd:" + name);
+    // 版と見出しは1回で取る。CacheService も1回ごとに往復がある
+    var first = cache.getAll(["v:" + name, "sd:" + name]);
+    var version = first["v:" + name] || "0";
+    var head = first["sd:" + name];
     if (!head) return { version: version, values: null };
 
     var meta = JSON.parse(head);

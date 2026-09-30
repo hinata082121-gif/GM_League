@@ -119,6 +119,20 @@ async function initViews(user) {
 }
 
 /**
+ * 最初の画面で使う読み取りを先に投げておく。app.js の onSignIn から、
+ * whoami と同じ瞬間に呼ばれる。全部が1回の通信にまとまり、
+ * initViews と renderDashboard が同じ読み取りを呼んだときは通信せずに受け取れる。
+ *
+ * 主催者だと getMyTeam は使わないが、所属チームが無いとすぐ返るので害はない。
+ */
+function prefetchInitialViews() {
+  loadTeams();
+  loadSeasons();
+  prefetchApi('getUiState', {});
+  prefetchApi('getMyTeam', {});
+}
+
+/**
  * 期間外のタブを参加者の画面から消す。
  *
  * 移籍市場や監督申告のように期間が決まっているものは、期間外に並んでいても
@@ -379,7 +393,7 @@ async function cachedLoad(key, force, action, pick, fallback) {
   if (inflight[key] && !force) return inflight[key];
 
   inflight[key] = (async () => {
-    const res = await callApi(action, {});
+    const res = await callApi(action, {}, { fresh: !!force });
     if (res.ok) {
       cache[key] = pick(res.data);
       return cache[key];
@@ -480,7 +494,9 @@ async function renderDashboard() {
 
   setLoading('dashboard-body');
 
-  const res = await callApi('getMyTeam', {});
+  // 開いたままにしていると期間がずれるので、タブの出し分けもここで取り直す。
+  // 順に待つと通信が2回になるので、同時に投げて1回にまとめる
+  const [res] = await Promise.all([callApi('getMyTeam', {}), applyTabVisibility()]);
   if (!res.ok) {
     setError('dashboard-body', 'チーム情報の取得に失敗しました: ' + res.error);
     return;
@@ -541,9 +557,6 @@ async function renderDashboard() {
   `;
 
   bindProfileEditor();
-
-  // 開いたままにしていると期間がずれるので、ここで取り直す
-  await applyTabVisibility();
 }
 
 /**
@@ -2346,6 +2359,9 @@ async function loadTransferOptions() {
 
   setLoading('tr-market');
 
+  // 下の移籍一覧も同時に投げておく。順に待つと通信が2回になる
+  prefetchApi('listTransfers', { season_id: seasonId });
+
   const res = await callApi('getTransferOptions', { season_id: seasonId, team_id: teamId });
   if (!res.ok) {
     setError('tr-market', '移籍情報の取得に失敗しました: ' + res.error);
@@ -3206,6 +3222,13 @@ async function loadProtectStatus() {
 
   setLoading('pr-status');
 
+  // 下のプロテクト一覧も同時に投げておく。順に待つと通信が2回になる
+  const boardWindow = document.getElementById('pb-window').value;
+  prefetchApi('getProtections', {
+    season_id: seasonId,
+    window: boardWindow ? Number(boardWindow) : 0,
+  });
+
   const res = await callApi('getProtectionStatus', { season_id: seasonId, team_id: teamId });
   if (!res.ok) {
     setError('pr-status', 'プロテクト状況の取得に失敗しました: ' + res.error);
@@ -3644,6 +3667,7 @@ async function renderMatch() {
     // 対戦表より先に getMatchOptions を呼ぶ。
     // 節の一覧は「自分のチームが出る節」に絞るので、先に自分が誰かを知る必要がある
     seasonSel.onchange = async () => {
+      prefetchMatchView();
       await loadMatchOptions();
       await loadFixtures();
       await loadMatchList();
@@ -3673,10 +3697,31 @@ async function renderMatch() {
   }
 
   onMatchStageChange();
+  prefetchMatchView();
   await loadMatchOptions();
   await loadFixtures();
   goMatchStep(1);
   await loadMatchList();
+}
+
+/**
+ * 試合タブの対戦表と試合一覧を先に投げておく。
+ *
+ * 画面は getMatchOptions → 対戦表 → 一覧 の順に組み立てる（節の絞り込みに
+ * 自チームが要るため）。順番はそのままに、通信だけ1回にまとめる。
+ * payload は loadFixtures / loadMatchList と同じ形にすること。違うと使い回されない。
+ */
+function prefetchMatchView() {
+  const seasonId = document.getElementById('mt-season').value;
+  if (!seasonId) return;
+  prefetchApi('getFixtures', {
+    season_id: seasonId,
+    stage: document.getElementById('mt-stage').value,
+  });
+  prefetchApi('listMatches', {
+    season_id: seasonId,
+    status: document.getElementById('mt-filter').value,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -5408,17 +5453,23 @@ async function loadSeasonAdmin() {
   fillSelect('sp-next', seasons, 'season_id', 'name', '引継ぎしない');
 
   renderSponsorInputs(await loadTeams());
-  await loadCompensationPlayers();
-  await loadDivisions();
-  await loadSuperCup();
-  await loadRealTransfers();
-  await loadClaimAdmin();
-  await loadWithdraw();
-  await loadMarketWindows();
-  await loadFixtureAdmin();
-  await loadScheduleAdmin();
-  await loadManagerAdmin();
-  await loadSponsorAdmin();
+
+  // 各欄はそれぞれ別の箱に描くだけで、互いの結果を使わない。
+  // 1つずつ待つと十数回の通信が順番待ちに並ぶので、同時に投げて数回にまとめる。
+  // 1つが失敗しても残りは描けるよう allSettled で待つ
+  await Promise.allSettled([
+    loadCompensationPlayers(),
+    loadDivisions(),
+    loadSuperCup(),
+    loadRealTransfers(),
+    loadClaimAdmin(),
+    loadWithdraw(),
+    loadMarketWindows(),
+    loadFixtureAdmin(),
+    loadScheduleAdmin(),
+    loadManagerAdmin(),
+    loadSponsorAdmin(),
+  ]);
 }
 
 // ---------------------------------------------------------------------------
@@ -6287,6 +6338,9 @@ async function onSaveSignupConfig() {
  */
 async function loadSignups() {
   setLoading('sg-list');
+
+  // 下で使う空きクラブの一覧も同時に投げておく（通信を1回にまとめる）
+  prefetchApi('getSignupClubs', {});
 
   const res = await callApi('listSignups', {});
   if (!res.ok) {
@@ -7526,8 +7580,7 @@ async function loadScheduleAdmin() {
     btn.dataset.bound = '1';
   }
 
-  await loadAdminSchedule();
-  await loadTemplateEditor();
+  await Promise.all([loadAdminSchedule(), loadTemplateEditor()]);
 }
 
 /**
@@ -8033,8 +8086,7 @@ async function loadManagerAdmin() {
     btn.dataset.bound = '1';
   }
 
-  await loadManagerPicks();
-  await loadManagerMaster();
+  await Promise.all([loadManagerPicks(), loadManagerMaster()]);
 }
 
 /**
