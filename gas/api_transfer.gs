@@ -209,7 +209,7 @@ function _marketClock(season, windowNo, at) {
 
 /**
  * 指定日時が最終日割引の時間帯に入っているか判定する（SPEC.md §7.4）。
- * 特別・無効化特別の値下げに使う。
+ * 値下げがあるのは特別ルールだけ。
  *
  * @param {Object} season   Seasons の行
  * @param {number} windowNo 1 または 2
@@ -254,8 +254,7 @@ function _applicationClosedReason(clock, method) {
 /**
  * 移籍形態からコストを算出する。
  *
- * 金額はすべて Config 参照。割引は最終日の 22:00〜23:00 に、特別と無効化特別へ適用する。
- * 無効化特別の割引額は override_w1_discount / override_w2_discount。0 や未設定なら割引なし。
+ * 金額はすべて Config 参照。割引は特別ルールのみ（無効化には適用しない）。
  *
  * @param {string} method    移籍形態
  * @param {number} grossFee  交渉額・落札額（固定額の形態では無視）
@@ -295,19 +294,15 @@ function _calcTransferCost(method, grossFee, season, windowNo, at) {
   }
 
   if (method === METHOD_OVERRIDE) {
-    // 特別と同じ時間帯に値下げする。金額が未設定（0）なら割引は無いものとして扱う。
-    // 売り手の受取は値下げ後の額にかける（買い手が払う額の70%）
-    var oDiscount = _isDiscountWindow(season, w, at)
-      ? getConfigNum(w === 2 ? "override_w2_discount" : "override_w1_discount", 0)
-      : 0;
-    var oUse = oDiscount > 0;
-    var amt = oUse ? oDiscount : getConfigNum(w === 2 ? "override_w2" : "override_w1", 0);
+    // 無効化特別ルールに割引は無い（SPEC.md §5.3）。
+    // 受付は特別と同じく最終日の 23:00 で終わる（_applicationClosedReason）
+    var amt = getConfigNum(w === 2 ? "override_w2" : "override_w1", 0);
     var orate = Number(getConfig("seller_rate_override", 0.7));
     return {
       gross: amt,
       cost: amt,
       payout: _roundMoney(amt * orate),
-      discounted: oUse,
+      discounted: false,
     };
   }
 

@@ -3,7 +3,7 @@ const { env } = require('./sp-fixture');
 
 // 移籍市場の最終日。
 //
-//   特別・無効化特別 — 最終日の 23:00 で終了。22:00〜23:00 は値下げ
+//   特別・無効化特別 — 最終日の 23:00 で終了。値下げ（22:00〜23:00）は特別だけ
 //   市場全体         — 日付が変わった瞬間に完全閉鎖（新規の獲得申請は受けない）
 //   同意・承認       — 閉鎖後も翌日中は可能
 //
@@ -103,26 +103,13 @@ t('無効化特別も最終日の23:00で受け付けない', () => {
   ok(r.error.includes('23:00'), r.error);
 });
 
-t('無効化特別は割引額を設定すると22:00〜23:00で値下げされる', () => {
-  const e = when(market({ override_w1_discount: 300000000 }), 2, 22, 30);
-  const r = apply(e, '無効化特別');
-  eq(r.ok, true, r.error);
-  eq(r.data.cost_to_buyer, 300000000);
-  eq(r.data.payout_to_seller, 210000000, '売り手は値下げ後の額の70%');
-  eq(r.data.discounted, true);
-});
-
-t('無効化特別の割引額が未設定なら通常価格のまま', () => {
+t('無効化特別は22:00〜23:00でも通常価格のまま（割引は特別だけ）', () => {
   const e = when(market(), 2, 22, 30);
   const r = apply(e, '無効化特別');
   eq(r.ok, true, r.error);
   eq(r.data.cost_to_buyer, 350000000);
+  eq(r.data.payout_to_seller, 245000000, '売り手は通常額の70%');
   eq(r.data.discounted, false);
-});
-
-t('無効化特別の割引は22:00より前には効かない', () => {
-  const e = when(market({ override_w1_discount: 300000000 }), 2, 21, 0);
-  eq(apply(e, '無効化特別').data.cost_to_buyer, 350000000);
 });
 
 // =============================================================================
@@ -214,11 +201,13 @@ t('23:00以降は特別・無効化特別だけが受付終了と返る', () => 
   eq(method(d, '完全移籍').closed, false);
 });
 
-t('22:00〜23:00は割引中と返る', () => {
-  const d = options(when(market({ override_w1_discount: 300000000 }), 2, 22, 30));
+t('22:00〜23:00は特別だけ割引中と返る', () => {
+  const d = options(when(market(), 2, 22, 30));
   eq(d.is_discount_time, true);
   eq(method(d, '特別').fixed_cost, 200000000);
-  eq(method(d, '無効化特別').fixed_cost, 300000000);
+  eq(method(d, '特別').discounted, true);
+  eq(method(d, '無効化特別').fixed_cost, 350000000);
+  eq(method(d, '無効化特別').discounted, false);
   eq(method(d, '特別').closed, false);
 });
 
