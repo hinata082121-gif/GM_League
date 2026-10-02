@@ -103,7 +103,7 @@ function _periodTabs() {
 function _participantTabs(season, teamId, at) {
   return {
     entry:    _entryTabState(season),
-    transfer: _transferTabState(season),
+    transfer: _transferTabState(season, at),
     protect:  _protectTabState(season, at),
     manager:  _managerTabState(),
     sponsor:  _sponsorTabState(),
@@ -129,17 +129,43 @@ function _entryTabState(season) {
 }
 
 /**
- * 移籍 — シーズンが「移籍市場1」「移籍市場2」のときだけ。
+ * 移籍 — シーズンが「移籍市場1」「移籍市場2」のあいだ。
+ *
+ * **市場が閉まっても、閉鎖の翌日いっぱいは開けておく。** 新規の獲得申請は日付が
+ * 変わった瞬間に締め切るが、売り手の同意は翌日中でも可能にしているため。
+ * タブごと消すと、売り手が同意ボタンを探せなくなる。
  *
  * @param {Object|null} season
+ * @param {Date} at
  * @returns {Object}
  */
-function _transferTabState(season) {
+function _transferTabState(season, at) {
   if (!season) return { open: false, reason: "シーズンがありません。" };
 
   var w = MARKET_WINDOW[_str(season.status)] || 0;
   if (w > 0) {
+    var clock = _marketClock(season, w, at || now());
+    if (clock.closed) {
+      return {
+        open: true,
+        reason: "移籍市場の申請受付は終了しました。同意・承認は " +
+          _mdText(new Date(clock.response_until.getTime() - 1)) + " まで可能です。",
+      };
+    }
     return { open: true, reason: "第" + w + "次移籍市場が開いています。" };
+  }
+
+  // 状態が市場期間を出ていても、閉鎖直後の猶予のあいだは見せる
+  var now_ = at || now();
+  for (var k = 2; k >= 1; k--) {
+    var tm = _marketTimes(season, k);
+    if (tm && now_.getTime() >= tm.closeAt.getTime() && now_.getTime() < tm.graceEnd.getTime()) {
+      return {
+        open: true,
+        reason: "第" + k + "次移籍市場は終了しました。同意・承認は " +
+          _mdText(new Date(tm.graceEnd.getTime() - 1)) + " まで可能です。",
+      };
+    }
   }
 
   return { open: false, reason: "移籍市場の期間ではありません。" };

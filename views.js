@@ -2389,9 +2389,16 @@ function renderTransferMarketBox() {
   const box = document.getElementById('tr-market');
 
   if (!d.market_open) {
+    // 閉まったあとも、下の一覧で売り手の同意・主催者の承認はできる
+    const reason = d.market_closed_reason ||
+      '現在は移籍市場の期間外です（シーズン状態: ' + d.season_status + '）。';
     box.innerHTML =
-      '<p class="msg-error">現在は移籍市場の期間外です（シーズン状態: ' +
-      esc(d.season_status) + '）。移籍市場1 または 移籍市場2 の間だけ申請できます。</p>';
+      '<p class="msg-error">' + esc(reason) + '</p>' +
+      (d.response_until
+        ? '<p class="muted note-sm">売り手の同意・主催者の承認は ' +
+          esc(toDatetimeLocal(new Date(new Date(d.response_until).getTime() - 1).toISOString()).slice(0, 10)) +
+          ' まで可能です。</p>'
+        : '');
     return;
   }
 
@@ -2439,10 +2446,19 @@ function renderTransferMethodSelect() {
     .map((m) => {
       const cost = m.needs_fee ? '交渉額' : formatMoney(m.fixed_cost);
       const disc = m.discounted ? '・割引中' : '';
+      // 特別・無効化特別は最終日の23:00で終わる。選べないようにして理由を出す
+      if (m.closed) {
+        return '<option value="' + esc(m.method) + '" disabled>' +
+          esc(m.method) + '（受付終了）</option>';
+      }
       return '<option value="' + esc(m.method) + '">' +
         esc(m.method) + '（' + esc(cost) + esc(disc) + '）</option>';
     })
     .join('');
+
+  // 先頭が選べないときは、選べる最初の形態に合わせる
+  const firstOpen = list.find((m) => !m.closed);
+  if (firstOpen) sel.value = firstOpen.method;
 
   onTransferMethodChange();
 }

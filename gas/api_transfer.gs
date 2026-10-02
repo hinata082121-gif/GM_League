@@ -111,13 +111,105 @@ function _isSameDate(a, b) {
 }
 
 /**
+ * 市場の日付まわり。開幕日時（windowN_open_at）から決める。
+ *
+ *   lastDay  — 市場最終日の 0:00（開幕日 + market_days − 1 日）
+ *   closeAt  — 新規の獲得申請を締め切る時刻。最終日の翌日 0:00（日付が変わった瞬間）
+ *   graceEnd — 売り手の同意・主催者の承認を受ける期限。閉鎖の翌日いっぱい
+ *              （transfer_response_grace_days 日。既定1）
+ *
+ * 開幕日時が未設定なら null。その場合は時刻による締切を一切かけず、
+ * シーズンの状態（移籍市場1/2）だけで開閉する従来の動きになる。
+ *
+ * @param {Object} season
+ * @param {number} windowNo 1 または 2
+ * @returns {{lastDay: Date, closeAt: Date, graceEnd: Date}|null}
+ */
+function _marketTimes(season, windowNo) {
+  var openRaw = windowNo === 2 ? season.window2_open_at : season.window1_open_at;
+  if (!(openRaw instanceof Date)) {
+    if (!openRaw) return null;
+    openRaw = new Date(openRaw);
+    if (isNaN(openRaw.getTime())) return null;
+  }
+
+  var days = Math.max(1, getConfigNum("market_days", 3));
+  var grace = Math.max(0, getConfigNum("transfer_response_grace_days", 1));
+
+  var lastDay = new Date(openRaw.getTime());
+  lastDay.setDate(lastDay.getDate() + (days - 1));
+  lastDay.setHours(0, 0, 0, 0);
+
+  var closeAt = new Date(lastDay.getTime());
+  closeAt.setDate(closeAt.getDate() + 1);
+
+  var graceEnd = new Date(closeAt.getTime());
+  graceEnd.setDate(graceEnd.getDate() + grace);
+
+  return { lastDay: lastDay, closeAt: closeAt, graceEnd: graceEnd };
+}
+
+/** "HH:mm" 形式にそろえる */
+function _hmText(hm) {
+  return (hm.h < 10 ? "0" : "") + hm.h + ":" + (hm.m < 10 ? "0" : "") + hm.m;
+}
+
+/** "M月D日" 形式にする */
+function _mdText(d) {
+  return (d.getMonth() + 1) + "月" + d.getDate() + "日";
+}
+
+/**
+ * 指定時刻での市場の開閉と割引の状態。時刻はすべてサーバー側の値で判定する。
+ *
+ *   closed         — 日付が変わって市場が完全に閉まった。新規の獲得申請は受けない
+ *   special_closed — 特別・無効化特別の受付が終わった（最終日の special_deadline 以降、
+ *                    または市場が閉まった後）
+ *   discount       — 最終日の discount_start 以上 discount_end 未満（特別・無効化特別の値下げ）
+ *
+ * 23:00 ちょうどは終わった側に倒す。「22:00〜23:00」を 22:00:00 以上 23:00:00 未満と読む。
+ * 以前は 23:00 台の1分間が割引のまま残っていた。
+ *
+ * @param {Object} season
+ * @param {number} windowNo
+ * @param {Date}   at
+ * @returns {Object}
+ */
+function _marketClock(season, windowNo, at) {
+  var out = {
+    known: false, closed: false, special_closed: false, discount: false,
+    last_day: null, closes_at: null, response_until: null, special_deadline_text: "",
+  };
+
+  var tm = _marketTimes(season, windowNo);
+  var deadline = _parseHourMinute(getConfig("special_deadline", "23:00")) || { h: 23, m: 0 };
+  out.special_deadline_text = _hmText(deadline);
+  if (!tm) return out;
+
+  out.known = true;
+  out.last_day = tm.lastDay;
+  out.closes_at = tm.closeAt;
+  out.response_until = tm.graceEnd;
+  out.closed = at.getTime() >= tm.closeAt.getTime();
+
+  var secs = at.getHours() * 3600 + at.getMinutes() * 60 + at.getSeconds();
+  var onLastDay = _isSameDate(at, tm.lastDay);
+  var deadlineSecs = deadline.h * 3600 + deadline.m * 60;
+
+  out.special_closed = out.closed || (onLastDay && secs >= deadlineSecs);
+
+  var start = _parseHourMinute(getConfig("discount_start", "22:00"));
+  var end = _parseHourMinute(getConfig("discount_end", "23:00"));
+  if (start && end && onLastDay && !out.special_closed) {
+    out.discount = secs >= start.h * 3600 + start.m * 60 && secs < end.h * 3600 + end.m * 60;
+  }
+
+  return out;
+}
+
+/**
  * 指定日時が最終日割引の時間帯に入っているか判定する（SPEC.md §7.4）。
- *
- * 条件:
- *   - 市場最終日（windowN_open_at + 2日）と同じ日であること
- *   - 時刻が discount_start 以上 discount_end 以下であること
- *
- * 時刻はすべてサーバー（GAS）側の値で判定する。
+ * 特別・無効化特別の値下げに使う。
  *
  * @param {Object} season   Seasons の行
  * @param {number} windowNo 1 または 2
@@ -125,28 +217,34 @@ function _isSameDate(a, b) {
  * @returns {boolean}
  */
 function _isDiscountWindow(season, windowNo, at) {
-  var openRaw = windowNo === 2 ? season.window2_open_at : season.window1_open_at;
-  if (!(openRaw instanceof Date)) {
-    if (!openRaw) return false;
-    openRaw = new Date(openRaw);
-    if (isNaN(openRaw.getTime())) return false;
+  return _marketClock(season, windowNo, at).discount;
+}
+
+/**
+ * 新規の獲得申請を受け付けられない理由。受け付けられるなら空文字。
+ *
+ * 市場は日付が変わった瞬間に完全に閉まる。特別・無効化特別は最終日の
+ * special_deadline（既定23:00）で終わる。売り手の同意と主催者の承認は
+ * ここでは止めない（閉鎖の翌日いっぱいまで可能）。
+ *
+ * @param {Object} clock _marketClock の結果
+ * @param {string} method 移籍形態
+ * @returns {string}
+ */
+function _applicationClosedReason(clock, method) {
+  if (!clock.known) return "";
+
+  if (clock.closed) {
+    return "移籍市場は" + _mdText(clock.last_day) + "いっぱいで終了しました。" +
+      "新しい獲得申請は受け付けていません（売り手の同意と主催者の承認は引き続き可能です）。";
   }
 
-  // 市場は3日間。最終日 = 開幕日 + 2日
-  var lastDay = new Date(openRaw.getTime());
-  lastDay.setDate(lastDay.getDate() + 2);
+  if ((method === METHOD_SPECIAL || method === METHOD_OVERRIDE) && clock.special_closed) {
+    return "特別ルール・無効化特別ルールの受付は、最終日の " +
+      clock.special_deadline_text + " で終了しました。";
+  }
 
-  if (!_isSameDate(at, lastDay)) return false;
-
-  var start = _parseHourMinute(getConfig("discount_start", "22:00"));
-  var end = _parseHourMinute(getConfig("discount_end", "23:00"));
-  if (!start || !end) return false;
-
-  var mins = at.getHours() * 60 + at.getMinutes();
-  var startMins = start.h * 60 + start.m;
-  var endMins = end.h * 60 + end.m;
-
-  return mins >= startMins && mins <= endMins;
+  return "";
 }
 
 // =============================================================================
@@ -156,7 +254,8 @@ function _isDiscountWindow(season, windowNo, at) {
 /**
  * 移籍形態からコストを算出する。
  *
- * 金額はすべて Config 参照。割引は特別ルールのみ（無効化には適用しない）。
+ * 金額はすべて Config 参照。割引は最終日の 22:00〜23:00 に、特別と無効化特別へ適用する。
+ * 無効化特別の割引額は override_w1_discount / override_w2_discount。0 や未設定なら割引なし。
  *
  * @param {string} method    移籍形態
  * @param {number} grossFee  交渉額・落札額（固定額の形態では無視）
@@ -196,14 +295,19 @@ function _calcTransferCost(method, grossFee, season, windowNo, at) {
   }
 
   if (method === METHOD_OVERRIDE) {
-    // 無効化特別ルールに割引は無い（SPEC.md §5.3）
-    var amt = getConfigNum(w === 2 ? "override_w2" : "override_w1", 0);
+    // 特別と同じ時間帯に値下げする。金額が未設定（0）なら割引は無いものとして扱う。
+    // 売り手の受取は値下げ後の額にかける（買い手が払う額の70%）
+    var oDiscount = _isDiscountWindow(season, w, at)
+      ? getConfigNum(w === 2 ? "override_w2_discount" : "override_w1_discount", 0)
+      : 0;
+    var oUse = oDiscount > 0;
+    var amt = oUse ? oDiscount : getConfigNum(w === 2 ? "override_w2" : "override_w1", 0);
     var orate = Number(getConfig("seller_rate_override", 0.7));
     return {
       gross: amt,
       cost: amt,
       payout: _roundMoney(amt * orate),
-      discounted: false,
+      discounted: oUse,
     };
   }
 
@@ -474,10 +578,12 @@ function getTransferOptions(token, payload) {
 
   var windowNo = _currentWindow(season);
   var at = now();
+  var clock = _marketClock(season, windowNo || 1, at);
 
   // 形態別のコスト見積り（交渉額に依存する形態は gross_fee=0 で返す）
   var estimates = TRANSFER_METHODS.map(function (m) {
     var c = _calcTransferCost(m, 0, season, windowNo || 1, at);
+    var closedReason = windowNo > 0 ? _applicationClosedReason(clock, m) : "";
     return {
       method: m,
       fixed_cost: c.cost,
@@ -485,14 +591,27 @@ function getTransferOptions(token, payload) {
       discounted: c.discounted,
       needs_fee: NEGOTIATED_METHODS.indexOf(m) !== -1 || m === METHOD_AUCTION,
       needs_seller_approval: NEGOTIATED_METHODS.indexOf(m) !== -1,
+      closed: !!closedReason,
+      closed_reason: closedReason,
     };
   });
+
+  // 市場が開いているのは、状態が市場期間で、かつ日付が変わっていないあいだ。
+  // 閉まったあとも一覧は見られ、売り手の同意・主催者の承認はできる
+  var marketClosedReason = "";
+  if (windowNo === 0) {
+    marketClosedReason = "現在は移籍市場の期間外です（シーズン状態: " + _str(season.status) + "）。";
+  } else if (clock.closed) {
+    marketClosedReason = _applicationClosedReason(clock, METHOD_FULL);
+  }
 
   var data = {
     season_id: seasonId,
     season_status: _str(season.status),
     window: windowNo,
-    market_open: windowNo > 0,
+    market_open: windowNo > 0 && !clock.closed,
+    market_closed_reason: marketClosedReason,
+    response_until: clock.response_until ? _iso(clock.response_until) : "",
     is_discount_time: windowNo > 0 ? _isDiscountWindow(season, windowNo, at) : false,
     server_time: _iso(at),
     squad_min: getConfigNum("squad_min", 22),
@@ -868,6 +987,14 @@ function _createTransfer(args) {
     };
   }
 
+  // 日付が変わったら市場は完全に閉まる。特別・無効化特別は最終日の23:00まで。
+  // オークションは主催者が場外の結果を登録するものなので、この締切の対象にしない
+  var at = now();
+  if (method !== METHOD_AUCTION) {
+    var closedReason = _applicationClosedReason(_marketClock(season, windowNo, at), method);
+    if (closedReason) return { ok: false, error: closedReason };
+  }
+
   var player = findRow("Players", "player_id", playerId);
   if (!player) return { ok: false, error: "選手が見つかりません。" };
 
@@ -923,7 +1050,6 @@ function _createTransfer(args) {
     if (blocked) return { ok: false, error: blocked };
   }
 
-  var at = now();
   var calc = _calcTransferCost(method, args.grossFee, season, windowNo, at);
 
   if (calc.cost <= 0) {
