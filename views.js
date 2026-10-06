@@ -5944,7 +5944,9 @@ async function onAdvanceSeason() {
   btn.disabled = true;
   setResult('sp-result', true, '実行中...');
 
-  const res = await callApi('advanceSeason', { season_id: d.season_id });
+  // 画面が見ていた状態を添える。通信が遅れて結果を受け取れず押し直しても、
+  // 1つ進んだところからもう1つ進めてしまわないよう、サーバーが断る
+  const res = await callApi('advanceSeason', { season_id: d.season_id, from_status: d.status });
 
   if (res.ok) {
     const effects = res.data.effects || [];
@@ -5957,7 +5959,11 @@ async function onAdvanceSeason() {
     await loadSeasons(true);
     await loadSeasonAdmin();
   } else {
-    btn.disabled = false;
+    // 結果を受け取れなかっただけで、サーバーでは進んでいることがある。
+    // ボタンを戻す前に今の状態を取り直し、画面を実際の状態に合わせる
+    cache.seasons = null;
+    await loadSeasons(true);
+    await loadSeasonAdmin();
     setResult('sp-result', false, '進められません: ' + res.error);
   }
 }

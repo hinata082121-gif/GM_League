@@ -314,7 +314,12 @@ function getSeasonProgress(token, payload) {
  * シーズン1 → 移籍市場2 のときに半期期限付き選手を離脱させる。
  * 終了 へは進めない（closeSeason を使う）。
  *
- * payload: { season_id }
+ * **from_status を渡すと、今の状態がそれと一致するときだけ進める。**
+ * 通信が遅くて結果を受け取れず、画面が「失敗」と見せたまま押し直すと、
+ * 1つ進んだところからもう1つ進んでしまう（移籍市場1 → シーズン1 → 移籍市場2 になった）。
+ * 画面が見ていた状態を添えて送れば、2回目は「既に進んでいます」と断れる。
+ *
+ * payload: { season_id, from_status? }
  *
  * @param {string} token
  * @param {Object} payload
@@ -336,6 +341,15 @@ function advanceSeason(token, payload) {
 
     if (idx === -1) return { ok: false, error: "現在の状態が不正です: " + status };
     if (status === "終了") return { ok: false, error: "既に終了しています。" };
+
+    var expected = _str(payload.from_status);
+    if (expected && expected !== status) {
+      return {
+        ok: false,
+        error: "既に「" + status + "」へ進んでいます（画面は「" + expected + "」のままです）。" +
+          "二重に進めないよう、今回は何もしていません。画面を再読み込みして確認してください。",
+      };
+    }
 
     var next = SEASON_STATUSES[idx + 1];
     if (next === "終了") {
