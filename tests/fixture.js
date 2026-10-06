@@ -167,10 +167,12 @@ t('上書きを指定すれば作り直す', () => {
 t('別の大会は消さない', () => {
   const e = roster(base(), { t_A: 'GM1', t_B: 'GM1', t_C: 'GM1', t_D: 'GM1' });
   gen(e, { legs: 1 });
-  gen(e, { legs: 1, stage: 'tournament' });
+  eq(gen(e, { stage: 'tournament' }).ok, true);
+  const before = list(e, 'A', { stage: 'tournament' }).data.fixtures.length;
+  ok(before > 0, 'GMリーグ杯の対戦がある');
 
   gen(e, { legs: 1, replace: true });
-  eq(list(e, 'A', { stage: 'tournament' }).data.fixtures.length, 6);
+  eq(list(e, 'A', { stage: 'tournament' }).data.fixtures.length, before);
 });
 
 // =============================================================================

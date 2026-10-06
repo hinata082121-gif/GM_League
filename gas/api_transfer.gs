@@ -134,7 +134,7 @@ function _marketTimes(season, windowNo) {
   }
 
   var days = Math.max(1, getConfigNum("market_days", 3));
-  var grace = Math.max(0, getConfigNum("transfer_response_grace_days", 1));
+  var grace = Math.max(0, getConfigNumOr("transfer_response_grace_days", 1));
 
   var lastDay = new Date(openRaw.getTime());
   lastDay.setDate(lastDay.getDate() + (days - 1));

@@ -379,7 +379,8 @@
         <div class="card">
           <h2>対戦表</h2>
           <p class="muted">
-            リーグ戦の組み合わせです。報告が済んだ試合にはスコアが出ます。
+            報告が済んだ試合にはスコアが出ます。GMリーグ杯はトーナメント表で、
+            1stレグ・2ndレグの結果と合計スコア、勝ち上がりを表示します。
           </p>
           <div class="filter-row">
             <label>
@@ -921,7 +922,7 @@
                 <option value="supercup">GMスーパーカップ</option>
               </select>
             </label>
-            <label>
+            <label id="fx-legs-wrap">
               巡回
               <select id="fx-legs">
                 <option value="">シーズン設定に従う</option>
@@ -934,9 +935,29 @@
               既存の対戦表を作り直す
             </label>
           </div>
+          <div id="fx-cup-wrap" style="display:none;">
+            <p class="muted note-sm">
+              <strong>GMリーグ杯はトーナメント表を作ります。</strong>出場はシーズンの全チーム（GM1・GM2 合同）。
+              2・4・8・16 に足りない分は、<strong>前シーズンの順位の上から</strong>1回戦免除（シード）にします。
+              残りは抽選です。決勝だけ1試合、それ以外はシーズン設定が2レグなら1stレグ・2ndレグです。
+              前シーズンの順位がツールに無いときは、下でシードにするチームを選んでください。
+            </p>
+            <div id="fx-seeds" class="check-list"></div>
+          </div>
           <div class="form-actions">
             <button type="button" id="fx-generate" class="btn btn-primary">対戦表を作る</button>
             <span id="fx-result" class="form-msg"></span>
+          </div>
+          <div id="fx-cup-edit" class="filter-row" style="display:none;">
+            <label>
+              入れ替えるチーム1
+              <select id="fx-swap-a"></select>
+            </label>
+            <label>
+              入れ替えるチーム2
+              <select id="fx-swap-b"></select>
+            </label>
+            <button type="button" id="fx-swap-teams" class="btn btn-secondary">2チームの位置を入れ替える</button>
           </div>
           <div id="fx-list"></div>
         </div>

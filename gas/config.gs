@@ -65,6 +65,27 @@ function getConfigNum(key, defaultValue) {
 }
 
 /**
+ * 指定した key の値を数値で返す。**key が無い・空・数値でないときは defaultValue。**
+ *
+ * getConfigNum は key が無いと 0 を返す（defaultValue を使わない）。
+ * 後から足した設定はシートに行が無いことが多く、0 で動くと事故になる。
+ * 実際、transfer_response_grace_days が無くて猶予が0日になっていた。
+ * 新しく足す設定はこちらで読む。
+ *
+ * @param {string} key
+ * @param {number} defaultValue
+ * @returns {number}
+ */
+function getConfigNumOr(key, defaultValue) {
+  var cfg = getAllConfig();
+  if (!cfg.hasOwnProperty(key)) return defaultValue;
+  var raw = String(cfg[key] === null || cfg[key] === undefined ? "" : cfg[key]).trim();
+  if (raw === "") return defaultValue;
+  var n = Number(raw);
+  return isNaN(n) ? defaultValue : n;
+}
+
+/**
  * キャッシュをクリアする。
  * setConfig action 実行後に呼び出して次回再読み込みさせる。
  */

@@ -464,6 +464,24 @@ function getTournament(token, payload) {
     };
   });
 
+  // トーナメント表があれば、その並び（ラウンド順・山の順）にそろえる。
+  // 賞金とスポンサーは「最後のタイ＝決勝」「その前のラウンド＝準決勝」で読むので、
+  // 承認した順に並んでいると、決勝より後に承認した準決勝が決勝扱いになる
+  if (stage === STAGE_TOURNAMENT) {
+    var bracket = _cupBracket(seasonId);
+    if (bracket) {
+      var orderOf = {};
+      bracket.rounds.forEach(function (r) {
+        r.ties.forEach(function (t) { orderOf[t.tie_id] = r.round_no * 1000 + t.slot; });
+      });
+      result.sort(function (a, b) {
+        var oa = orderOf.hasOwnProperty(a.tie_id) ? orderOf[a.tie_id] : 999999;
+        var ob = orderOf.hasOwnProperty(b.tie_id) ? orderOf[b.tie_id] : 999999;
+        return oa - ob;
+      });
+    }
+  }
+
   return {
     ok: true,
     data: { season_id: seasonId, stage: stage, match_count: matches.length, ties: result },

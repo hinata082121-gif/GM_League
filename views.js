@@ -3528,6 +3528,26 @@ async function loadFixtureView() {
 
   setLoading('fv-list');
 
+  // GMリーグ杯はトーナメント表で見せる。節ごとの一覧では勝ち上がりが追えない
+  const isCup = document.getElementById('fv-stage').value === 'tournament';
+  ['fv-team', 'fv-round'].forEach((id) => {
+    const label = document.getElementById(id).closest('label');
+    if (label) label.style.display = isCup ? 'none' : '';
+  });
+
+  if (isCup) {
+    const cup = await callApi('getCupBracket', { season_id: seasonId });
+    if (!cup.ok) {
+      setError('fv-list', 'トーナメント表を取得できませんでした: ' + cup.error);
+      return;
+    }
+    fixtureView = null;
+    document.getElementById('fv-list').innerHTML = cup.data.exists
+      ? renderBracketHtml(cup.data, cup.data.my_team)
+      : '<p class="muted">GMリーグ杯のトーナメント表はまだ作られていません。</p>';
+    return;
+  }
+
   const res = await callApi('getFixtures', {
     season_id: seasonId,
     stage: document.getElementById('fv-stage').value,
@@ -3609,6 +3629,65 @@ function renderFixtureTable() {
         <h4>${esc(g.round)}</h4>
         ${g.items.map((f) => fixtureRowHtml(f, team)).join('')}
       </div>`).join('');
+}
+
+/**
+ * GMリーグ杯のトーナメント表を HTML にする。
+ *
+ * ラウンドを左から右へ並べる。各タイには1stレグ・2ndレグの結果と合計スコアを出し、
+ * 勝ち上がりが決まったチームを太字にする。決まっていない枠は「◯◯の勝者」と出す。
+ *
+ * @param {Object} b getCupBracket の data
+ * @param {string} [myTeam] 自チーム。下線で目立たせる
+ * @returns {string}
+ */
+function renderBracketHtml(b, myTeam) {
+  const tieName = {};
+  b.rounds.forEach((r) => r.ties.forEach((t) => { tieName[t.tie_id] = r.round + ' ' + t.slot; }));
+
+  const legLabel = (l) => (l.leg === '1' ? '1st' : l.leg === '2' ? '2nd' : '');
+  const legHtml = (l) => {
+    const head = (legLabel(l) ? legLabel(l) + ' ' : '') + esc(l.home_name) + ' ';
+    if (l.approved) {
+      const pk = l.home_pk !== null && l.away_pk !== null ? '（PK ' + l.home_pk + '-' + l.away_pk + '）' : '';
+      return '<div>' + head + '<strong>' + l.home_score + ' - ' + l.away_score + '</strong> ' + esc(l.away_name) + pk + '</div>';
+    }
+    const state = l.reported ? '報告済み・承認待ち' : '未報告';
+    return '<div>' + head + 'vs ' + esc(l.away_name) + ' <span class="muted">' + state + '</span></div>';
+  };
+
+  const teamRow = (id, name, agg, from, winner) => {
+    const label = id ? esc(name) : '<span class="muted">' + esc(from ? from + ' の勝者' : '未定') + '</span>';
+    return '<div class="bracket-team' + (id && winner === id ? ' is-winner' : '') +
+      (id && id === myTeam ? ' is-mine' : '') + '">' +
+      '<span class="bracket-name">' + label + '</span>' +
+      '<span class="bracket-agg">' + (agg === null || agg === undefined ? '' : agg) + '</span></div>';
+  };
+
+  const tieHtml = (t) => {
+    if (t.bye) {
+      return '<div class="bracket-tie">' + teamRow(t.team_a, t.team_a_name, null, '', t.winner) +
+        '<div class="bracket-legs">シード（1回戦免除）</div></div>';
+    }
+    const fromA = t.from[0] ? tieName[t.from[0]] : '';
+    const fromB = t.from[1] ? tieName[t.from[1]] : '';
+    const note = t.winner
+      ? '<div class="bracket-legs">' + esc(t.winner_name) + ' が勝ち上がり（' + esc(t.decided_by) + '）</div>'
+      : (t.decided_by === '未決着' ? '<div class="bracket-legs">合計が同点です。PKの入力が必要です</div>' : '');
+    return '<div class="bracket-tie">' +
+      teamRow(t.team_a, t.team_a_name, t.agg_a, fromA, t.winner) +
+      teamRow(t.team_b, t.team_b_name, t.agg_b, fromB, t.winner) +
+      (t.team_a && t.team_b ? '<div class="bracket-legs">' + t.legs.map(legHtml).join('') + '</div>' : '') +
+      note + '</div>';
+  };
+
+  return (b.champion ? '<div class="bracket-champion">優勝: ' + esc(b.champion_name) + '</div>' : '') +
+    '<p class="muted note-sm">右の数字は合計スコアです（2レグのタイは1stレグと2ndレグの合計）。</p>' +
+    '<div class="bracket">' +
+    b.rounds.map((r) =>
+      '<div class="bracket-round"><h4>' + esc(r.round) + '</h4>' + r.ties.map(tieHtml).join('') + '</div>'
+    ).join('') +
+    '</div>';
 }
 
 /**
@@ -3849,11 +3928,50 @@ function _stageLabel(stage) {
  * 種別の切り替え。ノックアウトのときだけ tie_id / レグ / PK を出す。
  */
 function onMatchStageChange() {
-  // スーパーカップも1試合のノックアウトなので tie_id / PK を使う
   const stage = document.getElementById('mt-stage').value;
   const isKnockout = stage === 'tournament' || stage === 'supercup';
-  document.getElementById('mt-tie-row').style.display = isKnockout ? 'flex' : 'none';
+
+  // tie_id とレグの手入力は、トーナメント表が無い GMリーグ杯のときだけ。
+  // 表があればレグは対戦表から入り、スーパーカップは1試合なのでレグが無い
+  const manualLeg = stage === 'tournament' && !(matchOptions && matchOptions.cup_bracket);
+  document.getElementById('mt-tie-row').style.display = manualLeg ? 'flex' : 'none';
   document.getElementById('mt-pk-row').style.display = isKnockout ? 'flex' : 'none';
+
+  if (stage === 'supercup') {
+    document.getElementById('mt-tie').value = '';
+    document.getElementById('mt-leg').value = '-';
+  }
+}
+
+/**
+ * 自チームが出ない大会を、種別の選択肢から外す。
+ *
+ * スーパーカップは主催者が保存した2チームだけ。GMリーグ杯はトーナメント表に
+ * 入っているチームだけ（表がまだ無いときは外さない）。最終的な判定はサーバーでも行う。
+ * 主催者は代理で報告するので全部出す。
+ */
+function applyMatchStageAvailability() {
+  const sel = document.getElementById('mt-stage');
+  if (!matchOptions || !sel) return;
+
+  const me = matchOptions.my_team;
+  const isOrg = matchOptions.is_organizer;
+  const allowed = {
+    league: true,
+    tournament: isOrg || !matchOptions.cup_bracket || (matchOptions.cup_teams || []).indexOf(me) !== -1,
+    supercup: isOrg || (matchOptions.supercup_teams || []).indexOf(me) !== -1,
+  };
+
+  [...sel.options].forEach((o) => {
+    o.hidden = !allowed[o.value];
+    o.disabled = !allowed[o.value];
+  });
+
+  if (!allowed[sel.value]) {
+    sel.value = 'league';
+    onMatchStageChange();
+    loadFixtures();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -3910,7 +4028,17 @@ function fillRoundSelect() {
   // 選べてしまうと「選んだのに送れない」になる。訂正は一覧の訂正ボタンから
   const mine = all.filter((f) => !f.reported);
 
+  const stageNow = document.getElementById('mt-stage').value;
+  const fixedStage = stageNow === 'supercup' || (stageNow === 'tournament' && matchFixtures && matchFixtures.bracket);
+
   if (!me || all.length === 0) {
+    // スーパーカップと GMリーグ杯（表あり）は、自チームの対戦が無ければ報告するものが無い
+    if (fixedStage && me) {
+      sel.innerHTML = '<option value="">この大会に報告できる試合はありません</option>';
+      wrapSel.style.display = '';
+      wrapText.style.display = 'none';
+      return;
+    }
     wrapSel.style.display = 'none';
     wrapText.style.display = '';
     return;
@@ -3926,12 +4054,13 @@ function fillRoundSelect() {
       const other = f.home_team === me ? f.away_team_name : f.home_team_name;
       const side = f.home_team === me ? 'H' : 'A';
       return '<option value="' + esc(f.fixture_id) + '">' +
-        esc(f.round) + '　vs ' + esc(other) + '（' + side + '）</option>';
+        esc(f.label || f.round) + '　vs ' + esc(other) + '（' + side + '）</option>';
     }).join('') +
     (doneCount > 0
       ? '<option value="" disabled>── 報告済み ' + doneCount + ' 節は非表示 ──</option>'
       : '') +
-    '<option value="__free__">— 対戦表にない試合 —</option>';
+    // GMリーグ杯（トーナメント表あり）とスーパーカップは、表にある対戦しか報告できない
+    (fixedStage ? '' : '<option value="__free__">— 対戦表にない試合 —</option>');
 
   if (prev && [...sel.options].some((o) => o.value === prev)) sel.value = prev;
 
@@ -3967,6 +4096,12 @@ function applyFixtureToForm() {
   document.getElementById('mt-home').value = f.home_team;
   document.getElementById('mt-away').value = f.away_team;
 
+  // GMリーグ杯はタイとレグも対戦表から入れる（1stレグと2ndレグを別々に報告する）
+  if (f.tie_id !== undefined) {
+    document.getElementById('mt-tie').value = f.tie_id || '';
+    document.getElementById('mt-leg').value = f.leg || '-';
+  }
+
   loadMatchOptions();
 }
 
@@ -3989,7 +4124,9 @@ function renderMatchCard() {
   if (!box) return;
 
   const t = currentMatchTeams();
-  const round = currentRoundValue();
+  const picked = (matchFixtures ? matchFixtures.fixtures : [])
+    .find((x) => x.fixture_id === document.getElementById('mt-round-select').value);
+  const round = (picked && picked.label) || currentRoundValue();
 
   if (!t.home || !t.away) {
     box.innerHTML = '<p class="muted">節を選ぶと対戦カードが出ます。</p>';
@@ -4030,6 +4167,8 @@ async function loadMatchOptions() {
   }
 
   matchOptions = res.data;
+  applyMatchStageAvailability();
+  onMatchStageChange();
 
   // 主催者はチームを持たないので、誰の代理で報告するかを選んでもらう。
   // 対戦表から相手を引くのに報告者のチームが要る
@@ -5359,6 +5498,7 @@ async function onGenerateFixtures() {
   const btn = document.getElementById('fx-generate');
   const legs = document.getElementById('fx-legs').value;
   const replace = document.getElementById('fx-replace').checked;
+  const isCup = document.getElementById('fx-stage').value === 'tournament';
 
   if (replace && !confirm('今ある対戦表を消して作り直します。よろしいですか？')) return;
 
@@ -5370,12 +5510,22 @@ async function onGenerateFixtures() {
     stage: document.getElementById('fx-stage').value,
     replace,
   };
-  if (legs) payload.legs = Number(legs);
+  if (legs && !isCup) payload.legs = Number(legs);
+  if (isCup) {
+    payload.seeds = [...document.querySelectorAll('.fx-seed:checked')].map((c) => c.value);
+  }
 
   const res = await callApi('generateFixtures', payload);
   btn.disabled = false;
 
-  if (res.ok) {
+  if (res.ok && isCup) {
+    const d = res.data;
+    setResult('fx-result', true,
+      d.teams + 'チームのトーナメント表を作りました（' + d.rounds + 'ラウンド・シード ' + d.byes + '）。' +
+      '組み合わせは下で入れ替えられます。');
+    document.getElementById('fx-replace').checked = false;
+    await loadFixtureAdmin();
+  } else if (res.ok) {
     const d = res.data;
     setResult('fx-result', true,
       d.rounds + '節・' + d.added + '試合を作りました' +
@@ -5394,7 +5544,21 @@ async function loadFixtureAdmin() {
   const seasonId = document.getElementById('sp-season').value;
   if (!seasonId) return;
 
+  const stageSel = document.getElementById('fx-stage');
+  document.getElementById('fx-swap-teams').onclick = onSwapCupTeams;
+
   setLoading('fx-list');
+
+  // GMリーグ杯はトーナメント表。巡回の指定は使わず、シードと入れ替えの欄を出す
+  const isCup = stageSel.value === 'tournament';
+  document.getElementById('fx-legs-wrap').style.display = isCup ? 'none' : '';
+  document.getElementById('fx-cup-wrap').style.display = isCup ? '' : 'none';
+  document.getElementById('fx-cup-edit').style.display = 'none';
+
+  if (isCup) {
+    await loadCupAdmin(seasonId);
+    return;
+  }
 
   const res = await callApi('getFixtures', {
     season_id: seasonId,
@@ -5444,6 +5608,86 @@ async function loadFixtureAdmin() {
       else { b.disabled = false; setResult('fx-result', false, '入れ替えできません: ' + r.error); }
     };
   });
+}
+
+/**
+ * 主催者の GMリーグ杯。トーナメント表を出し、シードと手直しの欄を組む。
+ *
+ * @param {string} seasonId
+ */
+async function loadCupAdmin(seasonId) {
+  const teams = await loadTeams();
+  const seedBox = document.getElementById('fx-seeds');
+  const checked = new Set([...seedBox.querySelectorAll('.fx-seed:checked')].map((c) => c.value));
+  seedBox.innerHTML = '<span class="muted note-sm">シード（空欄なら前シーズンの順位から自動）:</span>' +
+    teams.map((t) => '<label class="check-label"><input type="checkbox" class="fx-seed" value="' +
+      esc(t.team_id) + '"' + (checked.has(t.team_id) ? ' checked' : '') + ' />' + esc(t.name) + '</label>').join('');
+
+  const res = await callApi('getCupBracket', { season_id: seasonId });
+  const box = document.getElementById('fx-list');
+  if (!res.ok) {
+    setError('fx-list', 'トーナメント表を取得できませんでした: ' + res.error);
+    return;
+  }
+  if (!res.data.exists) {
+    box.innerHTML = '<p class="muted">まだトーナメント表がありません。</p>';
+    return;
+  }
+
+  // 1回戦のチームで「2チームの位置を入れ替える」を組む
+  const inBracket = [];
+  res.data.rounds[0].ties.forEach((t) => {
+    if (t.team_a) inBracket.push({ team_id: t.team_a, name: t.team_a_name });
+    if (t.team_b) inBracket.push({ team_id: t.team_b, name: t.team_b_name });
+  });
+  fillSelect('fx-swap-a', inBracket, 'team_id', 'name', 'チームを選択');
+  fillSelect('fx-swap-b', inBracket, 'team_id', 'name', 'チームを選択');
+  document.getElementById('fx-cup-edit').style.display = 'flex';
+
+  const swaps = res.data.rounds[0].ties.filter((t) => !t.bye && t.legs[0] && t.legs[0].fixture_id)
+    .map((t) => `<div class="fixture-row">
+        <span class="chip-div">${esc(res.data.rounds[0].round)} ${t.slot}</span>
+        <span class="fixture-home">${esc(t.team_a_name)}</span>
+        <span class="muted">vs</span>
+        <span class="fixture-away">${esc(t.team_b_name)}</span>
+        <button type="button" class="btn btn-sm btn-secondary fx-swap"
+                data-id="${esc(t.legs[0].fixture_id)}">H/A 入替</button>
+      </div>`).join('');
+
+  box.innerHTML = renderBracketHtml(res.data) +
+    '<h4 class="sub-head">1回戦のホーム／アウェイ</h4>' +
+    '<p class="muted note-sm">1stレグのホームを入れ替えると、2ndレグも自動で入れ替わります。' +
+    '試合が1件でも報告されたら組み合わせは動かせません。</p>' + swaps;
+
+  box.querySelectorAll('.fx-swap').forEach((b) => {
+    b.onclick = async () => {
+      b.disabled = true;
+      const r = await callApi('swapFixtureSides', { fixture_id: b.dataset.id });
+      if (r.ok) await loadFixtureAdmin();
+      else { b.disabled = false; setResult('fx-result', false, '入れ替えできません: ' + r.error); }
+    };
+  });
+}
+
+/**
+ * 抽選の手直し。1回戦で2チームの位置を入れ替える（シードも移る）。
+ */
+async function onSwapCupTeams() {
+  const a = document.getElementById('fx-swap-a').value;
+  const b = document.getElementById('fx-swap-b').value;
+  if (!a || !b) {
+    setResult('fx-result', false, '入れ替える2チームを選んでください。');
+    return;
+  }
+  const res = await callApi('swapCupTeams', {
+    season_id: document.getElementById('sp-season').value, team_a: a, team_b: b,
+  });
+  if (!res.ok) {
+    setResult('fx-result', false, '入れ替えできません: ' + res.error);
+    return;
+  }
+  setResult('fx-result', true, '2チームの位置を入れ替えました。');
+  await loadFixtureAdmin();
 }
 
 /**

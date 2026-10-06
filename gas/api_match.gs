@@ -79,12 +79,26 @@ function getMatchOptions(token, payload) {
       return { team_id: _str(t.team_id), name: _str(t.name) };
     });
 
+  // 大会ごとに出場できるチーム。画面は自チームが出ない大会を選択肢から外す
+  var sc = _superCupRow(seasonId);
+  var cupTeams = [];
+  var bracket = _cupBracket(seasonId);
+  if (bracket) {
+    bracket.rounds[0].ties.forEach(function (t) {
+      if (t.team_a) cupTeams.push(t.team_a);
+      if (t.team_b) cupTeams.push(t.team_b);
+    });
+  }
+
   var data = {
     season_id:     seasonId,
     season_status: _str(season.status),
     my_team:       _str(user.team_id),
     is_organizer:  user.role === "organizer",
     teams:         teams,
+    supercup_teams: sc ? [_str(sc.team_a), _str(sc.team_b)] : [],
+    cup_bracket:   !!bracket,
+    cup_teams:     cupTeams,
     home_players:  [],
     away_players:  [],
     own_goal_id:   OWN_GOAL_ID,
@@ -323,6 +337,18 @@ function getMatchDetail(token, payload) {
 function _validateMatchPayload(p, selfId) {
   if (MATCH_STAGES.indexOf(p.stage) === -1) {
     return "stage が不正です: " + p.stage + "（許可: league / tournament / supercup）";
+  }
+
+  // スーパーカップは保存した2チームだけ。GMリーグ杯はトーナメント表のタイとレグにそろえる。
+  // 以前は大会を選べば誰でも報告できてしまい、出場しないチームでもスーパーカップを選べた
+  if (!p.homeTeam || !p.awayTeam) return "対戦チームを選んでください。";
+  if (p.stage === STAGE_SUPERCUP) {
+    var scErr = _applySuperCupRules(p);
+    if (scErr) return scErr;
+  }
+  if (p.stage === STAGE_TOURNAMENT) {
+    var cupErr = _applyCupBracketRules(p);
+    if (cupErr) return cupErr;
   }
   if (!p.round) return "節（round）を入力してください。";
   if (!p.homeTeam || !p.awayTeam) return "対戦チームを選んでください。";

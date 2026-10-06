@@ -271,6 +271,8 @@ function _getSheetDefinitions() {
         "home_team",  // string  チームID
         "away_team",  // string  チームID
         "note",       // string  備考
+        "tie_id",     // string  GMリーグ杯のタイ（R1-01 など）
+        "leg",        // string  GMリーグ杯のレグ（1 / 2 / 空）
       ],
     },
     {
@@ -595,6 +597,7 @@ function _setupConfig() {
     ["discount_end",                "23:00",     "最終日割引 終了時刻（この時刻ちょうどは含まない）"],
     ["special_deadline",            "23:00",     "特別・無効化特別の受付終了時刻（最終日。これ以降は申請できない）"],
     ["transfer_response_grace_days", 1,          "市場閉鎖後も売り手の同意・主催者の承認を受ける日数"],
+    ["cup_final_legs",              1,           "GMリーグ杯の決勝のレグ数（1＝1試合 / 2＝ホーム＆アウェイ）"],
 
     // ── プロテクト枠数（§6.2）─────────────────────────────────────────
     ["free_protect_count",          2,           "無料プロテクト枠数（移籍市場開幕 前々日まで）"],

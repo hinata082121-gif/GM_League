@@ -345,6 +345,15 @@ function _route(action, token, payload) {
     case "deleteFixture":
       return deleteFixture(token, payload);
 
+    case "getCupBracket":
+      return getCupBracket(token, payload);
+
+    case "generateCupBracket":
+      return generateCupBracket(token, payload);
+
+    case "swapCupTeams":
+      return swapCupTeams(token, payload);
+
     // ---- Phase 5: 試合集計 ----
     case "getMatchOptions":
       return getMatchOptions(token, payload);
