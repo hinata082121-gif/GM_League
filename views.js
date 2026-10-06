@@ -5619,7 +5619,7 @@ async function loadCupAdmin(seasonId) {
   const teams = await loadTeams();
   const seedBox = document.getElementById('fx-seeds');
   const checked = new Set([...seedBox.querySelectorAll('.fx-seed:checked')].map((c) => c.value));
-  seedBox.innerHTML = '<span class="muted note-sm">シード（空欄なら前シーズンの順位から自動）:</span>' +
+  seedBox.innerHTML = '<span class="muted note-sm">シード（空欄なら前シーズンの GMリーグ杯の成績順で自動）:</span>' +
     teams.map((t) => '<label class="check-label"><input type="checkbox" class="fx-seed" value="' +
       esc(t.team_id) + '"' + (checked.has(t.team_id) ? ' checked' : '') + ' />' + esc(t.name) + '</label>').join('');
 

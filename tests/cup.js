@@ -1,5 +1,5 @@
 const { t, eq, ok, report } = require('./harness');
-const { env, seedLeague } = require('./sp-fixture');
+const { env, seedLeague, seedCup } = require('./sp-fixture');
 
 // GMリーグ杯（2レグ制トーナメント）と GMスーパーカップ（1試合）。
 //
@@ -7,7 +7,8 @@ const { env, seedLeague } = require('./sp-fixture');
 // 出場しないチームでも報告できた。
 
 /**
- * s2（2027シーズン）に6チーム。前シーズン s1 の順位は A > B > C > D（E・F は出ていない）。
+ * s2（2027シーズン）に6チーム。前シーズン s1 のリーグ順位は A > B > C > D（E・F は出ていない）。
+ * 前シーズンの GMリーグ杯は A が優勝・B が準優勝・C と D がベスト4（seedCup）。
  * 6チームなので8枠・シード2。決勝だけ1試合、それ以外は2レグ。
  */
 function cup(over) {
@@ -24,6 +25,7 @@ function cup(over) {
   rows.slice(1).find((r) => r[col.indexOf('season_id')] === 's2')[col.indexOf('leg_enabled')] = true;
   e.__dropCache('Seasons');
   seedLeague(e);
+  seedCup(e, true);
   return e;
 }
 
@@ -70,7 +72,7 @@ t('GMリーグ杯の対戦表は総当たりではなくトーナメントにな
   eq(b.rounds.map((x) => x.ties.length), [4, 2, 1]);
 });
 
-t('シードは前シーズンの上位から。1位と2位は山を分ける', () => {
+t('シードは前シーズンの GMリーグ杯の優勝・準優勝から。山を分ける', () => {
   const e = cup();
   eq(build(e).data.seeds, ['t_A', 't_B']);
 
@@ -97,13 +99,39 @@ t('2レグのホームは1stと2ndで入れ替わる', () => {
   eq([tie.legs[1].home, tie.legs[1].away], [tie.team_b, tie.team_a]);
 });
 
-t('前シーズンの順位が無ければ、シードを選ぶよう求める', () => {
+t('リーグ戦の順位ではなく、GMリーグ杯の成績で決める', () => {
   const e = cup();
-  e.__rows('Matches').splice(1);
+  // 杯は B が優勝・A が準優勝に入れ替える（リーグは A が1位のまま）
+  const rows = e.__rows('Matches');
+  const col = rows[0];
+  const fin = rows.slice(1).find((r) => r[col.indexOf('tie_id')] === 'f1');
+  fin[col.indexOf('home_score')] = 0;
+  fin[col.indexOf('away_score')] = 1;
+  e.__dropCache('Matches');
+  eq(build(e).data.seeds, ['t_B', 't_A']);
+});
+
+t('3枠目以降のシードはベスト4から', () => {
+  // 5チームなら8枠でシード3
+  const five = cup();
+  const st = five.__rows('SeasonTeams');
+  const sc = st[0];
+  st.splice(st.findIndex((r) => r[sc.indexOf('season_id')] === 's2' && r[sc.indexOf('team_id')] === 't_F'), 1);
+  five.__dropCache('SeasonTeams');
+  eq(build(five).data.seeds, ['t_A', 't_B', 't_C']);
+});
+
+t('前シーズンの GMリーグ杯の記録が無ければ、シードを選ぶよう求める', () => {
+  const e = cup();
+  const rows = e.__rows('Matches');
+  const col = rows[0];
+  for (let i = rows.length - 1; i >= 1; i--) {
+    if (rows[i][col.indexOf('stage')] === 'tournament') rows.splice(i, 1);
+  }
   e.__dropCache('Matches');
   const r = build(e);
   eq(r.ok, false);
-  ok(r.error.includes('2 チーム'), r.error);
+  ok(r.error.includes('GMリーグ杯') && r.error.includes('2 チーム'), r.error);
 });
 
 t('シードを選べば、その順で使う', () => {

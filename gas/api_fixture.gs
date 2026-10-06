@@ -795,7 +795,7 @@ function _roundNumberOf(round) {
 //   シード（1回戦免除）は相手なしの1行（away_team 空）。
 //
 // ▶ 組み合わせ
-//   シードは前シーズンの通し順位の上から。残りは抽選。主催者は
+//   シードは前シーズンの GMリーグ杯の成績順（優勝 → 準優勝 → ベスト4 …）。残りは抽選。主催者は
 //   swapCupTeams で2チームの位置を入れ替え、swapFixtureSides でH/Aを入れ替えて手直しする。
 //   決勝だけ1試合（Config cup_final_legs、既定1）。それ以外のラウンドは
 //   シーズンの leg_enabled が true なら2レグ。
@@ -1078,11 +1078,49 @@ function getCupBracket(token, payload) {
 }
 
 /**
+ * 前シーズンの GMリーグ杯の成績順にチームを並べる。シードの既定に使う。
+ *
+ * 優勝 → 準優勝 → 準決勝の敗者 → その前のラウンドの敗者 … の順。
+ * 同じラウンドで敗れたチームどうしは、トーナメント表の並び（山の上から）で並べる。
+ * リーグ戦の順位は使わない（シードは杯の成績で決めるのが大会の定義）。
+ *
+ * @param {string} prevSeasonId
+ * @returns {string[]} team_id の並び。杯の記録が無ければ空
+ */
+function _cupFinishOrder(prevSeasonId) {
+  var tr = getTournament(PUBLIC_ACCESS, { season_id: prevSeasonId, stage: STAGE_TOURNAMENT });
+  if (!tr.ok || tr.data.ties.length === 0) return [];
+
+  var ties = tr.data.ties;
+  var final = ties[ties.length - 1];
+  if (!final.winner) return [];
+
+  var order = [];
+  var add = function (t) { if (t && order.indexOf(t) === -1) order.push(t); };
+  var loserOf = function (t) { return t.winner === t.team_a ? t.team_b : t.team_a; };
+
+  add(final.winner);
+  add(loserOf(final));
+
+  // 決勝の前のラウンドから順にさかのぼる
+  var rounds = [];
+  ties.forEach(function (t) { if (rounds.indexOf(t.round) === -1) rounds.push(t.round); });
+  for (var i = rounds.length - 2; i >= 0; i--) {
+    ties.forEach(function (t) {
+      if (t.round !== rounds[i] || !t.winner) return;
+      add(loserOf(t));
+    });
+  }
+
+  return order;
+}
+
+/**
  * GMリーグ杯のトーナメント表（1回戦）を作る。主催者専用。
  *
  * payload: { season_id, seeds?: string[], replace? }
  *   seeds — 1回戦免除にするチーム。上から順にシード1, 2…。
- *           省略時は前シーズンの通し順位の上から自動で選ぶ
+ *           省略時は前シーズンの GMリーグ杯の成績順（_cupFinishOrder）で自動で選ぶ
  *
  * @param {string} token
  * @param {Object} payload
@@ -1127,14 +1165,15 @@ function generateCupBracket(token, payload) {
       seeds = given;
     } else {
       var prev = _pastSeasons(seasonId)[0];
-      var rank = prev ? _overallRankMap(prev.season_id) : {};
-      var ranked = teams.filter(function (t) { return rank[t]; });
-      ranked.sort(function (a, b) { return rank[a] - rank[b]; });
+      var ranked = (prev ? _cupFinishOrder(prev.season_id) : []).filter(function (t) {
+        return teams.indexOf(t) !== -1;
+      });
       if (ranked.length < byes) {
         return {
           ok: false,
-          error: (prev ? "前シーズン（" + prev.name + "）の順位がツールにそろっていない" : "前シーズンがツールに無い") +
-            "ため、シードを自動で決められません。1回戦免除にする " + byes + " チームを選んでください。",
+          error: (prev ? "前シーズン（" + prev.name + "）の GMリーグ杯の成績がツールにそろっていない" : "前シーズンがツールに無い") +
+            "ため、シードを自動で決められません。1回戦免除にする " + byes + " チームを選んでください" +
+            "（前シーズンの GMリーグ杯の優勝 → 準優勝 → ベスト4 の順）。",
         };
       }
       seeds = ranked.slice(0, byes);
