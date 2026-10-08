@@ -316,6 +316,8 @@ body {
 }
 
 .stat {
+  min-width: 0;
+  overflow-wrap: anywhere;
   background: var(--color-bg);
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
@@ -358,10 +360,12 @@ body {
 }
 
 /* ---------- テーブル ---------- */
+/* 幅の基準（container）にして、中の明細を「見えている幅」に合わせられるようにする */
 .table-wrap {
   overflow-x: auto;
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
+  container-type: inline-size;
 }
 
 .table-scroll {
@@ -1141,15 +1145,42 @@ body {
   margin-bottom: 2px;
 }
 
-.detail-cell {
+/*
+ * 表の行を開いて出す明細（試合の得点・シュート・GK）。
+ *
+ * 表のセルは「折り返さない」設定なので、明細の中までそれを引き継ぐと
+ * 長い行がはみ出して隣の段に重なる（試合一覧で起きた）。明細の中は折り返す。
+ * さらにスマホでは表が画面より広く、明細も表の幅まで広がって途切れるので、
+ * 見えている幅（.table-wrap の幅）に合わせて左に貼り付ける。
+ */
+.data-table td.detail-cell {
   background: var(--color-bg);
+  white-space: normal;
+  padding: 0;
+}
+
+.data-table td.detail-cell * {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.detail-cell > * {
+  position: sticky;
+  left: 0;
+  width: 100cqw;
+  max-width: 100%;
+  max-width: 100cqw;
+  padding: 8px 12px;
 }
 
 .detail-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 16px;
-  padding: 8px 4px;
+  gap: 12px 16px;
+}
+
+.detail-grid > * {
+  min-width: 0;
 }
 
 .detail-grid h4 {

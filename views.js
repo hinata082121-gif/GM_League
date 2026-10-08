@@ -414,7 +414,25 @@ async function cachedLoad(key, force, action, pick, fallback) {
  * @returns {Promise<Object[]>}
  */
 async function loadSeasons(force) {
-  return cachedLoad('seasons', force, 'listSeasons', (d) => d, []);
+  return cachedLoad('seasons', force, 'listSeasons', sortSeasonsNewestFirst, []);
+}
+
+/**
+ * シーズンを名前の番号の新しい順に並べる（Season15 → 14 → 13 → 12）。
+ *
+ * サーバーは作った順の逆で返すので、後から取り込んだ過去のシーズンが先頭に来る。
+ * Season12 を取り込んだあと、シーズン進行の画面が Season12 を選んだ状態で開いていた。
+ * 番号の無い名前は最後に置く。
+ *
+ * @param {Object[]} list
+ * @returns {Object[]}
+ */
+function sortSeasonsNewestFirst(list) {
+  const no = (s) => {
+    const m = String(s.name || '').match(/(\d+)/);
+    return m ? Number(m[1]) : -1;
+  };
+  return (list || []).slice().sort((a, b) => no(b) - no(a));
 }
 
 /**
