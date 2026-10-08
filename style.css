@@ -1095,13 +1095,38 @@ body {
   color: var(--color-text-sub);
 }
 
-/* チームスタッツは6項目あるので、チーム名を1行使って下に入力欄を並べる */
-.shot-side .goal-team {
-  flex-basis: 100%;
+/* チームスタッツは6項目あるので、チーム名を1行使って下に入力欄を並べる。
+   スマホでは3列×2段、広い画面では1段に並ぶ */
+.shot-side {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 10px 12px;
+  align-items: end;
 }
 
+.shot-side .goal-team {
+  grid-column: 1 / -1;
+  padding-bottom: 0;
+}
+
+.shot-side label {
+  font-size: 0.8rem;
+}
+
+/* 指で押しやすい高さにする。16px 未満だと iPhone は入力時に画面を拡大してしまう */
 .shot-side input {
-  width: 90px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 1.05rem;
+  font-weight: 600;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
 }
 
 .goal-team {

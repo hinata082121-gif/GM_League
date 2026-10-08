@@ -4233,7 +4233,11 @@ function playerOptions(players, withOwnGoal, selected) {
   if (withOwnGoal) {
     html += '<option value="' + esc(matchOptions.own_goal_id) + '">— オウンゴール —</option>';
   }
-  sortByPositionGroup(players).forEach((p) => {
+  // 移籍などでチームを離れた選手は出さない。サーバーは移籍前の試合を後から
+  // 報告できるよう全員を返すが、並べると放出した選手を誤って選んでしまう。
+  // 訂正で既に選ばれている選手だけは、選択が消えないよう残す
+  const shown = (players || []).filter((p) => p.current || p.player_id === selected);
+  sortByPositionGroup(shown).forEach((p) => {
     const mark = p.current ? '' : '（離脱）';
     html +=
       '<option value="' + esc(p.player_id) + '"' +
@@ -4242,6 +4246,38 @@ function playerOptions(players, withOwnGoal, selected) {
   });
   return html;
 }
+
+/**
+ * 試合入力の数字欄（スコア・チームスタッツ・GKのセーブ数）。
+ *
+ * 初期値の「0」は見せておくが、数字を打つと「05」のように0が残って邪魔だと指摘された。
+ * 触ったときに「0」だけなら消し、何も入れずに離れたら「0」に戻す。
+ * 先頭に残った0（「05」）も消す。スマホは選択（select）が効かないことがあるので、
+ * 選択に頼らず値そのものを消す。
+ *
+ * 欄は画面の組み直しで作り直されるので、document で受ける。
+ */
+const ZERO_CLEAR_SELECTOR = '.score-input, .shot-input, .gk-saves';
+
+document.addEventListener('focusin', (e) => {
+  const el = e.target;
+  if (!el.matches || !el.matches(ZERO_CLEAR_SELECTOR)) return;
+  if (el.value === '0') el.value = '';
+  else el.select();
+});
+
+document.addEventListener('focusout', (e) => {
+  const el = e.target;
+  if (!el.matches || !el.matches(ZERO_CLEAR_SELECTOR)) return;
+  if (String(el.value).trim() === '') el.value = '0';
+});
+
+document.addEventListener('input', (e) => {
+  const el = e.target;
+  if (!el.matches || !el.matches(ZERO_CLEAR_SELECTOR)) return;
+  const v = String(el.value);
+  if (/^0\d/.test(v)) el.value = v.replace(/^0+(?=\d)/, '');
+});
 
 /**
  * 選手を FW → MF → DF → GK の順に並べる。
@@ -4418,9 +4454,11 @@ function renderShotInputs() {
   const side = (teamId, teamName) => {
     const inputs = TEAM_STAT_FIELDS.map((f) => {
       const key = teamId + '_' + f.kind;
+      // スマホで数字キーボードを出す。支配率だけ小数がある
       return `
       <label>${esc(f.label)}
         <input type="number" min="0" ${f.step ? 'step="' + f.step + '"' : ''}
+               inputmode="${f.step ? 'decimal' : 'numeric'}"
                class="shot-input" data-key="${esc(key)}"
                data-team="${esc(teamId)}" data-kind="${esc(f.kind)}"
                value="${esc(prev[key] === undefined ? 0 : prev[key])}" />
@@ -4439,6 +4477,7 @@ function renderShotInputs() {
   box.querySelectorAll('.shot-input[data-kind="possession"]').forEach((i) => {
     i.oninput = checkPossession;
   });
+
   checkPossession();
 }
 
