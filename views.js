@@ -3527,7 +3527,7 @@ async function renderFixtureView() {
     sel.dataset.bound = '1';
   });
 
-  ['fv-team', 'fv-round'].forEach((id) => {
+  ['fv-division', 'fv-team', 'fv-round'].forEach((id) => {
     const sel = document.getElementById(id);
     if (!sel || sel.dataset.bound) return;
     sel.onchange = renderFixtureTable;
@@ -3549,7 +3549,7 @@ async function loadFixtureView() {
 
   // GMリーグ杯はトーナメント表で見せる。節ごとの一覧では勝ち上がりが追えない
   const isCup = document.getElementById('fv-stage').value === 'tournament';
-  ['fv-team', 'fv-round'].forEach((id) => {
+  ['fv-division', 'fv-team', 'fv-round'].forEach((id) => {
     const label = document.getElementById(id).closest('label');
     if (label) label.style.display = isCup ? 'none' : '';
   });
@@ -3607,6 +3607,23 @@ function fillFixtureFilters() {
 
   fill('fv-team', teams, 'すべてのチーム');
   fill('fv-round', (fixtureView.rounds || []).map((r) => r.round), 'すべての節');
+
+  // 二部制のシーズンだけディビジョンを選べるようにする
+  const divs = fixtureDivisions(rows);
+  document.getElementById('fv-division-wrap').style.display = divs.length > 1 ? '' : 'none';
+  if (divs.length <= 1) document.getElementById('fv-division').value = '';
+}
+
+/**
+ * 対戦表に出てくるディビジョン（GM1 → GM2 の順）。一部制なら空。
+ *
+ * @param {Object[]} rows
+ * @returns {string[]}
+ */
+function fixtureDivisions(rows) {
+  const set = new Set((rows || []).map((f) => f.division).filter((d) => d));
+  return ['GM1', 'GM2'].filter((d) => set.has(d))
+    .concat([...set].filter((d) => d !== 'GM1' && d !== 'GM2'));
 }
 
 /**
@@ -3621,8 +3638,10 @@ function renderFixtureTable() {
 
   const team = document.getElementById('fv-team').value;
   const round = document.getElementById('fv-round').value;
+  const division = document.getElementById('fv-division').value;
 
   const rows = (fixtureView.fixtures || []).filter((f) => {
+    if (division && f.division !== division) return false;
     if (round && f.round !== round) return false;
     if (team && f.home_team_name !== team && f.away_team_name !== team) return false;
     return true;
@@ -3685,13 +3704,39 @@ function onShareFixtures() {
     return;
   }
 
-  let round = document.getElementById('fv-round').value;
-  if (!round) {
-    const open = all.find((f) => f.match_status !== '承認');
-    round = open ? open.round : all[all.length - 1].round;
+  // 二部制なら GM1・GM2 を別々の画像にする。ディビジョンを選んでいればその分だけ
+  const chosenDiv = document.getElementById('fv-division').value;
+  const divs = chosenDiv ? [chosenDiv] : fixtureDivisions(all);
+  const targets = divs.length > 0 ? divs : [''];
+  const pickedRound = document.getElementById('fv-round').value;
+
+  const images = [];
+  targets.forEach((div) => {
+    const inDiv = all.filter((f) => !div || f.division === div);
+    if (inDiv.length === 0) return;
+
+    // 「すべての節」なら、そのディビジョンでまだ終わっていない最初の節
+    let round = pickedRound;
+    if (!round) {
+      const open = inDiv.find((f) => f.match_status !== '承認');
+      round = open ? open.round : inDiv[inDiv.length - 1].round;
+    }
+    const list = inDiv.filter((f) => f.round === round);
+    if (list.length === 0) return;
+
+    const league = div ? div + 'リーグ' : 'リーグ戦';
+    images.push({
+      canvas: drawFixturesImage(list, seasonName, league + ' ' + round),
+      filename: seasonName + '_' + league + '_' + round + '_対戦表',
+      label: league,
+    });
+  });
+
+  if (images.length === 0) {
+    alert('この条件の対戦がありません。');
+    return;
   }
-  const list = all.filter((f) => f.round === round);
-  showShareImage(drawFixturesImage(list, seasonName, 'リーグ戦 ' + round), seasonName + '_' + round + '_対戦表');
+  showShareImage(images);
 }
 
 /**

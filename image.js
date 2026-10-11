@@ -237,8 +237,12 @@ function drawFixturesImage(fixtures, seasonName, title) {
   const nameW = (c.right - c.left - 260) / 2;
   const namePx = Math.max(26, Math.min(40, Math.floor(cardH * 0.3)));
 
+  // 試合が少ない節（GM2 やスーパーカップ）は、上に詰めず縦の中央に寄せる
+  const used = fixtures.length * cardH + gap * Math.max(0, fixtures.length - 1);
+  const startY = c.top + Math.max(0, Math.floor((c.bottom - c.top - used) / 2));
+
   fixtures.forEach((f, i) => {
-    const y = c.top + i * (cardH + gap);
+    const y = startY + i * (cardH + gap);
     const mid = y + cardH / 2;
 
     ctx.fillStyle = SHARE_COLORS.stripe;
@@ -266,10 +270,6 @@ function drawFixturesImage(fixtures, seasonName, title) {
       shareFitText(ctx, 'vs', center, mid, 190, Math.min(40, Math.floor(cardH * 0.3)), 700, 'center');
     }
 
-    if (f.division) {
-      ctx.fillStyle = SHARE_COLORS.sub;
-      shareFitText(ctx, f.division, c.left + 20, y + 24, 80, 20, 700, 'left');
-    }
   });
 
   return c.canvas;
@@ -385,24 +385,39 @@ function shareRoundRect(ctx, x, y, w, h, r) {
 /**
  * 書き出した画像をプレビューで見せ、保存・共有を選んでもらう。
  *
- * @param {HTMLCanvasElement} canvas
- * @param {string} filename 拡張子なし
+ * 1枚なら (canvas, filename)、複数なら [{ canvas, filename, label }] を渡す。
+ * GM1・GM2 の対戦表のように複数あるときは、画像ごとに保存ボタンを付け、
+ * 「共有」は全部をまとめて送る（X は1投稿に4枚まで付けられる）。
+ *
+ * @param {HTMLCanvasElement|Array<{canvas: HTMLCanvasElement, filename: string, label?: string}>} canvas
+ * @param {string} [filename] 拡張子なし
  */
 function showShareImage(canvas, filename) {
   closeShareImage();
-  const url = canvas.toDataURL('image/png');
-  const name = filename.replace(/[\\/:*?"<>|\s]+/g, '_') + '.png';
+  const items = Array.isArray(canvas) ? canvas : [{ canvas, filename }];
+  const list = items.map((it) => ({
+    canvas: it.canvas,
+    url: it.canvas.toDataURL('image/png'),
+    label: it.label || '',
+    alt: it.filename,
+    name: it.filename.replace(/[\\/:*?"<>|\s]+/g, '_') + '.png',
+  }));
 
   const wrap = document.createElement('div');
   wrap.id = 'share-modal';
   wrap.className = 'share-modal';
   wrap.innerHTML = `
     <div class="share-dialog" role="dialog" aria-label="画像の保存">
-      <img src="${url}" alt="${esc(filename)}" class="share-preview" />
+      ${list.map((it) => `
+        <figure class="share-item">
+          <img src="${it.url}" alt="${esc(it.alt)}" class="share-preview" />
+          <a class="btn btn-primary btn-sm" href="${it.url}" download="${esc(it.name)}">${
+            list.length > 1 && it.label ? esc(it.label) + ' を保存' : '画像を保存'}</a>
+        </figure>`).join('')}
       <p class="muted note-sm">3:4（1080×1440）の画像です。スマホは「共有」から X や写真へ、または画像を長押しして保存できます。</p>
       <div class="form-actions">
-        <a class="btn btn-primary" href="${url}" download="${esc(name)}">画像を保存</a>
-        <button type="button" class="btn btn-secondary" id="share-native" style="display:none;">共有</button>
+        <button type="button" class="btn btn-secondary" id="share-native" style="display:none;">${
+          list.length > 1 ? list.length + '枚まとめて共有' : '共有'}</button>
         <button type="button" class="btn btn-secondary" id="share-close">閉じる</button>
       </div>
     </div>`;
@@ -412,15 +427,16 @@ function showShareImage(canvas, filename) {
   document.getElementById('share-close').onclick = closeShareImage;
 
   // 共有メニュー（X・写真に保存など）。対応している端末だけ出す
-  canvas.toBlob((blob) => {
-    if (!blob || !navigator.canShare) return;
-    const file = new File([blob], name, { type: 'image/png' });
-    if (!navigator.canShare({ files: [file] })) return;
-    const btn = document.getElementById('share-native');
-    if (!btn) return;
-    btn.style.display = '';
-    btn.onclick = () => navigator.share({ files: [file] }).catch(() => {});
-  }, 'image/png');
+  Promise.all(list.map((it) => new Promise((resolve) => it.canvas.toBlob(resolve, 'image/png'))))
+    .then((blobs) => {
+      if (!navigator.canShare || blobs.some((b) => !b)) return;
+      const files = blobs.map((b, i) => new File([b], list[i].name, { type: 'image/png' }));
+      if (!navigator.canShare({ files })) return;
+      const btn = document.getElementById('share-native');
+      if (!btn) return;
+      btn.style.display = '';
+      btn.onclick = () => navigator.share({ files }).catch(() => {});
+    });
 }
 
 /** プレビューを閉じる */

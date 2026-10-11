@@ -398,6 +398,14 @@
                 <option value="supercup">GMスーパーカップ</option>
               </select>
             </label>
+            <label id="fv-division-wrap" style="display:none;">
+              ディビジョン
+              <select id="fv-division">
+                <option value="">すべて</option>
+                <option value="GM1">GM1リーグ</option>
+                <option value="GM2">GM2リーグ</option>
+              </select>
+            </label>
             <label>
               チーム
               <select id="fv-team">
@@ -413,7 +421,7 @@
           </div>
           <div class="form-actions">
             <button type="button" id="fv-share" class="btn btn-secondary btn-sm">画像を保存（X投稿用）</button>
-            <span class="muted note-sm">リーグ戦は選んだ節（「すべての節」なら次に行う節）、GMリーグ杯はトーナメント表を 3:4 の画像にします。</span>
+            <span class="muted note-sm">リーグ戦は選んだ節（「すべての節」なら次に行う節）を、二部制なら GM1・GM2 別々の画像にします（ディビジョンを選べばその分だけ）。GMリーグ杯はトーナメント表です。いずれも 3:4。</span>
           </div>
           <div id="fv-list"></div>
         </div>
