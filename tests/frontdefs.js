@@ -10,7 +10,7 @@ const { t, eq, report } = require('./harness');
 // 呼び出し側だけ残って定義が消えていないかを機械的に確かめる。
 
 const ROOT = path.join(__dirname, '..');
-const FILES = ['app.js', 'auth.js', 'views.js', 'config.js']
+const FILES = ['app.js', 'auth.js', 'views.js', 'config.js', 'image.js']
   .filter((f) => fs.existsSync(path.join(ROOT, f)));
 const src = FILES.map((f) => fs.readFileSync(path.join(ROOT, f), 'utf8')).join('\n');
 

@@ -960,6 +960,41 @@ body {
   color: var(--color-success);
 }
 
+/* ---------- X 投稿用の画像のプレビュー ---------- */
+.share-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(32, 33, 36, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.share-dialog {
+  background: var(--color-surface);
+  border-radius: var(--radius);
+  padding: 16px;
+  max-width: 480px;
+  width: 100%;
+  max-height: 100%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.share-preview {
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  /* 縦長の画像が画面からはみ出さないよう、高さで抑える */
+  max-height: 65vh;
+  object-fit: contain;
+}
+
 /* ---------- GMリーグ杯のトーナメント表 ---------- */
 /* ラウンドを横に並べる。スマホでは横にスクロールして追う */
 .bracket {

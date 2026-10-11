@@ -3533,6 +3533,7 @@ async function renderFixtureView() {
     sel.onchange = renderFixtureTable;
     sel.dataset.bound = '1';
   });
+  document.getElementById('fv-share').onclick = onShareFixtures;
 
   await loadFixtureView();
 }
@@ -3560,6 +3561,7 @@ async function loadFixtureView() {
       return;
     }
     fixtureView = null;
+    fixtureCup = cup.data;
     document.getElementById('fv-list').innerHTML = cup.data.exists
       ? renderBracketHtml(cup.data, cup.data.my_team)
       : '<p class="muted">GMリーグ杯のトーナメント表はまだ作られていません。</p>';
@@ -3647,6 +3649,49 @@ function renderFixtureTable() {
         <h4>${esc(g.round)}</h4>
         ${g.items.map((f) => fixtureRowHtml(f, team)).join('')}
       </div>`).join('');
+}
+
+/** getCupBracket の結果。画像の書き出しに使う */
+let fixtureCup = null;
+
+/**
+ * 対戦表を X 投稿用の画像にする。
+ *
+ * リーグ戦は1節分。「すべての節」のときは、まだ承認されていない試合がある最初の節
+ * （＝次に行う節）を選ぶ。全部終わっていれば最後の節。
+ * GMリーグ杯はトーナメント表、スーパーカップは対戦カード1枚。
+ */
+function onShareFixtures() {
+  const stage = document.getElementById('fv-stage').value;
+  const seasonName = selectedText('fv-season');
+
+  if (stage === 'tournament') {
+    if (!fixtureCup || !fixtureCup.exists) {
+      alert('GMリーグ杯のトーナメント表がまだありません。');
+      return;
+    }
+    showShareImage(drawBracketImage(fixtureCup, seasonName), seasonName + '_GMリーグ杯_トーナメント');
+    return;
+  }
+
+  const all = (fixtureView && fixtureView.fixtures) || [];
+  if (all.length === 0) {
+    alert('対戦表がまだありません。');
+    return;
+  }
+
+  if (stage === 'supercup') {
+    showShareImage(drawFixturesImage(all, seasonName, 'GMスーパーカップ'), seasonName + '_GMスーパーカップ');
+    return;
+  }
+
+  let round = document.getElementById('fv-round').value;
+  if (!round) {
+    const open = all.find((f) => f.match_status !== '承認');
+    round = open ? open.round : all[all.length - 1].round;
+  }
+  const list = all.filter((f) => f.round === round);
+  showShareImage(drawFixturesImage(list, seasonName, 'リーグ戦 ' + round), seasonName + '_' + round + '_対戦表');
 }
 
 /**
@@ -5249,6 +5294,9 @@ async function renderStandings(seasonId, division) {
 
   box.innerHTML = `
     <h3 class="sub-head">${esc(leagueName)} 順位表</h3>
+    <div class="form-actions">
+      <button type="button" id="st-share" class="btn btn-secondary btn-sm">画像を保存（X投稿用）</button>
+    </div>
     <div class="table-wrap">
       <table class="data-table">
         <thead>
@@ -5267,6 +5315,24 @@ async function renderStandings(seasonId, division) {
       勝${d.win_points}・分${d.draw_points}・敗0。
       同点時は 得失点差 → 総得点 → 直接対決 の順で比較し、すべて並ぶ場合は同順位（「同」表示）です。
     </p>`;
+
+  document.getElementById('st-share').onclick = () => {
+    const seasonName = selectedText('st-season');
+    const name = leagueName.replace('（一部制）', '');
+    showShareImage(drawStandingsImage(d, seasonName, name), seasonName + '_' + name + '_順位表');
+  };
+}
+
+/**
+ * セレクトボックスで選ばれている項目の表示名。
+ *
+ * @param {string} id
+ * @returns {string}
+ */
+function selectedText(id) {
+  const sel = document.getElementById(id);
+  const opt = sel && sel.options[sel.selectedIndex];
+  return opt ? opt.text : '';
 }
 
 /**

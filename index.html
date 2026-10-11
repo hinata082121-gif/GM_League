@@ -33,6 +33,9 @@
 
   <!-- Phase 1 の各画面ロジック（views.js） -->
   <script src="views.js"></script>
+
+  <!-- X 投稿用の画像（順位表・対戦表）の書き出し -->
+  <script src="image.js"></script>
 </head>
 <body>
 
@@ -407,6 +410,10 @@
                 <option value="">すべて</option>
               </select>
             </label>
+          </div>
+          <div class="form-actions">
+            <button type="button" id="fv-share" class="btn btn-secondary btn-sm">画像を保存（X投稿用）</button>
+            <span class="muted note-sm">リーグ戦は選んだ節（「すべての節」なら次に行う節）、GMリーグ杯はトーナメント表を 3:4 の画像にします。</span>
           </div>
           <div id="fv-list"></div>
         </div>

@@ -378,6 +378,7 @@ config.js
 ├─ auth.js           # Google Identity Services ログイン処理
 ├─ app.js            # GAS API 共通 fetch ラッパ（callApi関数）
 ├─ views.js          # 全画面のロジック（タブ単位で関数を分けている）
+├─ image.js          # X 投稿用の画像（順位表・対戦表、3:4）を canvas で描いて書き出す
 ├─ style.css         # スタイルシート
 ├─ gas/              # GAS ソースのミラー（正はGASエディタ側。clasp不採用）
 │   ├─ appsscript.json
