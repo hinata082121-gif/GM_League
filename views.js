@@ -4710,10 +4710,20 @@ function renderShotInputs() {
     side(t.home, t.homeName) + side(t.away, t.awayName) +
     '<p class="muted note-sm" id="mt-poss-note"></p>';
 
-  // 支配率の合計は100になるはずだが、eFootball の表示は丸めでずれることがある。
-  // 弾かずに知らせるだけにして、見た数字をそのまま残せるようにする
-  box.querySelectorAll('.shot-input[data-kind="possession"]').forEach((i) => {
-    i.oninput = checkPossession;
+  // 支配率は両チームで100%。片方を入れたら、もう片方に残りを自動で入れる。
+  // 後から触ったほうの値で相手を書き直すので、どちらから入れてもよい。
+  // 小数（57.5 など）も入れられるので、残りも小数第1位まで出す
+  const poss = [...box.querySelectorAll('.shot-input[data-kind="possession"]')];
+  poss.forEach((i) => {
+    i.oninput = () => {
+      const other = poss.find((x) => x !== i);
+      const v = Number(i.value);
+      if (other && String(i.value).trim() !== '' && isFinite(v)) {
+        const rest = Math.round((100 - Math.min(100, Math.max(0, v))) * 10) / 10;
+        other.value = String(rest);
+      }
+      checkPossession();
+    };
   });
 
   checkPossession();
