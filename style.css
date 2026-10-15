@@ -888,6 +888,16 @@ body {
   color: var(--color-text-sub);
 }
 
+/* 期間ごとの区切り（第1・2節 10/16〜10/21 など） */
+.fixture-period {
+  margin-bottom: 14px;
+}
+
+.fixture-period > .sub-head .note-sm {
+  margin-left: 8px;
+  font-weight: 400;
+}
+
 /* ---------- 対戦表（主催者） ---------- */
 .fixture-round {
   border: 1px solid var(--color-border);

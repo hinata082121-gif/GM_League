@@ -222,54 +222,83 @@ function drawStandingsImage(d, seasonName, leagueName) {
 /**
  * 対戦の一覧の画像を作る。報告・承認済みの試合はスコア、未実施は「vs」。
  *
- * @param {Object[]} fixtures getFixtures の fixtures（1節分）
+ * 複数の節が混ざっていれば（「第3・4・5節」の期間など）、節ごとに小見出しを付けて並べる。
+ * 1期間で20試合を超えても収まるよう、行の高さと文字を試合数に合わせて縮める。
+ *
+ * @param {Object[]} fixtures getFixtures の fixtures（1節分、または1期間分）
  * @param {string} seasonName
- * @param {string} title 例: GM1リーグ 第5節
+ * @param {string} title 例: GM1リーグ 第5節 / GM1リーグ 第3・4・5節
+ * @param {string} [dateText] 期間の日付（例: 10/23〜10/28）。見出しの下に添える
  * @returns {HTMLCanvasElement}
  */
-function drawFixturesImage(fixtures, seasonName, title) {
-  const c = shareCanvas(title, seasonName + ' ／ ' + shareToday());
+function drawFixturesImage(fixtures, seasonName, title, dateText) {
+  const c = shareCanvas(title, seasonName + (dateText ? ' ／ ' + dateText : '') + ' ／ ' + shareToday());
   const { ctx } = c;
 
-  const n = Math.max(fixtures.length, 4);
-  const gap = 18;
-  const cardH = Math.min(150, Math.floor((c.bottom - c.top - gap * (n - 1)) / n));
+  // 節ごとにまとめる（並びは渡された順）
+  const groups = [];
+  fixtures.forEach((f) => {
+    let g = groups.find((x) => x.round === f.round);
+    if (!g) { g = { round: f.round, items: [] }; groups.push(g); }
+    g.items.push(f);
+  });
+  const multi = groups.length > 1;
+
+  const n = fixtures.length;
+  const gap = n > 10 ? 8 : 18;
+  const headH = multi ? 44 : 0;
+  const groupGap = multi ? 14 : 0;
+  const fixedH = headH * groups.length + groupGap * Math.max(0, groups.length - 1) + gap * Math.max(0, n - groups.length);
+  const cardH = Math.min(150, Math.floor((c.bottom - c.top - fixedH) / Math.max(n, 4)));
   const nameW = (c.right - c.left - 260) / 2;
-  const namePx = Math.max(26, Math.min(40, Math.floor(cardH * 0.3)));
+  const namePx = Math.max(20, Math.min(40, Math.floor(cardH * 0.42)));
+  const scorePx = Math.max(20, Math.min(52, Math.floor(cardH * 0.5)));
+  const radius = Math.min(18, Math.floor(cardH / 3));
 
-  // 試合が少ない節（GM2 やスーパーカップ）は、上に詰めず縦の中央に寄せる
-  const used = fixtures.length * cardH + gap * Math.max(0, fixtures.length - 1);
-  const startY = c.top + Math.max(0, Math.floor((c.bottom - c.top - used) / 2));
+  // 試合が少ないとき（GM2 やスーパーカップ）は、上に詰めず縦の中央に寄せる
+  const used = fixedH + n * cardH;
+  let y = c.top + Math.max(0, Math.floor((c.bottom - c.top - used) / 2));
+  const center = (c.left + c.right) / 2;
 
-  fixtures.forEach((f, i) => {
-    const y = startY + i * (cardH + gap);
-    const mid = y + cardH / 2;
-
-    ctx.fillStyle = SHARE_COLORS.stripe;
-    ctx.strokeStyle = SHARE_COLORS.line;
-    ctx.lineWidth = 2;
-    shareRoundRect(ctx, c.left, y, c.right - c.left, cardH, 18);
-    ctx.fill();
-    ctx.stroke();
-
-    const approved = f.match_status === '承認' && f.score;
-    const center = (c.left + c.right) / 2;
-
-    ctx.fillStyle = SHARE_COLORS.text;
-    shareFitText(ctx, f.home_team_name, center - 130, mid, nameW - 24, namePx, 700, 'right');
-    shareFitText(ctx, f.away_team_name, center + 130, mid, nameW - 24, namePx, 700, 'left');
-
-    if (approved) {
-      ctx.fillStyle = SHARE_COLORS.header;
-      shareRoundRect(ctx, center - 105, mid - cardH * 0.28, 210, cardH * 0.56, 12);
-      ctx.fill();
-      ctx.fillStyle = '#ffffff';
-      shareFitText(ctx, f.score.replace(/\s/g, ''), center, mid, 190, Math.min(52, Math.floor(cardH * 0.4)), 800, 'center');
-    } else {
-      ctx.fillStyle = SHARE_COLORS.sub;
-      shareFitText(ctx, 'vs', center, mid, 190, Math.min(40, Math.floor(cardH * 0.3)), 700, 'center');
+  groups.forEach((g, gi) => {
+    if (multi) {
+      ctx.fillStyle = SHARE_COLORS.primary;
+      shareFitText(ctx, g.round, c.left, y + headH / 2, 400, 28, 800, 'left');
+      y += headH;
     }
 
+    g.items.forEach((f, i) => {
+      const mid = y + cardH / 2;
+
+      ctx.fillStyle = SHARE_COLORS.stripe;
+      ctx.strokeStyle = SHARE_COLORS.line;
+      ctx.lineWidth = 2;
+      shareRoundRect(ctx, c.left, y, c.right - c.left, cardH, radius);
+      ctx.fill();
+      ctx.stroke();
+
+      const approved = f.match_status === '承認' && f.score;
+
+      ctx.fillStyle = SHARE_COLORS.text;
+      shareFitText(ctx, f.home_team_name, center - 130, mid, nameW - 24, namePx, 700, 'right');
+      shareFitText(ctx, f.away_team_name, center + 130, mid, nameW - 24, namePx, 700, 'left');
+
+      if (approved) {
+        const boxH = Math.min(cardH - 8, Math.max(cardH * 0.56, scorePx + 8));
+        ctx.fillStyle = SHARE_COLORS.header;
+        shareRoundRect(ctx, center - 105, mid - boxH / 2, 210, boxH, Math.min(12, Math.floor(boxH / 3)));
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        shareFitText(ctx, f.score.replace(/\s/g, ''), center, mid, 190, scorePx, 800, 'center');
+      } else {
+        ctx.fillStyle = SHARE_COLORS.sub;
+        shareFitText(ctx, 'vs', center, mid, 190, Math.max(20, Math.min(40, Math.floor(cardH * 0.42))), 700, 'center');
+      }
+
+      y += cardH + (i < g.items.length - 1 ? gap : 0);
+    });
+
+    if (gi < groups.length - 1) y += groupGap;
   });
 
   return c.canvas;

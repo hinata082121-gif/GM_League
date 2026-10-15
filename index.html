@@ -412,6 +412,12 @@
                 <option value="">すべて</option>
               </select>
             </label>
+            <label id="fv-period-wrap" style="display:none;">
+              期間
+              <select id="fv-period">
+                <option value="">すべての期間</option>
+              </select>
+            </label>
             <label>
               節
               <select id="fv-round">
@@ -421,7 +427,7 @@
           </div>
           <div class="form-actions">
             <button type="button" id="fv-share" class="btn btn-secondary btn-sm">画像を保存（X投稿用）</button>
-            <span class="muted note-sm">リーグ戦は選んだ節（「すべての節」なら次に行う節）を、二部制なら GM1・GM2 別々の画像にします（ディビジョンを選べばその分だけ）。GMリーグ杯はトーナメント表です。いずれも 3:4。</span>
+            <span class="muted note-sm">リーグ戦は選んだ期間（期間を選ばず節を選べばその節、どちらも「すべて」なら次に行う期間）を、二部制なら GM1・GM2 別々の画像にします。GMリーグ杯はトーナメント表です。いずれも 3:4。</span>
           </div>
           <div id="fv-list"></div>
         </div>

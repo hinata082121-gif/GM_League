@@ -3527,7 +3527,7 @@ async function renderFixtureView() {
     sel.dataset.bound = '1';
   });
 
-  ['fv-division', 'fv-team', 'fv-round'].forEach((id) => {
+  ['fv-division', 'fv-period', 'fv-team', 'fv-round'].forEach((id) => {
     const sel = document.getElementById(id);
     if (!sel || sel.dataset.bound) return;
     sel.onchange = renderFixtureTable;
@@ -3549,7 +3549,7 @@ async function loadFixtureView() {
 
   // GMリーグ杯はトーナメント表で見せる。節ごとの一覧では勝ち上がりが追えない
   const isCup = document.getElementById('fv-stage').value === 'tournament';
-  ['fv-division', 'fv-team', 'fv-round'].forEach((id) => {
+  ['fv-division', 'fv-period', 'fv-team', 'fv-round'].forEach((id) => {
     const label = document.getElementById(id).closest('label');
     if (label) label.style.display = isCup ? 'none' : '';
   });
@@ -3568,10 +3568,13 @@ async function loadFixtureView() {
     return;
   }
 
-  const res = await callApi('getFixtures', {
-    season_id: seasonId,
-    stage: document.getElementById('fv-stage').value,
-  });
+  // リーグ戦は日程表から「第1・2節［始］〜［終］」の期間を読み、期間ごとに区切る。
+  // 対戦表と同時に投げて1回の通信にまとめる
+  const isLeague = document.getElementById('fv-stage').value === 'league';
+  const [res, sch] = await Promise.all([
+    callApi('getFixtures', { season_id: seasonId, stage: document.getElementById('fv-stage').value }),
+    isLeague ? callApi('getSeasonSchedule', { season_id: seasonId }) : Promise.resolve(null),
+  ]);
 
   if (!res.ok) {
     setError('fv-list', '対戦表を取得できませんでした: ' + res.error);
@@ -3579,8 +3582,76 @@ async function loadFixtureView() {
   }
 
   fixtureView = res.data;
+  fixturePeriods = sch && sch.ok ? parseRoundPeriods(sch.data.items || []) : [];
   fillFixtureFilters();
   renderFixtureTable();
+}
+
+/** 日程表から読んだリーグ戦の期間 */
+let fixturePeriods = [];
+
+/**
+ * 日程表の「第1・2節［始］」「第1・2節［終］」から、リーグ戦の期間を組み立てる。
+ *
+ * 期間は日程表で管理する。対戦表と別に持つと、日程を直したときに食い違うため。
+ * 節の書き方は「第1・2節」「第3,4,5節」「第3〜5節」「第14節」のどれでもよい。
+ * ［始］か［終］の片方しかない期間は、その日だけの期間として扱う。
+ *
+ * @param {Object[]} items getSeasonSchedule の items
+ * @returns {Array<{label: string, rounds: number[], start: Date|null, end: Date|null}>}
+ */
+function parseRoundPeriods(items) {
+  const toHalf = (s) => String(s).replace(/[０-９]/g, (d) => String.fromCharCode(d.charCodeAt(0) - 0xFEE0));
+  const map = {};
+  const order = [];
+
+  (items || []).forEach((it) => {
+    const label = toHalf(String(it.label || '').trim());
+    const m = label.match(/^第([0-9,，、・〜~\-－\s]+)節\s*[［\[](始|終)[］\]]/);
+    if (!m) return;
+
+    const rounds = [];
+    m[1].split(/[,，、・\s]+/).forEach((part) => {
+      const r = part.split(/[〜~\-－]/).map(Number).filter((n) => n > 0);
+      if (r.length === 1) rounds.push(r[0]);
+      if (r.length === 2) for (let n = Math.min(r[0], r[1]); n <= Math.max(r[0], r[1]); n++) rounds.push(n);
+    });
+    if (rounds.length === 0) return;
+
+    const key = rounds.join(',');
+    if (!map[key]) {
+      map[key] = { label: '第' + rounds.join('・') + '節', rounds, start: null, end: null };
+      order.push(key);
+    }
+    const d = new Date(it.date);
+    if (!isNaN(d.getTime())) {
+      if (m[2] === '始') map[key].start = d;
+      else map[key].end = d;
+    }
+  });
+
+  return order.map((k) => map[k]).sort((a, b) => a.rounds[0] - b.rounds[0]);
+}
+
+/** 期間の日付（例: 10/16〜10/21） */
+function periodDateText(p) {
+  const f = (d) => (d ? (d.getMonth() + 1) + '/' + d.getDate() : '');
+  const s = f(p.start);
+  const e = f(p.end);
+  if (s && e && s !== e) return s + '〜' + e;
+  return s || e;
+}
+
+/** "第12節" から 12 を取り出す。数字が無ければ 0 */
+function roundNumberOf(round) {
+  const m = String(round || '').replace(/[０-９]/g, (d) => String.fromCharCode(d.charCodeAt(0) - 0xFEE0)).match(/(\d+)/);
+  return m ? Number(m[1]) : 0;
+}
+
+/** その対戦が入る期間。無ければ null */
+function periodOfFixture(f) {
+  const n = roundNumberOf(f.round);
+  return fixturePeriods.find((p) => p.rounds.indexOf(n) !== -1) || null;
 }
 
 /**
@@ -3607,6 +3678,15 @@ function fillFixtureFilters() {
 
   fill('fv-team', teams, 'すべてのチーム');
   fill('fv-round', (fixtureView.rounds || []).map((r) => r.round), 'すべての節');
+
+  // 日程表に期間があるときだけ、期間で選べるようにする
+  const periodSel = document.getElementById('fv-period');
+  const prevPeriod = periodSel.value;
+  periodSel.innerHTML = '<option value="">すべての期間</option>' +
+    fixturePeriods.map((p) => '<option value="' + esc(p.label) + '">' +
+      esc(p.label + (periodDateText(p) ? '（' + periodDateText(p) + '）' : '')) + '</option>').join('');
+  if (prevPeriod && fixturePeriods.some((p) => p.label === prevPeriod)) periodSel.value = prevPeriod;
+  document.getElementById('fv-period-wrap').style.display = fixturePeriods.length > 0 ? '' : 'none';
 
   // 二部制のシーズンだけディビジョンを選べるようにする
   const divs = fixtureDivisions(rows);
@@ -3639,9 +3719,14 @@ function renderFixtureTable() {
   const team = document.getElementById('fv-team').value;
   const round = document.getElementById('fv-round').value;
   const division = document.getElementById('fv-division').value;
+  const periodLabel = document.getElementById('fv-period').value;
 
   const rows = (fixtureView.fixtures || []).filter((f) => {
     if (division && f.division !== division) return false;
+    if (periodLabel) {
+      const p = periodOfFixture(f);
+      if (!p || p.label !== periodLabel) return false;
+    }
     if (round && f.round !== round) return false;
     if (team && f.home_team_name !== team && f.away_team_name !== team) return false;
     return true;
@@ -3660,14 +3745,35 @@ function renderFixtureTable() {
   });
 
   const done = rows.filter((f) => f.reported).length;
-
-  box.innerHTML =
-    '<p class="muted">' + rows.length + ' 試合中 ' + done + ' 試合が報告済みです。</p>' +
-    groups.map((g) => `
+  const roundHtml = (g) => `
       <div class="fixture-round">
         <h4>${esc(g.round)}</h4>
         ${g.items.map((f) => fixtureRowHtml(f, team)).join('')}
+      </div>`;
+
+  // 期間があるときは期間ごとに区切る（第1・2節 10/16〜10/21 のように）
+  let body;
+  if (fixturePeriods.length > 0) {
+    const blocks = [];
+    groups.forEach((g) => {
+      const p = periodOfFixture(g.items[0]);
+      const key = p ? p.label : '';
+      let b = blocks.find((x) => x.key === key);
+      if (!b) { b = { key, period: p, groups: [] }; blocks.push(b); }
+      b.groups.push(g);
+    });
+    body = blocks.map((b) => `
+      <div class="fixture-period">
+        <h3 class="sub-head">${esc(b.period ? b.period.label : '期間が未設定の節')}
+          ${b.period && periodDateText(b.period) ? '<span class="muted note-sm">' + esc(periodDateText(b.period)) + '</span>' : ''}</h3>
+        ${b.groups.map(roundHtml).join('')}
       </div>`).join('');
+  } else {
+    body = groups.map(roundHtml).join('');
+  }
+
+  box.innerHTML =
+    '<p class="muted">' + rows.length + ' 試合中 ' + done + ' 試合が報告済みです。</p>' + body;
 }
 
 /** getCupBracket の結果。画像の書き出しに使う */
@@ -3709,25 +3815,49 @@ function onShareFixtures() {
   const divs = chosenDiv ? [chosenDiv] : fixtureDivisions(all);
   const targets = divs.length > 0 ? divs : [''];
   const pickedRound = document.getElementById('fv-round').value;
+  const pickedPeriod = document.getElementById('fv-period').value;
 
   const images = [];
   targets.forEach((div) => {
     const inDiv = all.filter((f) => !div || f.division === div);
     if (inDiv.length === 0) return;
 
-    // 「すべての節」なら、そのディビジョンでまだ終わっていない最初の節
-    let round = pickedRound;
-    if (!round) {
-      const open = inDiv.find((f) => f.match_status !== '承認');
-      round = open ? open.round : inDiv[inDiv.length - 1].round;
+    // 何を1枚にするか。期間 → 節 → 次に行う期間（期間が無ければ次に行う節）の順に決める
+    let list = [];
+    let name = '';
+    let dateText = '';
+    if (pickedPeriod || (!pickedRound && fixturePeriods.length > 0)) {
+      let period = fixturePeriods.find((p) => p.label === pickedPeriod);
+      if (!period) {
+        const open = inDiv.find((f) => f.match_status !== '承認' && periodOfFixture(f));
+        period = open ? periodOfFixture(open) : null;
+        if (!period) {
+          const withRows = fixturePeriods.filter((p) => inDiv.some((f) => periodOfFixture(f) === p));
+          period = withRows[withRows.length - 1] || null;
+        }
+      }
+      if (period) {
+        list = inDiv.filter((f) => periodOfFixture(f) === period);
+        name = period.label;
+        dateText = periodDateText(period);
+      }
+    } else {
+      let round = pickedRound;
+      if (!round) {
+        const open = inDiv.find((f) => f.match_status !== '承認');
+        round = open ? open.round : inDiv[inDiv.length - 1].round;
+      }
+      list = inDiv.filter((f) => f.round === round);
+      name = round;
+      const p = list.length ? periodOfFixture(list[0]) : null;
+      dateText = p ? periodDateText(p) : '';
     }
-    const list = inDiv.filter((f) => f.round === round);
     if (list.length === 0) return;
 
     const league = div ? div + 'リーグ' : 'リーグ戦';
     images.push({
-      canvas: drawFixturesImage(list, seasonName, league + ' ' + round),
-      filename: seasonName + '_' + league + '_' + round + '_対戦表',
+      canvas: drawFixturesImage(list, seasonName, league + ' ' + name, dateText),
+      filename: seasonName + '_' + league + '_' + name + '_対戦表',
       label: league,
     });
   });
