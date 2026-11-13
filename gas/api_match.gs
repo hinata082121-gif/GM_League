@@ -119,6 +119,10 @@ function getMatchOptions(token, payload) {
  * status は問わない。シーズン途中に移籍した選手について、
  * 移籍前の試合を後から報告できるようにするため（SPEC.md §7.5）。
  *
+ * 同じ選手に行が複数あるとき（離脱のあと在籍に戻した等）は、
+ * どれか1行でも在籍なら current にする。最初の行だけで決めると、
+ * 戻した選手が離脱扱いのまま試合入力の一覧から消える（エリキ リマで起きた）。
+ *
  * @param {string} seasonId
  * @param {string} teamId
  * @returns {Object[]}
@@ -137,16 +141,21 @@ function _seasonPlayersOf(seasonId, teamId) {
     if (_str(r.team_id) !== teamId) return;
 
     var pid = _str(r.player_id);
-    if (seen[pid]) return;
-    seen[pid] = true;
+    var active = _str(r.status) === ROSTER_ACTIVE;
+    if (seen[pid]) {
+      if (active) seen[pid].current = true;
+      return;
+    }
 
     var info = playerInfo[pid] || {};
-    list.push({
+    var item = {
       player_id: pid,
       name:      _str(info.name),
       position:  _str(info.position),
-      current:   _str(r.status) === ROSTER_ACTIVE,
-    });
+      current:   active,
+    };
+    seen[pid] = item;
+    list.push(item);
   });
 
   list.sort(_comparePlayers);
