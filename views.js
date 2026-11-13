@@ -5361,12 +5361,102 @@ async function renderTeamStats(seasonId, competition) {
       <button class="seg-btn is-active" data-mode="total">合計</button>
       <button class="seg-btn" data-mode="avg">1試合あたり</button>
     </div>
+    <div class="filter-row">
+      <label>
+        並べ替え
+        <select id="ts-sort">${TEAM_STAT_COLUMNS.map((c, i) =>
+          '<option value="' + i + '">' + esc(c.label) + '</option>').join('')}</select>
+      </label>
+      <label>
+        順番
+        <select id="ts-dir">
+          <option value="desc">多い順（降順）</option>
+          <option value="asc">少ない順（昇順）</option>
+        </select>
+      </label>
+    </div>
+    <div class="form-actions">
+      <button type="button" id="ts-share" class="btn btn-secondary btn-sm">画像を保存（X投稿用）</button>
+    </div>
     <div id="ts-table"></div>`;
+
+  document.getElementById('ts-sort').value = String(teamStatsSort.col);
+  document.getElementById('ts-dir').value = teamStatsSort.dir;
 
   document.querySelectorAll('#ts-mode .seg-btn').forEach((b) => {
     b.onclick = () => showTeamStats(b.dataset.mode);
   });
-  showTeamStats('total');
+  document.getElementById('ts-sort').onchange = (e) => {
+    teamStatsSort.col = Number(e.target.value);
+    showTeamStats(teamStatsMode);
+  };
+  document.getElementById('ts-dir').onchange = (e) => {
+    teamStatsSort.dir = e.target.value;
+    showTeamStats(teamStatsMode);
+  };
+  document.getElementById('ts-share').onclick = onShareTeamStats;
+  showTeamStats(teamStatsMode);
+}
+
+/**
+ * チームスタッツの列。value は並べ替えに使う数値、text は表示。
+ *
+ * 支配率とパス成功率・枠内率は割合なので、合計を出しても意味を持たない。
+ * どちらのモードでも同じ値を出す。
+ */
+const TEAM_STAT_COLUMNS = [
+  { label: '試合',     value: (r) => r.matches, text: (r) => r.matches },
+  { label: '支配率',   value: (r) => r.possession, text: (r) => r.possession + '%' },
+  { label: '得点',     value: (r, a) => (a ? r.goals_for_avg : r.goals_for) },
+  { label: '失点',     value: (r, a) => (a ? r.goals_against_avg : r.goals_against) },
+  { label: 'シュート', value: (r, a) => (a ? r.shots_avg : r.shots) },
+  { label: '枠内',     value: (r, a) => (a ? r.shots_on_target_avg : r.shots_on_target) },
+  { label: '枠内率',   value: (r) => r.shot_accuracy, text: (r) => r.shot_accuracy + '%' },
+  { label: 'パス',     value: (r, a) => (a ? r.passes_avg : r.passes) },
+  { label: 'パス成功', value: (r, a) => (a ? r.passes_success_avg : r.passes_success) },
+  { label: '成功率',   value: (r) => r.pass_rate, text: (r) => r.pass_rate + '%' },
+  { label: 'クロス',   value: (r, a) => (a ? r.crosses_avg : r.crosses) },
+];
+
+/** チームスタッツの並べ替え。既定はサーバーと同じ「支配率の多い順」 */
+const teamStatsSort = { col: 1, dir: 'desc' };
+
+/** 合計（total）か1試合あたり（avg）か */
+let teamStatsMode = 'total';
+
+/**
+ * 今の並べ替えでチームを並べた配列を返す。同じ値ならチーム名順。
+ *
+ * @param {boolean} avg
+ * @returns {Object[]}
+ */
+function sortedTeamStats(avg) {
+  const col = TEAM_STAT_COLUMNS[teamStatsSort.col] || TEAM_STAT_COLUMNS[1];
+  const sign = teamStatsSort.dir === 'asc' ? 1 : -1;
+  return (teamStatsData ? teamStatsData.teams : []).slice().sort((a, b) => {
+    const va = Number(col.value(a, avg)) || 0;
+    const vb = Number(col.value(b, avg)) || 0;
+    if (va !== vb) return (va - vb) * sign;
+    return String(a.team_name).localeCompare(String(b.team_name), 'ja');
+  });
+}
+
+/** チームスタッツを X 投稿用の画像にする（今の表示・並べ替えのまま） */
+function onShareTeamStats() {
+  const avg = teamStatsMode === 'avg';
+  const seasonName = selectedText('st-season');
+  const scope = selectedText('st-division') || '全大会';
+  const col = TEAM_STAT_COLUMNS[teamStatsSort.col];
+  const order = col.label + (teamStatsSort.dir === 'asc' ? 'の少ない順' : 'の多い順');
+  const cols = TEAM_STAT_COLUMNS.map((c) => ({
+    label: c.label,
+    text: (r) => (c.text ? c.text(r) : c.value(r, avg)),
+  }));
+  const title = 'チームスタッツ（' + (avg ? '1試合あたり' : '合計') + '）';
+  showShareImage(
+    drawTeamStatsImage(sortedTeamStats(avg), cols, teamStatsSort.col, title, seasonName + ' ／ ' + scope + ' ／ ' + order),
+    seasonName + '_チームスタッツ_' + (avg ? '1試合あたり' : '合計') + '_' + order
+  );
 }
 
 /** 直近に取得したチームスタッツ。合計と平均の切り替えで再取得しないために持つ */
@@ -5385,30 +5475,19 @@ function showTeamStats(mode) {
     el.classList.toggle('is-active', el.dataset.mode === mode);
   });
 
+  teamStatsMode = mode;
   const avg = mode === 'avg';
+  const sortCol = teamStatsSort.col;
 
-  // 支配率とパス成功率は割合なので、合計を出しても意味を持たない。
-  // どちらのモードでも同じ値を出す
-  const cols = [
-    ['試合', (r) => r.matches],
-    ['支配率', (r) => r.possession + '%'],
-    ['得点', (r) => (avg ? r.goals_for_avg : r.goals_for)],
-    ['失点', (r) => (avg ? r.goals_against_avg : r.goals_against)],
-    ['シュート', (r) => (avg ? r.shots_avg : r.shots)],
-    ['枠内', (r) => (avg ? r.shots_on_target_avg : r.shots_on_target)],
-    ['枠内率', (r) => r.shot_accuracy + '%'],
-    ['パス', (r) => (avg ? r.passes_avg : r.passes)],
-    ['パス成功', (r) => (avg ? r.passes_success_avg : r.passes_success)],
-    ['成功率', (r) => r.pass_rate + '%'],
-    ['クロス', (r) => (avg ? r.crosses_avg : r.crosses)],
-  ];
-
+  // 並べ替えの基準にした列は見出しと値を目立たせる
   const head = '<tr><th>チーム</th>' +
-    cols.map((c) => '<th class="num">' + esc(c[0]) + '</th>').join('') + '</tr>';
+    TEAM_STAT_COLUMNS.map((c, i) => '<th class="num' + (i === sortCol ? ' is-sorted' : '') + '">' +
+      esc(c.label) + (i === sortCol ? (teamStatsSort.dir === 'asc' ? ' ▲' : ' ▼') : '') + '</th>').join('') + '</tr>';
 
-  const rows = d.teams.map((r) =>
+  const rows = sortedTeamStats(avg).map((r) =>
     '<tr><td>' + esc(r.team_name) + '</td>' +
-    cols.map((c) => '<td class="num">' + esc(c[1](r)) + '</td>').join('') +
+    TEAM_STAT_COLUMNS.map((c, i) => '<td class="num' + (i === sortCol ? ' is-sorted' : '') + '">' +
+      esc(c.text ? c.text(r) : c.value(r, avg)) + '</td>').join('') +
     '</tr>').join('');
 
   document.getElementById('ts-table').innerHTML = `
@@ -5657,6 +5736,9 @@ async function renderRankings(seasonId, competition) {
 
   box.innerHTML = `
     <h3 class="sub-head">${esc(rkTitle)}</h3>
+    <div class="form-actions">
+      <button type="button" id="rk-share" class="btn btn-secondary btn-sm">画像を保存（X投稿用・各項目TOP20）</button>
+    </div>
     <div class="rank-grid">
       ${table('得点', d.goals, 'goals', ' 点')}
       ${table('アシスト', d.assists, 'assists', ' 回')}
@@ -5672,6 +5754,26 @@ async function renderRankings(seasonId, competition) {
       シュートセーブ率は ${d.min_matches_for_save_rate} 試合以上出場した GK のみを対象とし、
       分母は出場試合における相手チームの枠内シュート数です。
     </p>`;
+
+  // 項目ごとに TOP20 を1枚ずつ。プレビューで1枚ずつ保存でき、共有はまとめて送れる
+  document.getElementById('rk-share').onclick = () => {
+    const seasonName = selectedText('st-season');
+    const scope = competition || '全大会';
+    const specs = [
+      { list: d.goals, title: '得点', valueKey: 'goals', unit: '' },
+      { list: d.assists, title: 'アシスト', valueKey: 'assists', unit: '' },
+      { list: d.saves, title: 'セーブ数', valueKey: 'saves', unit: '' },
+      { list: d.saves_avg, title: 'セーブ数（1試合平均）', valueKey: 'saves_avg', unit: '',
+        extraLabel: 'セーブ/試合', extra: (r) => r.saves + '/' + r.team_matches },
+      { list: d.save_rate, title: 'シュートセーブ率', valueKey: 'rate', unit: '%',
+        extraLabel: 'セーブ/被枠内', extra: (r) => r.saves + '/' + r.faced },
+    ];
+    showShareImage(specs.map((s) => ({
+      canvas: drawRankingImage(s.list, s, seasonName, scope),
+      filename: seasonName + '_' + scope + '_' + s.title + 'ランキング',
+      label: s.title,
+    })));
+  };
 }
 
 // ---------------------------------------------------------------------------

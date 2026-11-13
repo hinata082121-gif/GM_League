@@ -970,6 +970,13 @@ body {
   color: var(--color-success);
 }
 
+/* 並べ替えの基準にしている列 */
+.data-table th.is-sorted,
+.data-table td.is-sorted {
+  color: var(--color-primary);
+  font-weight: 700;
+}
+
 /* ---------- X 投稿用の画像のプレビュー ---------- */
 .share-modal {
   position: fixed;

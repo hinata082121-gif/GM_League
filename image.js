@@ -56,11 +56,12 @@ function shareFont(px, weight) {
  * @param {number} px 基準の文字サイズ
  * @param {number} weight
  * @param {string} [align='left']
+ * @param {number} [minRatio=0.7] どこまで小さくしてよいか（基準の文字サイズに対する割合）
  */
-function shareFitText(ctx, text, x, y, maxW, px, weight, align) {
+function shareFitText(ctx, text, x, y, maxW, px, weight, align, minRatio) {
   let size = px;
   ctx.font = shareFont(size, weight);
-  while (ctx.measureText(text).width > maxW && size > px * 0.7) {
+  while (ctx.measureText(text).width > maxW && size > px * (minRatio || 0.7)) {
     size -= 1;
     ctx.font = shareFont(size, weight);
   }
@@ -301,6 +302,141 @@ function drawFixturesImage(fixtures, seasonName, title, dateText) {
     if (gi < groups.length - 1) y += groupGap;
   });
 
+  return c.canvas;
+}
+
+// =============================================================================
+// 汎用の表（個人成績・チームスタッツ）
+// =============================================================================
+
+/**
+ * 見出し行つきの表を描く。順位表と同じ見た目で、列の幅は呼び出し側が決める。
+ *
+ * 列: { label, w, align: 'left' | 'center', value(row) → 文字, weight?, color?(row) }
+ * 幅 0 の列が1つあれば、残りの幅をそこへ渡す（チーム名・選手名の列）。
+ * highlight に列の番号を渡すと、その列の見出しと値を青で目立たせる（並べ替えの基準）。
+ *
+ * @param {Object} c shareCanvas の戻り値
+ * @param {Object[]} cols
+ * @param {Object[]} rows
+ * @param {number} [highlight=-1]
+ */
+function shareTable(c, cols, rows, highlight) {
+  const { ctx } = c;
+  const fixed = cols.reduce((s, k) => s + (k.w || 0), 0);
+  const flex = cols.find((k) => !k.w);
+  if (flex) flex.w = (c.right - c.left) - fixed;
+
+  let x = c.left;
+  cols.forEach((k) => { k.x = x; x += k.w; });
+
+  const headRowH = 56;
+  ctx.fillStyle = SHARE_COLORS.stripe;
+  ctx.fillRect(c.left, c.top, c.right - c.left, headRowH);
+  cols.forEach((k, i) => {
+    ctx.fillStyle = i === highlight ? SHARE_COLORS.primary : SHARE_COLORS.sub;
+    const left = k.align === 'left';
+    shareFitText(ctx, k.label, left ? k.x + 12 : k.x + k.w / 2, c.top + headRowH / 2,
+      k.w - (left ? 20 : 6), 22, 700, left ? 'left' : 'center', 0.6);
+  });
+
+  const avail = c.bottom - (c.top + headRowH);
+  const rowH = Math.min(84, Math.floor(avail / Math.max(rows.length, 8)));
+  const fontPx = Math.max(18, Math.min(32, Math.floor(rowH * 0.44)));
+
+  rows.forEach((r, ri) => {
+    const y = c.top + headRowH + ri * rowH;
+    if (ri % 2 === 1) {
+      ctx.fillStyle = SHARE_COLORS.stripe;
+      ctx.fillRect(c.left, y, c.right - c.left, rowH);
+    }
+    ctx.strokeStyle = SHARE_COLORS.line;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(c.left, y + rowH);
+    ctx.lineTo(c.right, y + rowH);
+    ctx.stroke();
+
+    const mid = y + rowH / 2;
+    cols.forEach((k, i) => {
+      const text = String(k.value(r));
+      ctx.fillStyle = i === highlight ? SHARE_COLORS.primary
+        : (k.color ? k.color(r) : SHARE_COLORS.text);
+      const weight = i === highlight ? 800 : (k.weight || 500);
+      if (k.align === 'left') shareFitText(ctx, text, k.x + 12, mid, k.w - 20, fontPx, weight, 'left', 0.6);
+      else shareFitText(ctx, text, k.x + k.w / 2, mid, k.w - 6, fontPx, weight, 'center', 0.6);
+    });
+  });
+}
+
+/**
+ * 個人成績のランキング1項目（TOP20）の画像を作る。
+ *
+ * @param {Object[]} list getRankings の1項目（goals / assists など）
+ * @param {Object} spec { title, valueKey, unit, extra?(row) → 文字 }
+ * @param {string} seasonName
+ * @param {string} scope 例: 全大会 / GM1リーグ
+ * @returns {HTMLCanvasElement}
+ */
+function drawRankingImage(list, spec, seasonName, scope) {
+  const c = shareCanvas(spec.title + ' ランキング', seasonName + ' ／ ' + scope + ' ／ ' + shareToday());
+  const rows = (list || []).slice(0, 20);
+
+  const cols = [
+    { label: '順位', w: 96, align: 'center', weight: 700,
+      value: (r) => String(r.rank) + (r.tied ? '=' : '') },
+    { label: '選手', w: 0, align: 'left', weight: 700,
+      value: (r) => (r.position ? r.position + '  ' : '') + r.name },
+    { label: 'チーム', w: 300, align: 'left', value: (r) => r.team_name,
+      color: () => SHARE_COLORS.sub },
+    { label: spec.title, w: 150, align: 'center', weight: 800,
+      value: (r) => r[spec.valueKey] + (spec.unit || ''), color: () => SHARE_COLORS.primary },
+  ];
+  if (spec.extra) {
+    cols.push({ label: spec.extraLabel || '', w: 150, align: 'center', value: spec.extra,
+      color: () => SHARE_COLORS.sub });
+  }
+
+  if (rows.length === 0) {
+    c.ctx.fillStyle = SHARE_COLORS.sub;
+    shareFitText(c.ctx, '該当する選手はまだいません', SHARE_W / 2, (c.top + c.bottom) / 2, 800, 36, 700, 'center');
+    return c.canvas;
+  }
+
+  shareTable(c, cols, rows);
+  return c.canvas;
+}
+
+/**
+ * チームスタッツの画像を作る。並びは呼び出し側で決めた順のまま。
+ *
+ * @param {Object[]} rows 並べ替え済みのチーム
+ * @param {Object[]} cols { label, text(row) } 。チーム名の列は含めない
+ * @param {number} sortIndex 並べ替えの基準にした列の番号（cols の中で）。-1 なら無し
+ * @param {string} title 例: チームスタッツ（合計）
+ * @param {string} subtitle 例: Season15 ／ 全大会 ／ シュートの多い順
+ * @returns {HTMLCanvasElement}
+ */
+function drawTeamStatsImage(rows, cols, sortIndex, title, subtitle) {
+  const c = shareCanvas(title, subtitle + ' ／ ' + shareToday());
+  // 11列あるので、左右の余白を詰めて表を広げる
+  c.left = 20;
+  c.right = SHARE_W - 20;
+  const teamW = 230;
+  const colW = Math.floor((c.right - c.left - teamW) / cols.length);
+  // 割合の列は「%」を見出しへ移し、値は数字だけにする（狭い列に収めるため）
+  const isPct = (k) => rows.some((r) => /%$/.test(String(k.text(r))));
+  const tableCols = [{ label: 'チーム', w: teamW, align: 'left', weight: 700, value: (r) => r.team_name }]
+    .concat(cols.map((k) => {
+      const pct = isPct(k);
+      return {
+        label: k.label + (pct ? '%' : ''),
+        w: colW,
+        align: 'center',
+        value: (r) => String(k.text(r)).replace(/%$/, ''),
+      };
+    }));
+  shareTable(c, tableCols, rows, sortIndex >= 0 ? sortIndex + 1 : -1);
   return c.canvas;
 }
 
