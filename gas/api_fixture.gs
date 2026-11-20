@@ -92,6 +92,7 @@ function getFixtures(token, payload) {
       reported:       !!hit,
       match_status:   hit ? hit.status : "",
       score:          hit ? hit.score : "",
+      forfeit:        hit ? hit.forfeit : "",
     });
   });
 
@@ -719,8 +720,9 @@ function _reportedMatchMap(seasonId, stage) {
 
     var key = _fixtureKey(_str(m.round), _str(m.home_team), _str(m.away_team));
     map[key] = {
-      status: status,
-      score:  _num(m.home_score) + " - " + _num(m.away_score),
+      status:  status,
+      score:   _num(m.home_score) + " - " + _num(m.away_score),
+      forfeit: _forfeitOf(m),
     };
   });
 
@@ -923,7 +925,24 @@ function _cupBracket(seasonId) {
     for (var k = 0; k < prev.length / 2; k++) {
       var a = prev[2 * k].winner;
       var b = prev[2 * k + 1].winner;
+      var outA = prev[2 * k].out;
+      var outB = prev[2 * k + 1].out;
       var tieId = "R" + r + "-" + _pad2(k + 1);
+
+      // 片方の山が両者不戦敗で誰も上がってこないなら、もう片方は試合をせずに勝ち上がる。
+      // 両方の山が空なら、このタイからも誰も上がらない
+      var walk = (outA && outB) || (outA && b) || (outB && a);
+      if (walk) {
+        list.push(_cupTie({
+          tie_id: tieId, round_no: r, round: _cupRoundName(r, total), slot: k + 1,
+          team_a: outA ? "" : a, team_b: outB ? "" : b, bye: false,
+          walkover: true, auto_winner: outA ? (outB ? "" : b) : a,
+          from: [prev[2 * k].tie_id, prev[2 * k + 1].tie_id],
+          legs: [],
+        }, approved, reported, names));
+        continue;
+      }
+
       list.push(_cupTie({
         tie_id: tieId, round_no: r, round: _cupRoundName(r, total), slot: k + 1,
         team_a: a, team_b: b, bye: false,
@@ -968,6 +987,7 @@ function _cupTie(t, approved, reported, names) {
   var pkA = null;
   var pkB = null;
   var done = 0;
+  var bothOut = false;
 
   var legs = t.legs.map(function (l) {
     var key = t.tie_id + "|" + l.leg;
@@ -988,8 +1008,10 @@ function _cupTie(t, approved, reported, names) {
       reported:    !!rep,
       match_status: rep ? _str(rep.status) : "",
       match_id:    rep ? _str(rep.match_id) : "",
+      forfeit:     m ? _forfeitOf(m) : "",
     };
     if (!m) return out;
+    if (out.forfeit === FORFEIT_BOTH) bothOut = true;
 
     // 表示は実際の試合のホーム・アウェイで出す（対戦表と逆で報告されても合うように）
     var mh = _str(m.home_team);
@@ -1015,9 +1037,19 @@ function _cupTie(t, approved, reported, names) {
 
   var winner = "";
   var decidedBy = "";
+  var out = false;
   if (t.bye) {
     winner = t.team_a;
     decidedBy = "シード";
+  } else if (t.walkover) {
+    // 相手の山が両者不戦敗で空。試合をせずに決まる
+    winner = t.auto_winner || "";
+    out = !winner;
+    decidedBy = winner ? "不戦勝（相手が両者不戦敗）" : "両者敗退";
+  } else if (bothOut) {
+    // 両者不戦敗のレグがあれば、残りのレグを待たずに両チームとも敗退
+    out = true;
+    decidedBy = "両者不戦敗";
   } else if (ready && legs.length > 0 && done === legs.length) {
     if (aggA > aggB) { winner = t.team_a; decidedBy = "合計スコア"; }
     else if (aggB > aggA) { winner = t.team_b; decidedBy = "合計スコア"; }
@@ -1036,6 +1068,8 @@ function _cupTie(t, approved, reported, names) {
     slot:        t.slot,
     from:        t.from || [],
     bye:         !!t.bye,
+    walkover:    !!t.walkover,
+    out:         out,
     team_a:      t.team_a || "",
     team_a_name: t.team_a ? (names[t.team_a] || t.team_a) : "",
     team_b:      t.team_b || "",
@@ -1364,6 +1398,15 @@ function _applyCupBracketRules(p) {
     leg = "";
   }
 
+  // 両者不戦敗で決着したタイは、まだ報告されていないレグを受け付けない
+  // （報告済みのレグの訂正はできる）
+  if (tie.out) {
+    var thisLeg = tie.legs.filter(function (l) { return _normalizeLeg(l.leg) === leg; })[0];
+    if (!thisLeg || !thisLeg.reported) {
+      return "このタイは両者不戦敗で決着しています。残りのレグは行いません。";
+    }
+  }
+
   p.tieId = tie.tie_id;
   p.leg = leg;
   p.round = tie.round;
@@ -1413,6 +1456,8 @@ function _cupFixtures(seasonId) {
     r.ties.forEach(function (t) {
       if (t.bye || !t.team_a || !t.team_b) return;
       t.legs.forEach(function (l) {
+        // 両者不戦敗で決着したタイの残りのレグは行わない
+        if (t.out && !l.reported) return;
         var label = t.round + (l.leg === "1" ? " 1stレグ" : (l.leg === "2" ? " 2ndレグ" : ""));
         fixtures.push({
           fixture_id:     t.tie_id + ":" + (l.leg || "0"),
@@ -1430,6 +1475,7 @@ function _cupFixtures(seasonId) {
           reported:       l.reported,
           match_status:   l.match_status,
           score:          l.approved ? l.home_score + " - " + l.away_score : "",
+          forfeit:        l.forfeit || "",
         });
       });
     });

@@ -8,7 +8,7 @@ const SHEETS = {
   Seasons: ['season_id','name','status','leg_enabled','window1_open_at','window2_open_at','claim_deadline_at','created_at'],
   Players: ['player_id','name','position','detail_position','age','nationality','real_club','eligible'],
   Rosters: ['roster_id','season_id','team_id','player_id','status','acquisition_type','acquired_cost','acquired_at','expires_season'],
-  Matches: ['match_id','season_id','stage','round','tie_id','leg','home_team','away_team','home_score','away_score','home_pk','away_pk','status','reported_by','created_at'],
+  Matches: ['match_id','season_id','stage','round','tie_id','leg','home_team','away_team','home_score','away_score','home_pk','away_pk','status','reported_by','created_at','forfeit'],
   MatchGoals: ['goal_id','match_id','team_id','scorer_id','assist_id'],
   MatchTeamStats: ['id','match_id','team_id','possession','shots','shots_on_target','passes','passes_success','crosses'],
   MatchGKStats: ['id','match_id','team_id','gk_player_id','saves'],

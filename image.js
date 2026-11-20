@@ -290,7 +290,10 @@ function drawFixturesImage(fixtures, seasonName, title, dateText) {
         shareRoundRect(ctx, center - 105, mid - boxH / 2, 210, boxH, Math.min(12, Math.floor(boxH / 3)));
         ctx.fill();
         ctx.fillStyle = '#ffffff';
-        shareFitText(ctx, f.score.replace(/\s/g, ''), center, mid, 190, scorePx, 800, 'center');
+        // 両者不戦敗は 0-0 だと引き分けに見えるので文字にする。不戦勝はスコアに「不戦」を添える
+        const scoreText = f.forfeit === 'both_loss' ? '両者不戦敗'
+          : f.score.replace(/\s/g, '') + (f.forfeit ? ' 不戦' : '');
+        shareFitText(ctx, scoreText, center, mid, 190, scorePx, 800, 'center', 0.5);
       } else {
         ctx.fillStyle = SHARE_COLORS.sub;
         shareFitText(ctx, 'vs', center, mid, 190, Math.max(20, Math.min(40, Math.floor(cardH * 0.42))), 700, 'center');
@@ -321,8 +324,9 @@ function drawFixturesImage(fixtures, seasonName, title, dateText) {
  * @param {Object[]} rows
  * @param {number} [highlight=-1]
  */
-function shareTable(c, cols, rows, highlight) {
+function shareTable(c, cols, rows, highlight, opts) {
   const { ctx } = c;
+  const o = opts || {};
   const fixed = cols.reduce((s, k) => s + (k.w || 0), 0);
   const flex = cols.find((k) => !k.w);
   if (flex) flex.w = (c.right - c.left) - fixed;
@@ -330,26 +334,80 @@ function shareTable(c, cols, rows, highlight) {
   let x = c.left;
   cols.forEach((k) => { k.x = x; x += k.w; });
 
+  // 列のまとまり（groups: [{ label, from, to }]、from/to は cols の添字）。
+  // 見出しの上にまとまりの名前を出し、まとまりごとに薄く色を変えて縦線で区切る。
+  // 数字の列が11本並ぶと、スマホで縮めて見たときに隣の列と数字がつながって読めない
+  const groups = o.groups || [];
+  const groupRowH = groups.length ? 40 : 0;
+  const headTop = c.top + groupRowH;
   const headRowH = 56;
-  ctx.fillStyle = SHARE_COLORS.stripe;
-  ctx.fillRect(c.left, c.top, c.right - c.left, headRowH);
-  cols.forEach((k, i) => {
-    ctx.fillStyle = i === highlight ? SHARE_COLORS.primary : SHARE_COLORS.sub;
-    const left = k.align === 'left';
-    shareFitText(ctx, k.label, left ? k.x + 12 : k.x + k.w / 2, c.top + headRowH / 2,
-      k.w - (left ? 20 : 6), 22, 700, left ? 'left' : 'center', 0.6);
-  });
-
-  const avail = c.bottom - (c.top + headRowH);
+  const bodyTop = headTop + headRowH;
+  const avail = c.bottom - bodyTop;
   const rowH = Math.min(84, Math.floor(avail / Math.max(rows.length, 8)));
   const fontPx = Math.max(18, Math.min(32, Math.floor(rowH * 0.44)));
+  const bodyBottom = bodyTop + rowH * rows.length;
+  const spanOf = (g) => ({ x: cols[g.from].x, w: cols[g.to].x + cols[g.to].w - cols[g.from].x });
+
+  if (groups.length) {
+    groups.forEach((g) => {
+      if (!g.label) return;
+      const s = spanOf(g);
+      ctx.fillStyle = SHARE_COLORS.header;
+      shareRoundRect(ctx, s.x + 4, c.top + 4, s.w - 8, groupRowH - 8, 8);
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      shareFitText(ctx, g.label, s.x + s.w / 2, c.top + groupRowH / 2, s.w - 16, 20, 700, 'center', 0.6);
+    });
+  }
+
+  ctx.fillStyle = SHARE_COLORS.stripe;
+  ctx.fillRect(c.left, headTop, c.right - c.left, headRowH);
 
   rows.forEach((r, ri) => {
-    const y = c.top + headRowH + ri * rowH;
+    const y = bodyTop + ri * rowH;
     if (ri % 2 === 1) {
       ctx.fillStyle = SHARE_COLORS.stripe;
       ctx.fillRect(c.left, y, c.right - c.left, rowH);
     }
+  });
+
+  // まとまりを1つおきに薄く塗る。並べ替えの基準の列はもう少し濃く
+  groups.forEach((g, gi) => {
+    if (gi % 2 === 0) return;
+    const s = spanOf(g);
+    ctx.fillStyle = 'rgba(26, 115, 232, 0.06)';
+    ctx.fillRect(s.x, headTop, s.w, bodyBottom - headTop);
+  });
+  if (o.highlightBg && highlight >= 0 && cols[highlight]) {
+    ctx.fillStyle = 'rgba(26, 115, 232, 0.14)';
+    ctx.fillRect(cols[highlight].x, headTop, cols[highlight].w, bodyBottom - headTop);
+  }
+
+  cols.forEach((k, i) => {
+    ctx.fillStyle = i === highlight ? SHARE_COLORS.primary : SHARE_COLORS.sub;
+    const left = k.align === 'left';
+    shareFitText(ctx, k.label, left ? k.x + 12 : k.x + k.w / 2, headTop + headRowH / 2,
+      k.w - (left ? 20 : 6), 22, 700, left ? 'left' : 'center', 0.6);
+  });
+
+  // 縦線。まとまりの境目は濃く太く、まとまりの中の列の境目は細く
+  if (groups.length) {
+    const edges = {};
+    groups.forEach((g) => { edges[g.from] = true; });
+    cols.forEach((k, i) => {
+      if (i === 0) return;
+      const strong = !!edges[i];
+      ctx.strokeStyle = strong ? SHARE_COLORS.sub : SHARE_COLORS.line;
+      ctx.lineWidth = strong ? 2 : 1;
+      ctx.beginPath();
+      ctx.moveTo(k.x, headTop);
+      ctx.lineTo(k.x, bodyBottom);
+      ctx.stroke();
+    });
+  }
+
+  rows.forEach((r, ri) => {
+    const y = bodyTop + ri * rowH;
     ctx.strokeStyle = SHARE_COLORS.line;
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -364,7 +422,8 @@ function shareTable(c, cols, rows, highlight) {
         : (k.color ? k.color(r) : SHARE_COLORS.text);
       const weight = i === highlight ? 800 : (k.weight || 500);
       if (k.align === 'left') shareFitText(ctx, text, k.x + 12, mid, k.w - 20, fontPx, weight, 'left', 0.6);
-      else shareFitText(ctx, text, k.x + k.w / 2, mid, k.w - 6, fontPx, weight, 'center', 0.6);
+      // 区切り線のある表は、隣の数字とくっつかないよう左右に余白を取る
+      else shareFitText(ctx, text, k.x + k.w / 2, mid, k.w - (groups.length ? 16 : 6), fontPx, weight, 'center', 0.6);
     });
   });
 }
@@ -430,15 +489,42 @@ function drawTeamStatsImage(rows, cols, sortIndex, title, subtitle) {
     .concat(cols.map((k) => {
       const pct = isPct(k);
       return {
-        label: k.label + (pct ? '%' : ''),
+        label: (TEAM_STAT_SHORT[k.label] || k.label) + (pct ? '%' : ''),
         w: colW,
         align: 'center',
         value: (r) => String(k.text(r)).replace(/%$/, ''),
       };
     }));
-  shareTable(c, tableCols, rows, sortIndex >= 0 ? sortIndex + 1 : -1);
+
+  // 列をまとまりに分ける。見出しの名前で引くので、列の順番が変わっても崩れない
+  const groups = [{ label: '', from: 0, to: 0 }];
+  TEAM_STAT_GROUPS.forEach((g) => {
+    const idx = g.keys.map((key) => cols.findIndex((k) => k.label === key)).filter((i) => i >= 0);
+    if (idx.length) groups.push({ label: g.label, from: Math.min(...idx) + 1, to: Math.max(...idx) + 1 });
+  });
+
+  shareTable(c, tableCols, rows, sortIndex >= 0 ? sortIndex + 1 : -1, { groups, highlightBg: true });
   return c.canvas;
 }
+
+/** チームスタッツの画像で、列をまとめる単位（見出しの上に出す名前） */
+const TEAM_STAT_GROUPS = [
+  { label: '', keys: ['試合', '支配率'] },
+  { label: '得失点', keys: ['得点', '失点'] },
+  { label: 'シュート', keys: ['シュート', '枠内', '枠内率'] },
+  { label: 'パス', keys: ['パス', 'パス成功', '成功率'] },
+  { label: '', keys: ['クロス'] },
+];
+
+/** まとまりの名前が上にあるので、見出しは短くする */
+const TEAM_STAT_SHORT = {
+  '支配率': '支配',
+  'シュート': '本数',
+  '枠内率': '枠内',
+  'パス': '本数',
+  'パス成功': '成功',
+  '成功率': '成功',
+};
 
 // =============================================================================
 // GMリーグ杯（トーナメント表）
@@ -483,7 +569,8 @@ function drawBracketImage(b, seasonName) {
         ctx.fillRect(c.left, y, c.right - c.left, rowH);
       }
       const mid = y + rowH * (t.bye ? 0.5 : 0.4);
-      const nameOf = (id, name, from) => (id ? name : (from ? from + ' の勝者' : '未定'));
+      const nameOf = (id, name, from) =>
+        (id ? name : (t.walkover ? 'なし（両者不戦敗）' : (from ? from + ' の勝者' : '未定')));
       const color = (id) => (id && t.winner === id ? SHARE_COLORS.win : (id ? SHARE_COLORS.text : SHARE_COLORS.sub));
 
       if (t.bye) {
@@ -505,15 +592,19 @@ function drawBracketImage(b, seasonName) {
 
         // 2レグの内訳・PK・決まり方。合計と読み合わせられるよう、左のチームから見た点で出す
         const legs = t.legs.filter((l) => l.approved).map((l) => {
+          const legName = l.leg === '1' ? '1st ' : l.leg === '2' ? '2nd ' : '';
+          if (l.forfeit === 'both_loss') return legName + '両者不戦敗';
           const aHome = l.home === t.team_a;
           const sa = aHome ? l.home_score : l.away_score;
           const sb = aHome ? l.away_score : l.home_score;
           const pk = l.home_pk !== null && l.away_pk !== null
             ? '(PK' + (aHome ? l.home_pk + '-' + l.away_pk : l.away_pk + '-' + l.home_pk) + ')'
             : '';
-          return (l.leg === '1' ? '1st ' : l.leg === '2' ? '2nd ' : '') + sa + '-' + sb + pk;
+          return legName + sa + '-' + sb + pk + (l.forfeit ? '(不戦)' : '');
         });
-        const note = legs.join(' ／ ') + (t.decided_by === 'PK戦' ? ' ／ PK戦で勝ち上がり' : '');
+        const note = t.walkover ? t.decided_by
+          : legs.join(' ／ ') + (t.decided_by === 'PK戦' ? ' ／ PK戦で勝ち上がり' : '') +
+            (t.out ? ' ／ 両チームとも敗退' : '');
         if (note) {
           ctx.fillStyle = SHARE_COLORS.sub;
           shareFitText(ctx, note, center, y + rowH * 0.78, c.right - c.left - 40, legPx, 500, 'center');

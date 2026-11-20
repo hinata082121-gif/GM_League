@@ -166,7 +166,10 @@ function getStandings(token, payload) {
     h.gf += hs; h.ga += as;
     a.gf += as; a.ga += hs;
 
-    if (hs > as) {
+    // 両者不戦敗は 0-0 だが引き分けではない。両チームとも負け・勝点0
+    if (_forfeitOf(m) === FORFEIT_BOTH) {
+      h.lost++; a.lost++;
+    } else if (hs > as) {
       h.won++; a.lost++;
       h.points += winPts;
     } else if (hs < as) {
@@ -325,6 +328,7 @@ function _headToHead(group, matches, winPts, drawPts) {
     acc[home].gf += hs; acc[home].ga += as;
     acc[away].gf += as; acc[away].ga += hs;
 
+    if (_forfeitOf(m) === FORFEIT_BOTH) return;
     if (hs > as) acc[home].points += winPts;
     else if (hs < as) acc[away].points += winPts;
     else { acc[home].points += drawPts; acc[away].points += drawPts; }
@@ -429,14 +433,17 @@ function getTournament(token, payload) {
         away_score: as,
         home_pk:    _str(m.home_pk) === "" ? null : _num(m.home_pk),
         away_pk:    _str(m.away_pk) === "" ? null : _num(m.away_pk),
+        forfeit:    _forfeitOf(m),
       };
     });
 
-    // 勝者判定（合計 → PK）
+    // 勝者判定（両者不戦敗 → 合計 → PK）
     var winner = "";
     var decided_by = "";
+    var bothOut = legs.some(function (l) { return l.forfeit === FORFEIT_BOTH; });
 
-    if (aggA > aggB) { winner = teamA; decided_by = "合計スコア"; }
+    if (bothOut) { decided_by = "両者不戦敗"; }
+    else if (aggA > aggB) { winner = teamA; decided_by = "合計スコア"; }
     else if (aggB > aggA) { winner = teamB; decided_by = "合計スコア"; }
     else if (pkA !== null && pkB !== null && pkA !== pkB) {
       winner = pkA > pkB ? teamA : teamB;
@@ -460,6 +467,7 @@ function getTournament(token, payload) {
       winner:      winner,
       winner_name: winner ? (teamNames[winner] || winner) : "",
       decided_by:  decided_by,
+      both_out:    bothOut,
       legs:        legs,
     };
   });
@@ -470,6 +478,24 @@ function getTournament(token, payload) {
   if (stage === STAGE_TOURNAMENT) {
     var bracket = _cupBracket(seasonId);
     if (bracket) {
+      // 相手が両者不戦敗で消え、試合をせずに勝ち上がったタイは Matches に無い。
+      // 賞金・スポンサーは「最後のタイ＝決勝」で読むので、表から補って並びを保つ
+      var have = {};
+      result.forEach(function (t) { have[t.tie_id] = true; });
+      bracket.rounds.forEach(function (r) {
+        r.ties.forEach(function (t) {
+          if (have[t.tie_id] || !t.walkover) return;
+          result.push({
+            tie_id: t.tie_id, round: t.round,
+            team_a: t.team_a, team_a_name: t.team_a_name,
+            team_b: t.team_b, team_b_name: t.team_b_name,
+            agg_a: 0, agg_b: 0, pk_a: null, pk_b: null, leg_count: 0,
+            winner: t.winner, winner_name: t.winner_name,
+            decided_by: t.decided_by, both_out: !t.winner, legs: [],
+          });
+        });
+      });
+
       var orderOf = {};
       bracket.rounds.forEach(function (r) {
         r.ties.forEach(function (t) { orderOf[t.tie_id] = r.round_no * 1000 + t.slot; });
@@ -542,7 +568,11 @@ function getRankings(token, payload) {
   // 得点王賞金が大会別（GM1リーグ / GM2リーグ / GMリーグ杯）なので、
   // 大会ごとの得点1位を出せるようにしている。
   var competition = _str(payload.competition);
-  var matches = _matchesOfCompetition(seasonId, competition);
+  // 不戦の試合は数えない。得点者は持たないが、GK の1試合あたりセーブ数の
+  // 分母（チームの試合数）に入ると、戦っていない試合で平均が下がる
+  var matches = _matchesOfCompetition(seasonId, competition).filter(function (m) {
+    return !_isForfeit(m);
+  });
 
   var approvedIds = {};
   var matchById = {};
@@ -753,7 +783,11 @@ function getTeamStats(token, payload) {
   if (!seasonId) return { ok: false, error: "season_id は必須です。" };
 
   var competition = _str(payload.competition);
-  var matches = _matchesOfCompetition(seasonId, competition);
+  // 不戦の試合は数えない。試合数に入るとスタッツ0の試合で平均が下がり、
+  // 3-0 の得点が得点数に混ざる
+  var matches = _matchesOfCompetition(seasonId, competition).filter(function (m) {
+    return !_isForfeit(m);
+  });
 
   var approvedIds = {};
   matches.forEach(function (m) { approvedIds[_str(m.match_id)] = true; });

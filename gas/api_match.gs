@@ -46,6 +46,73 @@ var MATCH_STAGES = [STAGE_LEAGUE, STAGE_TOURNAMENT, STAGE_SUPERCUP];
  */
 var OWN_GOAL_ID = "__OG__";
 
+/**
+ * 不戦（Matches.forfeit）。空なら通常の試合。
+ *
+ *   home_win  — ホームの不戦勝（スコアは forfeit_score - 0）
+ *   away_win  — アウェイの不戦勝（0 - forfeit_score）
+ *   both_loss — 両者不戦敗（0 - 0。両チームとも負け・勝点0）
+ *
+ * 登録できるのは主催者だけで、登録した時点で承認済みになる。
+ * 得点者・チームスタッツ・GK は持たず、チームスタッツと個人成績の集計からも外す。
+ * リーグ戦と GMリーグ杯だけ。スーパーカップは1試合で不戦の扱いを決めていない。
+ */
+var FORFEIT_HOME_WIN = "home_win";
+var FORFEIT_AWAY_WIN = "away_win";
+var FORFEIT_BOTH = "both_loss";
+var FORFEIT_KINDS = [FORFEIT_HOME_WIN, FORFEIT_AWAY_WIN, FORFEIT_BOTH];
+
+/**
+ * 試合の不戦の種類。通常の試合なら空文字。
+ *
+ * @param {Object} m Matches の行
+ * @returns {string}
+ */
+function _forfeitOf(m) {
+  var v = _str(m && m.forfeit);
+  return FORFEIT_KINDS.indexOf(v) === -1 ? "" : v;
+}
+
+/**
+ * 不戦の試合か。
+ *
+ * @param {Object} m
+ * @returns {boolean}
+ */
+function _isForfeit(m) {
+  return _forfeitOf(m) !== "";
+}
+
+/**
+ * 不戦の種類の表示名。
+ *
+ * @param {string} kind
+ * @returns {string}
+ */
+function _forfeitLabel(kind) {
+  if (kind === FORFEIT_HOME_WIN) return "ホームの不戦勝";
+  if (kind === FORFEIT_AWAY_WIN) return "アウェイの不戦勝";
+  if (kind === FORFEIT_BOTH) return "両者不戦敗";
+  return "";
+}
+
+/**
+ * Matches に forfeit 列があるか。無ければエラー文。
+ * 列が無いまま書くと不戦の印だけ黙って捨てられ、ただの 3-0 の試合になる。
+ *
+ * @returns {string}
+ */
+function _forfeitHeaderError() {
+  var sheet = getSheet("Matches");
+  var lastCol = sheet.getLastColumn();
+  var headers = lastCol > 0
+    ? sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) { return String(h).trim(); })
+    : [];
+  return headers.indexOf("forfeit") === -1
+    ? "Matches シートに forfeit 列がありません。GAS エディタで setupAll を実行してから登録してください。"
+    : "";
+}
+
 // =============================================================================
 // 読み取り
 // =============================================================================
@@ -102,6 +169,7 @@ function getMatchOptions(token, payload) {
     home_players:  [],
     away_players:  [],
     own_goal_id:   OWN_GOAL_ID,
+    forfeit_score: getConfigNumOr("forfeit_score", 3),
   };
 
   var homeTeam = _str(payload.home_team);
@@ -217,6 +285,8 @@ function listMatches(token, payload) {
       away_pk:     _str(m.away_pk) === "" ? null : _num(m.away_pk),
       status:      _str(m.status),
       reported_by: _str(m.reported_by),
+      forfeit:       _forfeitOf(m),
+      forfeit_label: _forfeitLabel(_forfeitOf(m)),
       // 画面のボタン出し分け用
       can_edit:    _str(m.status) !== MATCH_APPROVED &&
                    (isOrganizer || myTeam === home || myTeam === away),
@@ -324,6 +394,8 @@ function getMatchDetail(token, payload) {
         home_pk:    _str(m.home_pk) === "" ? null : _num(m.home_pk),
         away_pk:    _str(m.away_pk) === "" ? null : _num(m.away_pk),
         status:     _str(m.status),
+        forfeit:       _forfeitOf(m),
+        forfeit_label: _forfeitLabel(_forfeitOf(m)),
       },
       goals: goals,
       team_stats: teamStats,
@@ -346,6 +418,10 @@ function getMatchDetail(token, payload) {
 function _validateMatchPayload(p, selfId) {
   if (MATCH_STAGES.indexOf(p.stage) === -1) {
     return "stage が不正です: " + p.stage + "（許可: league / tournament / supercup）";
+  }
+  if (p.forfeit) {
+    if (FORFEIT_KINDS.indexOf(p.forfeit) === -1) return "不戦の種類が不正です: " + p.forfeit;
+    if (p.stage === STAGE_SUPERCUP) return "GMスーパーカップは不戦で登録できません。";
   }
 
   // スーパーカップは保存した2チームだけ。GMリーグ杯はトーナメント表のタイとレグにそろえる。
@@ -398,6 +474,9 @@ function _validateMatchPayload(p, selfId) {
       (p.stage === STAGE_TOURNAMENT ? "2レグ制の場合はレグ（1st / 2nd）を指定してください。" : "")
     );
   }
+
+  // 不戦は得点者・スタッツ・GK を持たない（_normalizeMatchPayload で空にしてある）
+  if (p.forfeit) return null;
 
   // 得点者の件数とスコアの一致
   var homeGoals = 0;
@@ -551,7 +630,33 @@ function _normalizeMatchPayload(payload) {
     };
   });
 
+  // 不戦はスコアをこちらで決め、得点者・スタッツ・GK は捨てる。
+  // 画面から何が送られてきても、集計に入る値は同じになるようにする
+  var forfeit = _str(payload.forfeit);
+  if (FORFEIT_KINDS.indexOf(forfeit) !== -1) {
+    var fs = getConfigNumOr("forfeit_score", 3);
+    var out = {
+      seasonId:  _str(payload.season_id),
+      stage:     _str(payload.stage) || STAGE_LEAGUE,
+      round:     _str(payload.round),
+      tieId:     _str(payload.tie_id),
+      leg:       _str(payload.leg),
+      homeTeam:  homeTeam,
+      awayTeam:  awayTeam,
+      homeScore: forfeit === FORFEIT_HOME_WIN ? fs : 0,
+      awayScore: forfeit === FORFEIT_AWAY_WIN ? fs : 0,
+      homePk:    "",
+      awayPk:    "",
+      goals:     [],
+      teamStats: [],
+      gkStats:   [],
+      forfeit:   forfeit,
+    };
+    return out;
+  }
+
   return {
+    forfeit:   forfeit,
     seasonId:  _str(payload.season_id),
     stage:     _str(payload.stage) || STAGE_LEAGUE,
     round:     _str(payload.round),
@@ -601,11 +706,20 @@ function submitMatchResult(token, payload) {
   if (!isOrganizer && myTeam !== p.homeTeam && myTeam !== p.awayTeam) {
     return { ok: false, error: "自チームが出場していない試合は申請できません。" };
   }
+  if (p.forfeit && !isOrganizer) {
+    return { ok: false, error: "不戦の登録は主催者だけができます。" };
+  }
 
   return withLock(function () {
     var err = _validateMatchPayload(p, null);
     if (err) return { ok: false, error: err };
+    if (p.forfeit) {
+      var colErr = _forfeitHeaderError();
+      if (colErr) return { ok: false, error: colErr };
+    }
 
+    // 不戦は主催者の判定なので、登録した時点で承認済みにする
+    var status = p.forfeit ? MATCH_APPROVED : MATCH_PENDING;
     var matchId = generateId("m_");
 
     appendRow("Matches", {
@@ -621,15 +735,16 @@ function submitMatchResult(token, payload) {
       away_score:  p.awayScore,
       home_pk:     p.homePk,
       away_pk:     p.awayPk,
-      status:      MATCH_PENDING,
+      status:      status,
       reported_by: _str(user.user_id),
+      forfeit:     p.forfeit,
     });
 
     _writeMatchChildren(matchId, p);
 
     return {
       ok: true,
-      data: { match_id: matchId, status: MATCH_PENDING },
+      data: { match_id: matchId, status: status, forfeit: p.forfeit },
     };
   });
 }
@@ -793,8 +908,13 @@ function correctMatch(token, payload) {
 
     var err = _validateMatchPayload(p, matchId);
     if (err) return { ok: false, error: err };
+    if (p.forfeit) {
+      var colErr = _forfeitHeaderError();
+      if (colErr) return { ok: false, error: colErr };
+    }
 
-    var nextStatus = _str(payload.status) || _str(m.status);
+    // 不戦に直したものは承認済みにする（主催者の判定なので、改めて承認を待たない）
+    var nextStatus = _str(payload.status) || (p.forfeit ? MATCH_APPROVED : _str(m.status));
     if ([MATCH_PENDING, MATCH_APPROVED, MATCH_REJECTED].indexOf(nextStatus) === -1) {
       return { ok: false, error: "status が不正です: " + nextStatus };
     }
@@ -811,6 +931,7 @@ function correctMatch(token, payload) {
       home_pk:    p.homePk,
       away_pk:    p.awayPk,
       status:     nextStatus,
+      forfeit:    p.forfeit,
     });
 
     var removed = _deleteMatchChildren(matchId);

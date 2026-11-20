@@ -418,4 +418,77 @@ t('スーパーカップを総当たりで作ろうとしたら断る', () => {
   eq(cup().generateFixtures('ORG', { season_id: 's2', stage: 'supercup' }).ok, false);
 });
 
+// =============================================================================
+// 不戦
+// =============================================================================
+
+/** 承認済みの不戦の試合を直接入れる（スコアは submitMatchResult と同じ決め方） */
+function forfeited(e, tie, leg, home, away, kind) {
+  e.__addRow('Matches', {
+    match_id: 'f' + Math.random().toString(36).slice(2, 8),
+    season_id: 's2', stage: 'tournament', round: '', tie_id: tie, leg,
+    home_team: home, away_team: away,
+    home_score: kind === 'home_win' ? 3 : 0, away_score: kind === 'away_win' ? 3 : 0,
+    home_pk: '', away_pk: '', status: '承認', reported_by: 'u_org', created_at: new Date(), forfeit: kind,
+  });
+  e.__dropCache('Matches');
+}
+
+/** 1回戦で、隣の山がシードになっている実戦のタイ */
+function tieNextToBye(b) {
+  const r1 = b.rounds[0].ties;
+  for (let k = 0; k < r1.length; k += 2) {
+    const [x, y] = [r1[k], r1[k + 1]];
+    if (x.bye && !y.bye) return { tie: y, seed: x, next: k / 2 };
+    if (y.bye && !x.bye) return { tie: x, seed: y, next: k / 2 };
+  }
+  return null;
+}
+
+t('杯の不戦勝は 3-0 として合計スコアに入る', () => {
+  const e = cup();
+  build(e);
+  const tie = bracket(e).rounds[0].ties.find((x) => !x.bye);
+  forfeited(e, tie.tie_id, '1', tie.team_a, tie.team_b, 'away_win');
+  played(e, tie.tie_id, '2', tie.team_b, tie.team_a, 0, 2);
+  const t2 = bracket(e).rounds[0].ties.find((x) => x.tie_id === tie.tie_id);
+  eq([t2.agg_a, t2.agg_b], [2, 3]);
+  eq(t2.winner, tie.team_b);
+});
+
+t('両者不戦敗のレグがあれば、残りのレグを待たずに両チームとも敗退する', () => {
+  const e = cup();
+  build(e);
+  const tie = bracket(e).rounds[0].ties.find((x) => !x.bye);
+  forfeited(e, tie.tie_id, '1', tie.team_a, tie.team_b, 'both_loss');
+  const t2 = bracket(e).rounds[0].ties.find((x) => x.tie_id === tie.tie_id);
+  eq([t2.winner, t2.out, t2.decided_by], ['', true, '両者不戦敗']);
+
+  // 2ndレグは報告画面に出ず、報告もできない
+  const fx = e.getFixtures('ORG', { season_id: 's2', stage: 'tournament' }).data.fixtures;
+  ok(!fx.some((f) => f.tie_id === tie.tie_id && f.leg === '2'), '2ndレグが残っている');
+  const r = report0(e, 'ORG', tie.team_b, tie.team_a, { leg: '2' });
+  eq(r.ok, false);
+  ok(/両者不戦敗/.test(r.error), r.error);
+});
+
+t('相手の山が両者不戦敗なら、次のラウンドは試合をせずに勝ち上がる', () => {
+  const e = cup();
+  build(e);
+  const hit = tieNextToBye(bracket(e));
+  ok(hit, 'シードの隣の山が見つからない');
+  forfeited(e, hit.tie.tie_id, '1', hit.tie.team_a, hit.tie.team_b, 'both_loss');
+
+  const b = bracket(e);
+  const semi = b.rounds[1].ties[hit.next];
+  eq(semi.walkover, true);
+  eq(semi.winner, hit.seed.winner);
+  eq(semi.legs.length, 0);
+
+  // 試合の無いタイも、賞金判定用の並びに入る
+  const tr = e.getTournament('ORG', { season_id: 's2', stage: 'tournament' }).data.ties;
+  const w = tr.find((x) => x.tie_id === semi.tie_id);
+  ok(w && w.winner === hit.seed.winner, JSON.stringify(tr.map((x) => x.tie_id)));
+});
+
 report('cup.js');

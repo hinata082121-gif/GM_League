@@ -544,6 +544,22 @@
 
             <div id="mt-card" class="match-card"></div>
 
+            <div class="filter-row" id="mt-forfeit-row" style="display:none;">
+              <label>
+                結果の種類
+                <select id="mt-forfeit">
+                  <option value="">通常の試合</option>
+                  <option value="home_win">ホームの不戦勝</option>
+                  <option value="away_win">アウェイの不戦勝</option>
+                  <option value="both_loss">両者不戦敗</option>
+                </select>
+              </label>
+            </div>
+            <p id="mt-forfeit-note" class="muted note-sm" style="display:none;">
+              不戦の試合は得点者・チームスタッツ・GK を入力しません。登録すると承認済みになり、
+              順位表と勝ち上がりには入りますが、チームスタッツと個人成績には入りません。
+            </p>
+
             <h3 class="sub-head">スコア</h3>
             <div class="score-row">
               <div class="score-side">

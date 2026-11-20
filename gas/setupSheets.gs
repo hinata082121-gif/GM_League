@@ -247,6 +247,7 @@ function _getSheetDefinitions() {
         "away_pk",     // number    PK戦（任意）
         "status",      // enum      申請中 / 承認 / 差戻
         "reported_by", // string    申請ユーザーID
+        "forfeit",     // enum      空 / home_win / away_win / both_loss
       ],
     },
     {

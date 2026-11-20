@@ -3888,14 +3888,15 @@ function renderBracketHtml(b, myTeam) {
     const head = (legLabel(l) ? legLabel(l) + ' ' : '') + esc(l.home_name) + ' ';
     if (l.approved) {
       const pk = l.home_pk !== null && l.away_pk !== null ? '（PK ' + l.home_pk + '-' + l.away_pk + '）' : '';
-      return '<div>' + head + '<strong>' + l.home_score + ' - ' + l.away_score + '</strong> ' + esc(l.away_name) + pk + '</div>';
+      return '<div>' + head + forfeitScoreHtml(l.forfeit, l.home_score + ' - ' + l.away_score) + ' ' + esc(l.away_name) + pk + '</div>';
     }
     const state = l.reported ? '報告済み・承認待ち' : '未報告';
     return '<div>' + head + 'vs ' + esc(l.away_name) + ' <span class="muted">' + state + '</span></div>';
   };
 
-  const teamRow = (id, name, agg, from, winner) => {
-    const label = id ? esc(name) : '<span class="muted">' + esc(from ? from + ' の勝者' : '未定') + '</span>';
+  const teamRow = (id, name, agg, from, winner, gone) => {
+    const label = id ? esc(name)
+      : '<span class="muted">' + esc(gone ? 'なし（両者不戦敗）' : (from ? from + ' の勝者' : '未定')) + '</span>';
     return '<div class="bracket-team' + (id && winner === id ? ' is-winner' : '') +
       (id && id === myTeam ? ' is-mine' : '') + '">' +
       '<span class="bracket-name">' + label + '</span>' +
@@ -3911,10 +3912,12 @@ function renderBracketHtml(b, myTeam) {
     const fromB = t.from[1] ? tieName[t.from[1]] : '';
     const note = t.winner
       ? '<div class="bracket-legs">' + esc(t.winner_name) + ' が勝ち上がり（' + esc(t.decided_by) + '）</div>'
-      : (t.decided_by === '未決着' ? '<div class="bracket-legs">合計が同点です。PKの入力が必要です</div>' : '');
+      : t.out
+        ? '<div class="bracket-legs">' + (t.walkover ? '勝ち上がりなし（両方の山が両者不戦敗）' : '両者不戦敗で両チームとも敗退') + '</div>'
+        : (t.decided_by === '未決着' ? '<div class="bracket-legs">合計が同点です。PKの入力が必要です</div>' : '');
     return '<div class="bracket-tie">' +
-      teamRow(t.team_a, t.team_a_name, t.agg_a, fromA, t.winner) +
-      teamRow(t.team_b, t.team_b_name, t.agg_b, fromB, t.winner) +
+      teamRow(t.team_a, t.team_a_name, t.agg_a, fromA, t.winner, t.walkover) +
+      teamRow(t.team_b, t.team_b_name, t.agg_b, fromB, t.winner, t.walkover) +
       (t.team_a && t.team_b ? '<div class="bracket-legs">' + t.legs.map(legHtml).join('') + '</div>' : '') +
       note + '</div>';
   };
@@ -3941,7 +3944,7 @@ function fixtureRowHtml(f, focus) {
     esc(name) + '</span>';
 
   const result = f.reported
-    ? '<span class="fixture-score">' + esc(f.score) + '</span>' +
+    ? '<span class="fixture-score">' + (f.forfeit ? forfeitScoreHtml(f.forfeit, f.score) : esc(f.score)) + '</span>' +
       (f.match_status === '承認'
         ? '<span class="badge badge-ok">承認</span>'
         : '<span class="badge">' + esc(f.match_status) + '</span>')
@@ -4021,7 +4024,10 @@ async function renderMatch() {
     document.getElementById('mt-home-score').oninput = renderGoalRows;
     document.getElementById('mt-away-score').oninput = renderGoalRows;
     document.getElementById('mt-add-gk').onclick = () => addGkRow();
-    document.getElementById('mt-back').onclick = () => goMatchStep(matchStep - 1);
+    // 不戦は第2・第3画面を使わないので、確認画面から戻ると第1画面に戻る
+    document.getElementById('mt-back').onclick = () =>
+      goMatchStep(matchStep === 4 && currentForfeit() ? 1 : matchStep - 1);
+    document.getElementById('mt-forfeit').onchange = onForfeitChange;
     document.getElementById('mt-next').onclick = onMatchNext;
     document.getElementById('mt-submit').onclick = onSubmitMatch;
     document.getElementById('mt-cancel').onclick = exitCorrectionMode;
@@ -4105,6 +4111,12 @@ function onMatchNext() {
 
   setResult('mt-result', true, '');
 
+  // 不戦は得点者・スタッツ・GK を持たないので、そのまま確認画面へ
+  if (matchStep === 1 && currentForfeit()) {
+    goMatchStep(4);
+    return;
+  }
+
   // スコアが決まってから枠を組み直す
   if (matchStep === 1) {
     renderGoalRows();
@@ -4175,10 +4187,79 @@ function onMatchStageChange() {
   document.getElementById('mt-tie-row').style.display = manualLeg ? 'flex' : 'none';
   document.getElementById('mt-pk-row').style.display = isKnockout ? 'flex' : 'none';
 
+  // 不戦は主催者だけ。リーグ戦と GMリーグ杯だけで、スーパーカップには無い
+  const canForfeit = !!(matchOptions && matchOptions.is_organizer) && stage !== 'supercup';
+  document.getElementById('mt-forfeit-row').style.display = canForfeit ? 'flex' : 'none';
+  if (!canForfeit && document.getElementById('mt-forfeit').value) {
+    document.getElementById('mt-forfeit').value = '';
+  }
+  applyForfeitToForm();
+
   if (stage === 'supercup') {
     document.getElementById('mt-tie').value = '';
     document.getElementById('mt-leg').value = '-';
   }
+}
+
+/**
+ * 選んでいる不戦の種類。通常の試合・選べないときは空文字。
+ *
+ * @returns {string}
+ */
+function currentForfeit() {
+  const row = document.getElementById('mt-forfeit-row');
+  const sel = document.getElementById('mt-forfeit');
+  if (!row || !sel || row.style.display === 'none') return '';
+  return sel.value;
+}
+
+/** 不戦勝のスコア（Config の forfeit_score。サーバーが同じ値で記録する） */
+function forfeitScore() {
+  return (matchOptions && matchOptions.forfeit_score) || 3;
+}
+
+/** 「結果の種類」を変えたとき */
+function onForfeitChange() {
+  const kind = currentForfeit();
+  document.getElementById('mt-home-score').value = kind === 'home_win' ? forfeitScore() : 0;
+  document.getElementById('mt-away-score').value = kind === 'away_win' ? forfeitScore() : 0;
+  document.getElementById('mt-home-pk').value = '';
+  document.getElementById('mt-away-pk').value = '';
+  applyForfeitToForm();
+  renderGoalRows();
+}
+
+/**
+ * 不戦のときはスコアを固定し、PK・案内・ボタンの文言を切り替える。
+ * 通常に戻したら元に戻す。
+ */
+function applyForfeitToForm() {
+  const kind = currentForfeit();
+  const stage = document.getElementById('mt-stage').value;
+  const isKnockout = stage === 'tournament' || stage === 'supercup';
+
+  ['mt-home-score', 'mt-away-score'].forEach((id) => {
+    document.getElementById(id).disabled = !!kind;
+  });
+  document.getElementById('mt-pk-row').style.display = isKnockout && !kind ? 'flex' : 'none';
+  document.getElementById('mt-forfeit-note').style.display = kind ? 'block' : 'none';
+
+  if (!correctingMatchId) {
+    document.getElementById('mt-submit').textContent = kind ? '不戦で登録する' : '申請する';
+  }
+}
+
+/**
+ * スコアの表示。両者不戦敗は 0-0 だと引き分けに見えるので、文字にする。
+ *
+ * @param {string} kind
+ * @param {string} score 「3 - 0」など
+ * @returns {string} HTML
+ */
+function forfeitScoreHtml(kind, score) {
+  if (kind === 'both_loss') return '<strong>両者不戦敗</strong>';
+  return '<strong>' + esc(score) + '</strong>' +
+    (kind ? ' <span class="badge badge-forfeit">不戦</span>' : '');
 }
 
 /**
@@ -4824,6 +4905,28 @@ function collectMatchPayload() {
     }))
     .filter((g) => g.gk_player_id);
 
+  const forfeit = currentForfeit();
+  if (forfeit) {
+    const p = {
+      season_id: document.getElementById('mt-season').value,
+      stage,
+      round: document.getElementById('mt-round').value.trim(),
+      home_team: t.home,
+      away_team: t.away,
+      home_score: forfeit === 'home_win' ? forfeitScore() : 0,
+      away_score: forfeit === 'away_win' ? forfeitScore() : 0,
+      forfeit,
+      goals: [],
+      team_stats: [],
+      gk_stats: [],
+    };
+    if (stage === 'tournament') {
+      p.tie_id = document.getElementById('mt-tie').value.trim();
+      p.leg = document.getElementById('mt-leg').value;
+    }
+    return p;
+  }
+
   const payload = {
     season_id: document.getElementById('mt-season').value,
     stage,
@@ -4859,6 +4962,25 @@ function renderMatchReview() {
 
   const p = collectMatchPayload();
   const t = currentMatchTeams();
+
+  if (p.forfeit) {
+    const label = p.forfeit === 'home_win' ? t.homeName + ' の不戦勝'
+      : p.forfeit === 'away_win' ? t.awayName + ' の不戦勝' : '両者不戦敗（両チームとも負け・勝点0）';
+    box.innerHTML = `
+      <div class="match-card">
+        <div class="match-card-round">${esc(p.round)}</div>
+        <div class="match-card-teams">
+          <span class="match-card-side">${esc(t.homeName)}<em>ホーム</em></span>
+          <span class="match-card-score">${esc(p.home_score)} — ${esc(p.away_score)}</span>
+          <span class="match-card-side">${esc(t.awayName)}<em>アウェイ</em></span>
+        </div>
+        <p><span class="badge badge-forfeit">不戦</span> ${esc(label)}</p>
+      </div>
+      <p class="muted">得点者・チームスタッツ・GK は記録しません。登録すると承認済みになり、
+        チームスタッツと個人成績には入りません。</p>`;
+    return;
+  }
+
   const nameOf = (teamId, playerId) => {
     if (!playerId) return '';
     if (playerId === (matchOptions && matchOptions.own_goal_id)) return 'オウンゴール';
@@ -4959,7 +5081,8 @@ async function onSubmitMatch() {
     setResult(
       'mt-result',
       true,
-      correctingMatchId ? '訂正しました。' : '申請しました。主催者の承認をお待ちください。'
+      correctingMatchId ? '訂正しました。'
+        : (payload.forfeit ? '不戦として登録しました（承認済み）。' : '申請しました。主催者の承認をお待ちください。')
     );
     if (correctingMatchId) exitCorrectionMode();
     else resetMatchForm();
@@ -4979,6 +5102,8 @@ async function onSubmitMatch() {
  * 前の試合の得点者が紛れ込む。節とチームも選び直してもらう。
  */
 function resetMatchForm() {
+  document.getElementById('mt-forfeit').value = '';
+  applyForfeitToForm();
   document.getElementById('mt-home-score').value = 0;
   document.getElementById('mt-away-score').value = 0;
   document.getElementById('mt-home-pk').value = '';
@@ -5034,8 +5159,10 @@ async function startCorrection(matchId) {
   document.getElementById('mt-away-score').value = match.away_score;
   document.getElementById('mt-home-pk').value = match.home_pk === null ? '' : match.home_pk;
   document.getElementById('mt-away-pk').value = match.away_pk === null ? '' : match.away_pk;
+  document.getElementById('mt-forfeit').value = match.forfeit || '';
 
   await loadMatchOptions();
+  applyForfeitToForm();
 
   // 訂正では節を直せるようにしておく。
   // 対戦表のプルダウンに合う節とは限らない（訂正の理由がそこにある場合もある）
@@ -5149,7 +5276,7 @@ async function loadMatchList() {
       return `
       <tr>
         <td class="muted">${esc(_stageLabel(m.stage))} ${esc(m.round)}</td>
-        <td>${esc(m.home_name)} <strong>${m.home_score} - ${m.away_score}</strong> ${esc(m.away_name)}${pk}</td>
+        <td>${esc(m.home_name)} ${forfeitScoreHtml(m.forfeit, m.home_score + ' - ' + m.away_score)} ${esc(m.away_name)}${pk}</td>
         <td><span class="${badge[m.status] || 'tag-none'}">${esc(m.status)}</span></td>
         <td>${actions}</td>
       </tr>
@@ -5637,7 +5764,7 @@ async function renderTournament(seasonId, stage) {
           return `
           <li>
             <span class="muted">${esc(l.leg && l.leg !== '-' ? l.leg + 'st/nd レグ' : '単発')}</span>
-            ${esc(l.home_name)} <strong>${l.home_score} - ${l.away_score}</strong> ${esc(l.away_name)}${pk}
+            ${esc(l.home_name)} ${forfeitScoreHtml(l.forfeit, l.home_score + ' - ' + l.away_score)} ${esc(l.away_name)}${pk}
           </li>`;
         })
         .join('');

@@ -15,7 +15,7 @@ const SHEETS = {
   Transfers: ['transfer_id','season_id','window','player_id','from_team','to_team','method','gross_fee','cost_to_buyer','payout_to_seller','registered_at','status'],
   Fixtures: ['fixture_id','season_id','stage','division','round','sort_order','home_team','away_team','note','tie_id','leg'],
   Players: ['player_id','name','position','detail_position','real_club','eligible'],
-  Matches: ['match_id','season_id','stage','round','tie_id','leg','home_team','away_team','home_score','away_score','home_pk','away_pk','status','reported_by','created_at'],
+  Matches: ['match_id','season_id','stage','round','tie_id','leg','home_team','away_team','home_score','away_score','home_pk','away_pk','status','reported_by','created_at','forfeit'],
   MatchGoals: ['goal_id','match_id','team_id','scorer_id','assist_id'],
   MatchTeamStats: ['id','match_id','team_id','shots','shots_on_target'],
   MatchGKStats: ['id','match_id','team_id','gk_player_id','saves'],
