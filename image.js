@@ -592,7 +592,7 @@ function drawBracketImage(b, seasonName) {
 
         // 2レグの内訳・PK・決まり方。合計と読み合わせられるよう、左のチームから見た点で出す
         const legs = t.legs.filter((l) => l.approved).map((l) => {
-          const legName = l.leg === '1' ? '1st ' : l.leg === '2' ? '2nd ' : '';
+          const legName = l.leg === '1' ? '1st ' : l.leg === '2' ? '2nd ' : l.leg === '3' ? '延長戦 ' : '';
           if (l.forfeit === 'both_loss') return legName + '両者不戦敗';
           const aHome = l.home === t.team_a;
           const sa = aHome ? l.home_score : l.away_score;
@@ -604,6 +604,7 @@ function drawBracketImage(b, seasonName) {
         });
         const note = t.walkover ? t.decided_by
           : legs.join(' ／ ') + (t.decided_by === 'PK戦' ? ' ／ PK戦で勝ち上がり' : '') +
+            (t.decided_by === '延長戦待ち' ? ' ／ 延長戦へ' : '') +
             (t.out ? ' ／ 両チームとも敗退' : '');
         if (note) {
           ctx.fillStyle = SHARE_COLORS.sub;

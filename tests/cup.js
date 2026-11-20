@@ -248,15 +248,16 @@ t('2レグの合計スコアで勝ち上がりが決まり、次のラウンド�
   eq(semi.legs[0].home, 't_A', '1stレグは上の山の勝者がホーム');
 });
 
-t('合計が並べば、2ndレグのPKで決まる', () => {
+t('決勝より前は、合計が並んでも2ndレグのPKでは決めず延長戦に回す', () => {
+  // 以前は2ndレグのPKで決めていた。主催者の運用は「同点なら延長戦、それも同点ならPK」
   const e = cup();
   build(e);
   const tie = bracket(e).rounds[0].ties.find((x) => !x.bye);
   played(e, tie.tie_id, '1', tie.team_a, tie.team_b, 1, 0);
   played(e, tie.tie_id, '2', tie.team_b, tie.team_a, 1, 0, [4, 5]);
   const t2 = bracket(e).rounds[0].ties.find((x) => x.tie_id === tie.tie_id);
-  eq(t2.winner, tie.team_a);
-  eq(t2.decided_by, 'PK戦');
+  eq(t2.winner, '');
+  eq(t2.decided_by, '延長戦待ち');
 });
 
 t('勝ち上がったチームは次のラウンドを報告できる', () => {
@@ -489,6 +490,97 @@ t('相手の山が両者不戦敗なら、次のラウンドは試合をせず�
   const tr = e.getTournament('ORG', { season_id: 's2', stage: 'tournament' }).data.ties;
   const w = tr.find((x) => x.tie_id === semi.tie_id);
   ok(w && w.winner === hit.seed.winner, JSON.stringify(tr.map((x) => x.tie_id)));
+});
+
+// =============================================================================
+// 延長戦（2レグの合計が同点のとき）
+// =============================================================================
+
+/** 2レグとも承認済みで合計 2-2 にしたタイを返す */
+function tiedTie(e) {
+  const tie = bracket(e).rounds[0].ties.find((x) => !x.bye);
+  played(e, tie.tie_id, '1', tie.team_a, tie.team_b, 1, 1);
+  played(e, tie.tie_id, '2', tie.team_b, tie.team_a, 1, 1);
+  return tie;
+}
+
+t('2レグの合計が同点なら延長戦が出て、報告画面にも並ぶ（ホームは2ndレグと同じ）', () => {
+  const e = cup();
+  build(e);
+  const tie = tiedTie(e);
+  const t2 = bracket(e).rounds[0].ties.find((x) => x.tie_id === tie.tie_id);
+  eq(t2.legs.length, 3);
+  eq([t2.legs[2].leg, t2.legs[2].home, t2.legs[2].away], ['3', tie.team_b, tie.team_a]);
+  eq([t2.winner, t2.decided_by], ['', '延長戦待ち']);
+
+  const fx = e.getFixtures('ORG', { season_id: 's2', stage: 'tournament' }).data.fixtures;
+  const ex = fx.find((f) => f.tie_id === tie.tie_id && f.leg === '3');
+  ok(ex, '延長戦が報告画面に無い');
+  ok(/延長戦$/.test(ex.label), ex.label);
+});
+
+t('合計が同点でなければ延長戦は出ず、報告もできない', () => {
+  const e = cup();
+  build(e);
+  const tie = bracket(e).rounds[0].ties.find((x) => !x.bye);
+  played(e, tie.tie_id, '1', tie.team_a, tie.team_b, 2, 1);
+  played(e, tie.tie_id, '2', tie.team_b, tie.team_a, 1, 1);
+  const t2 = bracket(e).rounds[0].ties.find((x) => x.tie_id === tie.tie_id);
+  eq(t2.legs.length, 2);
+  const r = report0(e, 'ORG', tie.team_b, tie.team_a, { leg: '3' });
+  eq(r.ok, false);
+  ok(/延長戦/.test(r.error), r.error);
+});
+
+t('延長戦の勝者が勝ち上がる（延長戦の得点は合計に足す）', () => {
+  const e = cup();
+  build(e);
+  const tie = tiedTie(e);
+  const r = report0(e, 'ORG', tie.team_b, tie.team_a, {
+    leg: '3', home_score: 0, away_score: 1,
+    goals: [{ team_id: tie.team_a, scorer_id: '__OG__', assist_id: '' }],
+  });
+  eq(r.ok, true, r.error);
+  e.approveMatch('ORG', { match_id: r.data.match_id });
+  const t2 = bracket(e).rounds[0].ties.find((x) => x.tie_id === tie.tie_id);
+  eq([t2.agg_a, t2.agg_b], [3, 2]);
+  eq([t2.winner, t2.decided_by], [tie.team_a, '合計スコア']);
+});
+
+t('延長戦も同点なら PK戦の入力が要り、PKで決まる', () => {
+  const e = cup();
+  build(e);
+  const tie = tiedTie(e);
+  const noPk = report0(e, 'ORG', tie.team_b, tie.team_a, { leg: '3' });
+  eq(noPk.ok, false);
+  ok(/PK/.test(noPk.error), noPk.error);
+
+  const r = report0(e, 'ORG', tie.team_b, tie.team_a, { leg: '3', home_pk: 5, away_pk: 4 });
+  eq(r.ok, true, r.error);
+  e.approveMatch('ORG', { match_id: r.data.match_id });
+  const t2 = bracket(e).rounds[0].ties.find((x) => x.tie_id === tie.tie_id);
+  eq([t2.winner, t2.decided_by, t2.pk_a, t2.pk_b], [tie.team_b, 'PK戦', 4, 5]);
+});
+
+t('決勝より前の 1st・2ndレグには PK戦を入れられない', () => {
+  const e = cup();
+  build(e);
+  const tie = bracket(e).rounds[0].ties.find((x) => !x.bye);
+  played(e, tie.tie_id, '1', tie.team_a, tie.team_b, 1, 1);
+  const r = report0(e, 'ORG', tie.team_b, tie.team_a, { leg: '2', home_pk: 5, away_pk: 4 });
+  eq(r.ok, false);
+  ok(/延長戦/.test(r.error), r.error);
+});
+
+t('延長戦が勝ち上がりを決めたら、次のラウンドに入る', () => {
+  const e = cup();
+  build(e);
+  const tie = tiedTie(e);
+  const r = report0(e, 'ORG', tie.team_b, tie.team_a, { leg: '3', home_pk: 3, away_pk: 1 });
+  e.approveMatch('ORG', { match_id: r.data.match_id });
+  const b = bracket(e);
+  const next = b.rounds[1].ties.find((x) => x.from.indexOf(tie.tie_id) !== -1);
+  ok(next.team_a === tie.team_b || next.team_b === tie.team_b, JSON.stringify(next));
 });
 
 report('cup.js');

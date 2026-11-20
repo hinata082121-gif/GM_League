@@ -908,6 +908,7 @@ function _cupBracket(seasonId) {
     return _cupTie({
       tie_id: t.tie_id, round_no: 1, round: t.round || _cupRoundName(1, total), slot: i + 1,
       team_a: _str(lead.home_team), team_b: bye ? "" : _str(lead.away_team), bye: bye,
+      extra: !bye && t.rows.length === 2 && total > 1,
       legs: bye ? [] : t.rows.map(function (f) {
         return {
           leg: _normalizeLeg(f.leg), home: _str(f.home_team), away: _str(f.away_team),
@@ -946,6 +947,7 @@ function _cupBracket(seasonId) {
       list.push(_cupTie({
         tie_id: tieId, round_no: r, round: _cupRoundName(r, total), slot: k + 1,
         team_a: a, team_b: b, bye: false,
+        extra: legs === 2 && r < total,
         from: [prev[2 * k].tie_id, prev[2 * k + 1].tie_id],
         legs: _cupLegKeys(legs).map(function (leg) {
           // 1stレグ（または1試合）は上の山の勝者がホーム
@@ -989,7 +991,7 @@ function _cupTie(t, approved, reported, names) {
   var done = 0;
   var bothOut = false;
 
-  var legs = t.legs.map(function (l) {
+  var buildLeg = function (l) {
     var key = t.tie_id + "|" + l.leg;
     var m = ready ? approved[key] : null;
     var rep = ready ? reported[key] : null;
@@ -1027,13 +1029,24 @@ function _cupTie(t, approved, reported, names) {
     if (mh === t.team_a) { aggA += out.home_score; aggB += out.away_score; }
     else { aggA += out.away_score; aggB += out.home_score; }
 
-    if (out.home_pk !== null && out.away_pk !== null) {
+    // 延長戦のあるタイは、PK戦は延長戦のものだけを見る
+    if (out.home_pk !== null && out.away_pk !== null && (!t.extra || l.leg === "3")) {
       if (mh === t.team_a) { pkA = out.home_pk; pkB = out.away_pk; }
       else { pkA = out.away_pk; pkB = out.home_pk; }
     }
     done++;
     return out;
-  });
+  };
+  var legs = t.legs.map(buildLeg);
+
+  // 延長戦。決勝より前の2レグで、2試合とも承認され合計が並んだときだけ出す。
+  // ホーム・アウェイは2ndレグと同じ（2ndレグの延長として行う）。
+  // 延長戦の得点は合計に足す。それでも並んだら延長戦のPK戦で決める
+  var extraWaiting = false;
+  if (t.extra && ready && !bothOut && legs.length === 2 && done === 2 && aggA === aggB) {
+    legs.push(buildLeg({ leg: "3", home: legs[1].home, away: legs[1].away, fixture_id: "" }));
+    extraWaiting = !legs[2].approved;
+  }
 
   var winner = "";
   var decidedBy = "";
@@ -1050,6 +1063,8 @@ function _cupTie(t, approved, reported, names) {
     // 両者不戦敗のレグがあれば、残りのレグを待たずに両チームとも敗退
     out = true;
     decidedBy = "両者不戦敗";
+  } else if (extraWaiting) {
+    decidedBy = "延長戦待ち";
   } else if (ready && legs.length > 0 && done === legs.length) {
     if (aggA > aggB) { winner = t.team_a; decidedBy = "合計スコア"; }
     else if (aggB > aggA) { winner = t.team_b; decidedBy = "合計スコア"; }
@@ -1069,6 +1084,7 @@ function _cupTie(t, approved, reported, names) {
     from:        t.from || [],
     bye:         !!t.bye,
     walkover:    !!t.walkover,
+    extra:       !!t.extra,
     out:         out,
     team_a:      t.team_a || "",
     team_a_name: t.team_a ? (names[t.team_a] || t.team_a) : "",
@@ -1387,15 +1403,37 @@ function _applyCupBracketRules(p) {
   }
 
   var leg = _normalizeLeg(p.leg);
-  if (tie.leg_count === 2) {
-    if (leg !== "1" && leg !== "2") {
-      // レグの指定が無ければ、ホームのチームから決める
-      var match = tie.legs.filter(function (l) { return l.home === p.homeTeam; })[0];
-      leg = match ? match.leg : "";
+  var hasExtra = tie.legs.some(function (l) { return l.leg === "3"; });
+  if (tie.leg_count >= 2) {
+    if (leg === "3" && !hasExtra) {
+      return "延長戦は、決勝より前の2レグで、2試合とも承認され合計スコアが同点のときだけ報告できます。";
     }
-    if (leg !== "1" && leg !== "2") return "1stレグか2ndレグかを選んでください。";
+    if (leg !== "1" && leg !== "2" && leg !== "3") {
+      // レグの指定が無ければ、延長戦が出ていれば延長戦、なければホームのチームから決める
+      if (hasExtra) {
+        leg = "3";
+      } else {
+        var match = tie.legs.filter(function (l) { return l.home === p.homeTeam; })[0];
+        leg = match ? match.leg : "";
+      }
+    }
+    if (leg !== "1" && leg !== "2" && leg !== "3") return "1stレグか2ndレグかを選んでください。";
   } else {
     leg = "";
+  }
+
+  // PK戦。決勝より前の2レグは、延長戦が同点のときだけ行う
+  if (tie.extra && !p.forfeit) {
+    var hasPk = p.homePk !== "" && p.awayPk !== "";
+    if (leg !== "3" && hasPk) {
+      return "決勝より前の2レグでは、1stレグ・2ndレグに PK戦はありません。合計が同点なら延長戦を行います。";
+    }
+    if (leg === "3") {
+      var tied = p.homeScore === p.awayScore;
+      if (tied && !hasPk) return "延長戦が同点のときは、PK戦の結果を入力してください。";
+      if (!tied && hasPk) return "PK戦の結果は、延長戦が同点のときだけ入力します。";
+      if (tied && p.homePk === p.awayPk) return "PK戦の結果が同点になっています。";
+    }
   }
 
   // 両者不戦敗で決着したタイは、まだ報告されていないレグを受け付けない
@@ -1458,7 +1496,7 @@ function _cupFixtures(seasonId) {
       t.legs.forEach(function (l) {
         // 両者不戦敗で決着したタイの残りのレグは行わない
         if (t.out && !l.reported) return;
-        var label = t.round + (l.leg === "1" ? " 1stレグ" : (l.leg === "2" ? " 2ndレグ" : ""));
+        var label = t.round + (l.leg === "1" ? " 1stレグ" : (l.leg === "2" ? " 2ndレグ" : (l.leg === "3" ? " 延長戦" : "")));
         fixtures.push({
           fixture_id:     t.tie_id + ":" + (l.leg || "0"),
           division:       "",

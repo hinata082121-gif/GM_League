@@ -3883,7 +3883,7 @@ function renderBracketHtml(b, myTeam) {
   const tieName = {};
   b.rounds.forEach((r) => r.ties.forEach((t) => { tieName[t.tie_id] = r.round + ' ' + t.slot; }));
 
-  const legLabel = (l) => (l.leg === '1' ? '1st' : l.leg === '2' ? '2nd' : '');
+  const legLabel = (l) => (l.leg === '1' ? '1st' : l.leg === '2' ? '2nd' : l.leg === '3' ? '延長戦' : '');
   const legHtml = (l) => {
     const head = (legLabel(l) ? legLabel(l) + ' ' : '') + esc(l.home_name) + ' ';
     if (l.approved) {
@@ -3914,7 +3914,9 @@ function renderBracketHtml(b, myTeam) {
       ? '<div class="bracket-legs">' + esc(t.winner_name) + ' が勝ち上がり（' + esc(t.decided_by) + '）</div>'
       : t.out
         ? '<div class="bracket-legs">' + (t.walkover ? '勝ち上がりなし（両方の山が両者不戦敗）' : '両者不戦敗で両チームとも敗退') + '</div>'
-        : (t.decided_by === '未決着' ? '<div class="bracket-legs">合計が同点です。PKの入力が必要です</div>' : '');
+        : t.decided_by === '延長戦待ち'
+          ? '<div class="bracket-legs">合計が同点です。延長戦を行います</div>'
+          : (t.decided_by === '未決着' ? '<div class="bracket-legs">合計が同点です。PKの入力が必要です</div>' : '');
     return '<div class="bracket-tie">' +
       teamRow(t.team_a, t.team_a_name, t.agg_a, fromA, t.winner, t.walkover) +
       teamRow(t.team_b, t.team_b_name, t.agg_b, fromB, t.winner, t.walkover) +
@@ -5763,7 +5765,7 @@ async function renderTournament(seasonId, stage) {
               : '';
           return `
           <li>
-            <span class="muted">${esc(l.leg && l.leg !== '-' ? l.leg + 'st/nd レグ' : '単発')}</span>
+            <span class="muted">${esc(l.leg === '1' ? '1stレグ' : l.leg === '2' ? '2ndレグ' : l.leg === '3' ? '延長戦' : '単発')}</span>
             ${esc(l.home_name)} ${forfeitScoreHtml(l.forfeit, l.home_score + ' - ' + l.away_score)} ${esc(l.away_name)}${pk}
           </li>`;
         })
