@@ -289,6 +289,13 @@ function _route(action, token, payload) {
     case "listEntryChanges":
       return listEntryChanges(token, payload);
 
+    // ---- エントリー追加（第一次移籍期間の初日だけ） ----
+    case "getEntryAddStatus":
+      return getEntryAddStatus(token, payload);
+
+    case "addEntryPlayers":
+      return addEntryPlayers(token, payload);
+
     // ---- Phase 3: 移籍 ----
     case "getTransferOptions":
       return getTransferOptions(token, payload);

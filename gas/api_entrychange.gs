@@ -5,6 +5,8 @@
  *   getEntryChangeStatus — 外せる選手・入れられる選手・受付期間・履歴
  *   swapEntryPlayers     — 複数組をまとめて入れ替える（無償・即時反映）
  *   swapEntryPlayer      — 1組だけ入れ替える
+ *   getEntryAddStatus    — エントリー追加（第一次移籍期間の初日だけ・有償）の候補・費用・履歴
+ *   addEntryPlayers      — エントリー外の選手をスカッドに足す（予算から引く・即時反映）
  *
  * 主催者:
  *   listEntryChanges     — 全チームの変更履歴
@@ -604,4 +606,359 @@ function _entryChangeSheet() {
   sheet = ss.insertSheet(EC_SHEET);
   sheet.appendRow(EC_HEADERS);
   return sheet;
+}
+
+// =============================================================================
+// エントリー追加（第一次移籍期間の初日だけ・有償）
+// =============================================================================
+//
+// ▶ 何をする機能か
+//   自クラブのエントリー外の選手を、外す選手なしでスカッドに足す。有償で、
+//   19歳以上は entry_add_cost_senior（既定5,000万）、
+//   18歳以下は entry_add_cost_youth（既定2,500万）。
+//   年齢の境目は entry_add_youth_max_age（既定18）。年齢は名簿（Players.age）の値。
+//   その場で確定し、予算から引く。承認は無い。
+//
+// ▶ いつできるか
+//   シーズンの状態が「移籍市場1」で、かつ第一次移籍期間の開幕日（window1_open_at の日付）の
+//   0:00〜23:59:59 だけ。第二次移籍期間・期間外はできない。サーバー時刻で判定する（原則2）。
+//   主催者は代行のため日付に関係なく行える。
+//
+// ▶ 追加した選手は、そのシーズンの間は他クラブへ移籍できない
+//   EntryAdds に記録し、移籍の申請（_createTransfer）で弾く。
+//   在籍の acquisition_type では判定しない。引継ぎが種別を翌シーズンへ持ち越すので、
+//   それを見ると翌シーズン以降も永久に動かせなくなる。
+//
+// ▶ 継続参加・新規参加どちらも使える。スカッドの上限（squad_max）と予算の範囲内で何人でも。
+
+var ACQ_ENTRY_ADD = "エントリー追加";
+var REASON_ENTRY_ADD = "エントリー追加";
+var EA_SHEET = "EntryAdds";
+var EA_HEADERS = [
+  "add_id", "season_id", "team_id", "player_id", "age", "cost", "added_at", "added_by",
+];
+
+/**
+ * エントリー追加を受け付けているか。
+ *
+ * @param {Object} season Seasons の行
+ * @param {Date} at
+ * @returns {{ open: boolean, reason: string, day_start: string, day_end: string }}
+ */
+function _entryAddWindow(season, at) {
+  var out = { open: false, reason: "", day_start: "", day_end: "" };
+
+  var raw = season.window1_open_at;
+  var open = raw instanceof Date ? raw : (raw ? new Date(raw) : null);
+  if (open && isNaN(open.getTime())) open = null;
+
+  if (open) {
+    var start = new Date(open.getFullYear(), open.getMonth(), open.getDate(), 0, 0, 0);
+    var end = new Date(open.getFullYear(), open.getMonth(), open.getDate(), 23, 59, 59);
+    out.day_start = _iso(start);
+    out.day_end = _iso(end);
+  }
+
+  if (_str(season.status) !== "移籍市場1") {
+    out.reason = "エントリー追加は第一次移籍期間の初日だけです（現在の状態: " + _str(season.status) + "）。";
+    return out;
+  }
+  if (!open) {
+    out.reason = "第一次移籍期間の開幕日時が設定されていないため、初日が決まりません。主催者に確認してください。";
+    return out;
+  }
+
+  var t = at.getTime();
+  if (t < new Date(out.day_start).getTime()) {
+    out.reason = "エントリー追加は第一次移籍期間の初日（" + _mdText(open) + "）からです。";
+    return out;
+  }
+  if (t > new Date(out.day_end).getTime()) {
+    out.reason = "エントリー追加は第一次移籍期間の初日（" + _mdText(open) + "）だけで、受付は終わりました。";
+    return out;
+  }
+
+  out.open = true;
+  out.reason = "エントリー追加を受け付けています（" + _mdText(open) + " 23:59 まで）。";
+  return out;
+}
+
+/**
+ * 年齢から追加費用を決める。年齢が名簿に無ければ null。
+ *
+ * @param {*} age
+ * @returns {{ cost: number, youth: boolean }|null}
+ */
+function _entryAddCost(age) {
+  var a = _num(age);
+  if (!(a > 0)) return null;
+  var youthMax = getConfigNumOr("entry_add_youth_max_age", 18);
+  var youth = a <= youthMax;
+  return {
+    cost: youth ? getConfigNumOr("entry_add_cost_youth", 25000000)
+                : getConfigNumOr("entry_add_cost_senior", 50000000),
+    youth: youth,
+  };
+}
+
+/**
+ * EntryAdds の行。シートが無ければ空。
+ *
+ * @returns {Object[]}
+ */
+function _entryAddRows() {
+  try {
+    return getSheetData(EA_SHEET);
+  } catch (e) {
+    return [];
+  }
+}
+
+/**
+ * そのシーズンにエントリー追加した選手。player_id → team_id。
+ *
+ * @param {string} seasonId
+ * @returns {Object}
+ */
+function _entryAddedMap(seasonId) {
+  var map = {};
+  _entryAddRows().forEach(function (r) {
+    if (_str(r.season_id) === seasonId) map[_str(r.player_id)] = _str(r.team_id);
+  });
+  return map;
+}
+
+/**
+ * 移籍できない理由（エントリー追加した選手）。移籍できるなら空文字。
+ *
+ * @param {string} seasonId
+ * @param {string} playerId
+ * @returns {string}
+ */
+function _entryAddTransferBlock(seasonId, playerId) {
+  return _entryAddedMap(seasonId)[playerId]
+    ? "この選手は今シーズン「エントリー追加」で登録したため、今シーズン中は他クラブへ移籍できません。"
+    : "";
+}
+
+/** EntryAdds シートを用意する（無ければ作る） */
+function _entryAddSheet() {
+  var ss = getSpreadsheet();
+  var sheet = ss.getSheetByName(EA_SHEET);
+  if (sheet) return sheet;
+  sheet = ss.insertSheet(EA_SHEET);
+  sheet.appendRow(EA_HEADERS);
+  return sheet;
+}
+
+/**
+ * 追加できる選手。エントリー変更で入れられる選手から、承認待ちの移籍がある選手を除く。
+ *
+ * @param {Object} ctx _entryChangeContext の結果
+ * @param {string} myClub
+ * @param {Object[]} pending 申請中の移籍
+ * @returns {Object[]}
+ */
+function _entryAddCandidates(ctx, myClub, pending) {
+  var busy = {};
+  (pending || []).forEach(function (t) { busy[_str(t.player_id)] = true; });
+  return _entryChangeCandidates(ctx, myClub)
+    .filter(function (c) { return !busy[c.player_id]; })
+    .map(function (c) {
+      var price = _entryAddCost(c.age);
+      c.cost = price ? price.cost : null;
+      c.youth = price ? price.youth : false;
+      c.reason = price ? "" : "名簿に年齢が無いため費用が決まりません。";
+      return c;
+    });
+}
+
+/**
+ * エントリー追加の画面に必要なものを返す。
+ *
+ * payload: { season_id, team_id? }
+ *
+ * @param {string} token
+ * @param {Object} payload
+ * @returns {{ ok: boolean, data?: Object, error?: string }}
+ */
+function getEntryAddStatus(token, payload) {
+  var auth = _requireUser(token);
+  if (!auth.ok) return auth;
+
+  var user = auth.data;
+  var seasonId = _str(payload.season_id);
+  var teamId = _str(payload.team_id) || _str(user.team_id);
+  if (!seasonId) return { ok: false, error: "season_id は必須です。" };
+  if (!teamId) return { ok: false, error: "チームが特定できません。" };
+
+  var access = _checkTeamAccess(user, teamId);
+  if (!access.ok) return access;
+
+  var season = findRow("Seasons", "season_id", seasonId);
+  if (!season) return { ok: false, error: "シーズンが見つかりません。" };
+  var team = findRow("Teams", "team_id", teamId);
+  if (!team) return { ok: false, error: "チームが見つかりません。" };
+
+  var myClub = _str(team.name);
+  var win = _entryAddWindow(season, now());
+  var pending = _pendingTransfers(seasonId);
+  var ctx = _entryChangeContext(seasonId);
+
+  var history = _entryAddRows()
+    .filter(function (r) { return _str(r.season_id) === seasonId && _str(r.team_id) === teamId; })
+    .map(function (r) {
+      var p = ctx.players[_str(r.player_id)] || {};
+      return {
+        player_id: _str(r.player_id),
+        name: _str(p.name) || _str(r.player_id),
+        position: _str(p.position),
+        age: _num(r.age),
+        cost: _num(r.cost),
+        added_at: r.added_at instanceof Date ? _iso(r.added_at) : _str(r.added_at),
+      };
+    });
+
+  var isOrg = user.role === "organizer";
+  return {
+    ok: true,
+    data: {
+      season_id: seasonId,
+      team_id: teamId,
+      team_name: myClub,
+      window: win,
+      can_add: win.open || isOrg,
+      organizer_override: isOrg && !win.open,
+      cost_senior: getConfigNumOr("entry_add_cost_senior", 50000000),
+      cost_youth: getConfigNumOr("entry_add_cost_youth", 25000000),
+      youth_max_age: getConfigNumOr("entry_add_youth_max_age", 18),
+      budget: _teamAvailableBudget(seasonId, teamId, pending),
+      squad: _teamSquadCount(seasonId, teamId, pending),
+      squad_max: getConfigNum("squad_max", 35),
+      candidates: _entryAddCandidates(ctx, myClub, pending),
+      history: history,
+    },
+  };
+}
+
+/**
+ * 自クラブのエントリー外の選手をスカッドに足す。**その場で確定し、予算から引く。**
+ * 1人でも通らなければ何も書かない。
+ *
+ * payload: { season_id, team_id?, player_ids: string[] }
+ *
+ * @param {string} token
+ * @param {Object} payload
+ * @returns {{ ok: boolean, data?: Object, error?: string }}
+ */
+function addEntryPlayers(token, payload) {
+  var auth = _requireUser(token);
+  if (!auth.ok) return auth;
+
+  var user = auth.data;
+  var seasonId = _str(payload.season_id);
+  var teamId = _str(payload.team_id) || _str(user.team_id);
+  if (!seasonId) return { ok: false, error: "season_id は必須です。" };
+  if (!teamId) return { ok: false, error: "チームが特定できません。" };
+
+  var ids = [];
+  var seen = {};
+  (payload.player_ids || []).forEach(function (x) {
+    var id = _str(x);
+    if (id && !seen[id]) { seen[id] = true; ids.push(id); }
+  });
+  if (ids.length === 0) return { ok: false, error: "追加する選手を選んでください。" };
+
+  var access = _checkTeamAccess(user, teamId);
+  if (!access.ok) return access;
+
+  return withLock(function () {
+    var season = findRow("Seasons", "season_id", seasonId);
+    if (!season) return { ok: false, error: "シーズンが見つかりません。" };
+
+    var at = now();
+    if (user.role !== "organizer") {
+      var win = _entryAddWindow(season, at);
+      if (!win.open) return { ok: false, error: win.reason };
+    }
+
+    var team = findRow("Teams", "team_id", teamId);
+    if (!team) return { ok: false, error: "チームが見つかりません。" };
+
+    var myClub = _str(team.name);
+    var pending = _pendingTransfers(seasonId);
+    var ctx = _entryChangeContext(seasonId);
+    var byId = {};
+    _entryAddCandidates(ctx, myClub, pending).forEach(function (c) { byId[c.player_id] = c; });
+
+    var plan = [];
+    var total = 0;
+    for (var i = 0; i < ids.length; i++) {
+      var c = byId[ids[i]];
+      var name = ctx.players[ids[i]] ? _str(ctx.players[ids[i]].name) : ids[i];
+      if (!c) {
+        return {
+          ok: false,
+          error: name + " は追加できません（自クラブ以外・保有済み・補填で予約済み・承認待ちの移籍あり・大会対象外のいずれか）。",
+        };
+      }
+      if (c.cost === null) return { ok: false, error: name + " は" + c.reason };
+      plan.push(c);
+      total += c.cost;
+    }
+
+    var budget = _teamAvailableBudget(seasonId, teamId, pending);
+    if (budget.available < total) {
+      return {
+        ok: false,
+        error: "予算が不足しています。必要 " + total.toLocaleString() +
+          " / 使える予算 " + budget.available.toLocaleString() +
+          "（残高 " + budget.balance.toLocaleString() +
+          " − 承認待ち " + budget.reserved.toLocaleString() + "）",
+      };
+    }
+
+    var squadMax = getConfigNum("squad_max", 35);
+    var squad = _teamSquadCount(seasonId, teamId, pending);
+    if (squad.projected + plan.length > squadMax) {
+      return {
+        ok: false,
+        error: "スカッドが上限 " + squadMax + " 名を超えます（承認待ちを含めて今 " +
+          squad.projected + " 名、追加 " + plan.length + " 名）。",
+      };
+    }
+
+    _entryAddSheet();
+    var done = [];
+    plan.forEach(function (c) {
+      appendRow("Rosters", {
+        roster_id: generateId("r_"),
+        season_id: seasonId,
+        team_id: teamId,
+        player_id: c.player_id,
+        acquisition_type: ACQ_ENTRY_ADD,
+        acquired_cost: c.cost,
+        acquired_at: at,
+        expires_season: "",
+        status: ROSTER_ACTIVE,
+      });
+      _addBudgetTx(seasonId, teamId, -c.cost, REASON_ENTRY_ADD, c.name, at);
+      appendRow(EA_SHEET, {
+        add_id: generateId("ea_"),
+        season_id: seasonId,
+        team_id: teamId,
+        player_id: c.player_id,
+        age: c.age,
+        cost: c.cost,
+        added_at: at,
+        added_by: _str(user.user_id),
+      });
+      done.push({ player_id: c.player_id, name: c.name, age: c.age, cost: c.cost });
+    });
+
+    return {
+      ok: true,
+      data: { added: done, total: total, available_after: budget.available - total },
+    };
+  });
 }

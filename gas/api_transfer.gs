@@ -678,6 +678,9 @@ function _collectTransferTargets(seasonId, myTeamId, windowNo, pending) {
   // 今シーズン既に動いていて、強奪の対象にできない選手
   var methodMap = _seasonMethodMap(seasonId);
 
+  // エントリー追加した選手（今シーズンは他クラブへ移籍できないので候補に出さない）
+  var entryAdded = _entryAddedMap(seasonId);
+
   var targets = [];
   var freeAgents = [];
 
@@ -702,6 +705,7 @@ function _collectTransferTargets(seasonId, myTeamId, windowNo, pending) {
       return;
     }
     if (myTeamId && owner === myTeamId) return;
+    if (entryAdded[pid]) return;
 
     base.team_id = owner;
     base.team_name = teamNames[owner] || owner;
@@ -1020,6 +1024,12 @@ function _createTransfer(args) {
     if (fromTeam === toTeam) {
       return { ok: false, error: "自チームの選手は獲得できません。" };
     }
+  }
+
+  // エントリー追加した選手は、そのシーズンの間は他クラブへ移籍できない
+  if (fromTeam) {
+    var addBlock = _entryAddTransferBlock(seasonId, playerId);
+    if (addBlock) return { ok: false, error: addBlock };
   }
 
   // 同じ選手に対する申請中の移籍が既にないか

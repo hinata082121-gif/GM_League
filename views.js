@@ -2370,6 +2370,7 @@ async function loadTransferOptions() {
     return;
   }
   if (currentUser.role === 'organizer' && !teamId) {
+    document.getElementById('ea-card').style.display = 'none';
     marketBox.innerHTML = '<p class="muted">代理申請するチームを選択してください。</p>';
     document.getElementById('tr-list').innerHTML = '';
     return;
@@ -2377,8 +2378,9 @@ async function loadTransferOptions() {
 
   setLoading('tr-market');
 
-  // 下の移籍一覧も同時に投げておく。順に待つと通信が2回になる
+  // 下の移籍一覧とエントリー追加も同時に投げておく。順に待つと通信が本数ぶん並ぶ
   prefetchApi('listTransfers', { season_id: seasonId });
+  prefetchApi('getEntryAddStatus', { season_id: seasonId, team_id: teamId });
 
   const res = await callApi('getTransferOptions', { season_id: seasonId, team_id: teamId });
   if (!res.ok) {
@@ -2388,6 +2390,7 @@ async function loadTransferOptions() {
 
   transferData = res.data;
   renderTransferMarketBox();
+  loadEntryAdd(seasonId, teamId);
 
   if (res.data.market_open) {
     formWrap.style.display = 'block';
@@ -2397,6 +2400,137 @@ async function loadTransferOptions() {
   }
 
   await loadTransferList();
+}
+
+/** getEntryAddStatus の結果 */
+let entryAddData = null;
+
+/** 追加が済んだときの知らせ。画面を読み直したあとに1回だけ出す */
+let entryAddFlash = '';
+
+/**
+ * エントリー追加（第一次移籍期間の初日だけ）の欄を読み込む。
+ *
+ * 第一次移籍期間のあいだだけ出す。主催者は代行できるので、チームを選べばいつでも出す。
+ *
+ * @param {string} seasonId
+ * @param {string} teamId
+ */
+async function loadEntryAdd(seasonId, teamId) {
+  const card = document.getElementById('ea-card');
+  const isOrg = currentUser.role === 'organizer';
+  const show = (transferData && transferData.season_status === '移籍市場1') || isOrg;
+  card.style.display = show ? 'block' : 'none';
+  entryAddData = null;
+  if (!show) return;
+
+  setLoading('ea-box');
+  const res = await callApi('getEntryAddStatus', { season_id: seasonId, team_id: teamId });
+  if (!res.ok) {
+    setError('ea-box', 'エントリー追加の情報を取得できませんでした: ' + res.error);
+    return;
+  }
+  entryAddData = res.data;
+  renderEntryAdd();
+}
+
+/** エントリー追加の欄を組み立てる */
+function renderEntryAdd() {
+  const d = entryAddData;
+  const box = document.getElementById('ea-box');
+  if (!d) return;
+
+  const b = d.budget || { available: 0 };
+  const s = d.squad || { projected: 0 };
+  const flash = entryAddFlash;
+  entryAddFlash = '';
+  const head = `
+    ${flash ? '<p class="msg-ok"><strong>' + esc(flash) + '</strong></p>' : ''}
+    <p class="${d.window.open ? 'msg-ok' : 'msg-error'}">${esc(d.window.reason)}</p>
+    ${d.organizer_override ? '<p class="muted note-sm">主催者は期間外でも代行できます。</p>' : ''}
+    <p class="muted note-sm">
+      費用: ${esc(d.youth_max_age + 1)}歳以上 ${esc(formatMoney(d.cost_senior))} ／
+      ${esc(d.youth_max_age)}歳以下 ${esc(formatMoney(d.cost_youth))}（年齢は名簿の値）。
+      使える予算 ${esc(formatMoney(b.available))}・スカッド ${esc(s.projected)} / ${esc(d.squad_max)} 名
+    </p>`;
+
+  const history = d.history.length === 0 ? '' : `
+    <h3 class="sub-head">今シーズンに追加した選手</h3>
+    <div class="table-wrap"><table class="data-table">
+      <thead><tr><th>選手</th><th class="num">年齢</th><th class="num">費用</th></tr></thead>
+      <tbody>${d.history.map((h) => `<tr>
+        <td>${esc(h.position)} ${esc(h.name)}</td>
+        <td class="num">${esc(h.age)}</td>
+        <td class="num">${esc(formatMoney(h.cost))}</td></tr>`).join('')}</tbody>
+    </table></div>`;
+
+  if (!d.can_add) {
+    box.innerHTML = head + history;
+    return;
+  }
+
+  const rows = d.candidates.map((c) => `<tr>
+    <td><input type="checkbox" class="ea-pick" value="${esc(c.player_id)}"
+      data-cost="${esc(c.cost === null ? '' : c.cost)}" ${c.cost === null ? 'disabled' : ''} /></td>
+    <td>${esc(c.detail_position || c.position)} ${esc(c.name)}</td>
+    <td class="num">${c.age > 0 ? esc(c.age) : '<span class="muted">—</span>'}</td>
+    <td class="num">${c.cost === null ? '<span class="muted">' + esc(c.reason) + '</span>' : esc(formatMoney(c.cost))}</td>
+  </tr>`).join('');
+
+  box.innerHTML = head + (d.candidates.length === 0
+    ? '<p class="muted">追加できるエントリー外の選手はいません。</p>'
+    : `
+    <div class="table-wrap"><table class="data-table">
+      <thead><tr><th></th><th>選手</th><th class="num">年齢</th><th class="num">費用</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+    <div class="form-actions">
+      <span id="ea-total" class="muted">選んだ選手: 0 名・合計 ${esc(formatMoney(0))}</span>
+      <button type="button" id="ea-submit" class="btn btn-primary" disabled>選んだ選手を追加する</button>
+      <span id="ea-result" class="form-msg"></span>
+    </div>`) + history;
+
+  const update = () => {
+    const picked = [...document.querySelectorAll('.ea-pick:checked')];
+    const total = picked.reduce((sum, el) => sum + Number(el.dataset.cost || 0), 0);
+    document.getElementById('ea-total').textContent =
+      '選んだ選手: ' + picked.length + ' 名・合計 ' + formatMoney(total);
+    document.getElementById('ea-submit').disabled = picked.length === 0;
+  };
+  document.querySelectorAll('.ea-pick').forEach((el) => { el.onchange = update; });
+  const btn = document.getElementById('ea-submit');
+  if (btn) btn.onclick = onSubmitEntryAdd;
+}
+
+/** 選んだ選手をエントリー追加する */
+async function onSubmitEntryAdd() {
+  const picked = [...document.querySelectorAll('.ea-pick:checked')];
+  if (picked.length === 0) return;
+  const total = picked.reduce((sum, el) => sum + Number(el.dataset.cost || 0), 0);
+  if (!confirm(picked.length + ' 名をエントリー追加します。予算から ' + formatMoney(total) +
+      ' が引かれ、取り消せません。追加した選手は今シーズン中は他クラブへ移籍できません。よろしいですか？')) {
+    return;
+  }
+
+  const btn = document.getElementById('ea-submit');
+  btn.disabled = true;
+  setResult('ea-result', true, '送信中...');
+
+  const res = await callApi('addEntryPlayers', {
+    season_id: entryAddData.season_id,
+    team_id: entryAddData.team_id,
+    player_ids: picked.map((el) => el.value),
+  });
+
+  if (!res.ok) {
+    btn.disabled = false;
+    setResult('ea-result', false, '追加できません: ' + res.error);
+    return;
+  }
+
+  const names = res.data.added.map((a) => a.name).join('・');
+  entryAddFlash = names + ' を追加しました（' + formatMoney(res.data.total) + '）。';
+  await loadTransferOptions();
 }
 
 /**
